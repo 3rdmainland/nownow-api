@@ -5,6 +5,7 @@ import fastifySwaggerUI from '@fastify/swagger-ui';
 import vendorController from "./vendor/vendor.controller";
 import eventController from "./event/event.controller";
 import categoryController from "./category/category.controller";
+import vendorMenuController from "./vendor/menu/vendor-menu.controller";
 import fastifyCors from "@fastify/cors";
 import redis from "./lib/redis";
 import whatsappController from "./whatsapp/whatsapp.controller";
@@ -36,6 +37,9 @@ await fastify.register(fastifySwaggerUI, {
 
 // Register order controller with prefix
 fastify.register(orderController, { prefix: "/orders" });
+// Register vendor menu routes BEFORE generic vendor routes so that
+// specific paths like "/vendor/:vendorId/menu/default" take precedence
+fastify.register(vendorMenuController, { prefix: "/vendor" });
 fastify.register(vendorController, { prefix: "/vendor" });
 fastify.register(eventController, { prefix: "/event" });
 fastify.register(categoryController, { prefix: "/category" });

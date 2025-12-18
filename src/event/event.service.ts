@@ -86,4 +86,22 @@ export class EventService {
         const { error } = await supabase.from("events").delete().eq("id", id);
         if (error) throw new Error(`Failed to delete event: ${error.message}`);
     }
+
+    async getEventsByVendorId(vendorId: string): Promise<Event[]> {
+        const { data, error } = await supabase
+            .from("event_vendors")
+            .select(`
+                events (*)
+            `)
+            .eq("vendor_id", vendorId);
+
+        if (error) {
+            throw new Error(`Failed to fetch events for vendor: ${error.message}`);
+        }
+
+        return (data || [])
+            .map(item => item.events)
+            .filter(event => event !== null)
+            .map(dbEvent => fromDbEvent(dbEvent));
+    }
 }

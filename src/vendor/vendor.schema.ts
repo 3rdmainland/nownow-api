@@ -540,10 +540,10 @@ export const getVendorMenuItemSchema = {
     params: {
         type: 'object',
         properties: {
-            id: { type: 'string' },
-            itemId: { type: 'string' }
+            id: { type: 'string', format: 'uuid' },
+            itemId: { type: 'string', format: 'uuid' },
         },
-        required: ['id', 'itemId']
+        required: ['id', 'itemId'],
     },
     response: {
         200: {
@@ -737,3 +737,14 @@ export const getVendorStatsSchema = {
     }
 };
 
+// in vendor.schema.ts
+// export const getVendorMenuItemSchema = {
+//     params: {
+//         type: 'object',
+//         properties: {
+//             id: { type: 'string', format: 'uuid' },
+//             itemId: { type: 'string', format: 'uuid' },
+//         },
+//         required: ['id', 'itemId'],
+//     },
+// };

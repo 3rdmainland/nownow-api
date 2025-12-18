@@ -4,7 +4,8 @@ import {
     getEventByIdResponseSchema,
     createEventSchema,
     updateEventSchema,
-    deleteEventSchema
+    deleteEventSchema,
+    getEventsByVendorSchema
 } from "./event.schema";
 import { EventService } from "./event.service";
 
@@ -59,6 +60,16 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         try {
             await eventService.deleteEvent(request.params.id);
             return reply.status(204).send();
+        } catch (err) {
+            fastify.log.error(err);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
+    fastify.get<{ Params: { vendorId: string } }>("/vendor/:vendorId", { schema: getEventsByVendorSchema }, async (request, reply) => {
+        try {
+            const events = await eventService.getEventsByVendorId(request.params.vendorId);
+            return { events };
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

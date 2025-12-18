@@ -155,3 +155,22 @@ export const deleteEventSchema = {
         500: { type: "object", properties: { error: { type: "string" } } }
     }
 };
+
+// GET events by vendor ID
+export const getEventsByVendorSchema = {
+    description: "Get all events for a particular vendor",
+    tags: ['events'],
+    params: {
+        type: "object",
+        properties: { vendorId: { type: "string" } },
+        required: ["vendorId"]
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: { events: { type: "array", items: eventSchema } },
+            required: ["events"]
+        },
+        500: { type: "object", properties: { error: { type: "string" } }, required: ["error"] }
+    }
+};
