@@ -770,7 +770,7 @@ export class VendorMenuService {
         const template = templateResponse.template;
 
         if (input.overrideExisting) {
-            await supabase
+         await supabase
                 .from('event_menu_items')
                 .delete()
                 .eq('vendor_id', vendorId)
