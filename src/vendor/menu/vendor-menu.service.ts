@@ -10,6 +10,7 @@
 
 import { supabase } from "../../../supabase";
 import { cache, CACHE_TTL } from "../../lib/redis";
+import { handleDatabaseError } from "../../lib/errors";
 import {
     DefaultMenuItem,
     EventMenuItem,
@@ -541,6 +542,49 @@ export class VendorMenuService {
 
         await this.invalidateEventMenuCaches(vendorId, input.eventId);
         return { updatedCount };
+    }
+
+    /**
+     * Reset event menu prices to defaults
+     * Sets all price_override to null AND removes globalPriceAdjustment from config
+     * so items use their original default menu prices with no modifications
+     */
+    async resetEventMenuPrices(vendorId: string, eventId: string): Promise<{ resetCount: number }> {
+        console.log('[RESET PRICES] Starting reset for event:', { vendorId, eventId });
+
+        // Step 1: Remove price overrides from individual items
+        const { data, error } = await supabase
+            .from('event_menu_items')
+            .update({ price_override: null })
+            .eq('vendor_id', vendorId)
+            .eq('event_id', eventId)
+            .select('id');
+
+        if (error) {
+            handleDatabaseError('reset event menu item prices', error, { vendorId, eventId });
+        }
+
+        const resetCount = data?.length || 0;
+        console.log('[RESET PRICES] Individual item overrides reset:', { resetCount });
+
+        // Step 2: Remove global price adjustment from event config
+        const { error: configError } = await supabase
+            .from('event_menu_configurations')
+            .update({ global_price_adjustment: null })
+            .eq('vendor_id', vendorId)
+            .eq('event_id', eventId);
+
+        if (configError) {
+            handleDatabaseError('reset global price adjustment', configError, { vendorId, eventId });
+        }
+
+        console.log('[RESET PRICES] Global price adjustment removed');
+        console.log('[RESET PRICES] Reset complete:', { totalItemsReset: resetCount });
+
+        // Invalidate caches
+        await this.invalidateEventMenuCaches(vendorId, eventId);
+
+        return { resetCount };
     }
 
     /**

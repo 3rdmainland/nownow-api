@@ -20,6 +20,7 @@ import {
     updateEventMenuItemSchema,
     bulkUpdateEventMenuItemsSchema,
     bulkPriceAdjustmentSchema,
+    resetEventMenuPricesSchema,
     cloneEventMenuSchema,
 
     // Event Config Schemas
@@ -303,6 +304,23 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
                 fastify.log.error(err);
                 return reply.status(500).send({ error: "Internal server error" });
             }
+        }
+    );
+
+    /**
+     * POST /vendors/:vendorId/menu/events/:eventId/reset-prices
+     * Reset all event menu item prices to defaults
+     * Removes all price overrides so items use their default menu prices
+     */
+    fastify.post<{ Params: { vendorId: string; eventId: string } }>(
+        "/:vendorId/menu/events/:eventId/reset-prices",
+        { schema: resetEventMenuPricesSchema },
+        async (request, reply) => {
+            const result = await menuService.resetEventMenuPrices(
+                request.params.vendorId,
+                request.params.eventId
+            );
+            return result;
         }
     );
 

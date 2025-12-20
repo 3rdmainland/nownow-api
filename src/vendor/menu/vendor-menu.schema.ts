@@ -618,6 +618,26 @@ export const bulkPriceAdjustmentSchema = {
     },
 };
 
+export const resetEventMenuPricesSchema = {
+    description: 'Reset event menu prices to defaults (removes all price overrides)',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            eventId: { type: 'string' },
+        },
+        required: ['vendorId', 'eventId'],
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: { resetCount: { type: 'number' } },
+        },
+        500: errorResponse,
+    },
+};
+
 export const cloneEventMenuSchema = {
     description: 'Clone menu from another event',
     tags: ['vendor-menu'],
