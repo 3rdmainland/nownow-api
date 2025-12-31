@@ -426,7 +426,7 @@ export class VendorService {
             const total = count || 0;
             const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
 
-            const result = { eventId, vendors: vendorsWithMenu, page, pageSize, total, totalPages };
+            const result = { id: eventId, vendors: vendorsWithMenu, page, pageSize, total, totalPages };
 
             // Cache for 1 minute (event vendor lists change less frequently)
             await cache.set(cacheKey, result, CACHE_TTL.VENDOR_DETAILS);

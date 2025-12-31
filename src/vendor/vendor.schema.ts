@@ -456,7 +456,7 @@ export const getVendorsByEventSchema = {
         200: {
             type: 'object',
             properties: {
-                eventId: { type: 'string' },
+                id: { type: 'string' },
                 vendors: {
                     type: 'array',
                     items: {
