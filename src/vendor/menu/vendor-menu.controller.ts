@@ -16,6 +16,7 @@ import {
 
     // Event Menu Schemas
     getEventMenuSchema,
+    getEventMenuItemSchema,
     upsertEventMenuItemSchema,
     updateEventMenuItemSchema,
     bulkUpdateEventMenuItemsSchema,
@@ -46,7 +47,11 @@ import {
     // Modifier Schemas
     getModifierGroupsSchema,
     createModifierGroupSchema,
+    updateModifierGroupSchema,
+    deleteModifierGroupSchema,
     addModifierSchema,
+    updateModifierSchema,
+    deleteModifierSchema,
 
     // Tag Schemas
     getTagsSchema,
@@ -213,6 +218,31 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
                 return menu;
             } catch (err) {
                 fastify.log.error(err);
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * GET /vendors/:vendorId/menu/events/:eventId/items/:eventMenuItemId
+     * Get a single event menu item with full details for frontend configuration
+     */
+    fastify.get<{ Params: { vendorId: string; eventId: string; eventMenuItemId: string } }>(
+        "/:vendorId/menu/events/:eventId/items/:eventMenuItemId",
+        { schema: getEventMenuItemSchema },
+        async (request, reply) => {
+            try {
+                const eventMenuItem = await menuService.getEventMenuItem(
+                    request.params.vendorId,
+                    request.params.eventId,
+                    request.params.eventMenuItemId
+                );
+                return { eventMenuItem };
+            } catch (err: any) {
+                fastify.log.error(err);
+                if (err.message?.includes('not found')) {
+                    return reply.status(404).send({ error: err.message });
+                }
                 return reply.status(500).send({ error: "Internal server error" });
             }
         }
@@ -711,6 +741,106 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
                 return reply.status(201).send({ modifier });
             } catch (err) {
                 fastify.log.error(err);
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * PUT /vendors/:vendorId/menu/modifier-groups/:groupId
+     * Update a modifier group
+     */
+    fastify.put<{ Params: { vendorId: string; groupId: string } }>(
+        "/:vendorId/menu/modifier-groups/:groupId",
+        { schema: updateModifierGroupSchema },
+        async (request, reply) => {
+            try {
+                const group = await menuService.updateModifierGroup(
+                    request.params.vendorId,
+                    request.params.groupId,
+                    request.body as any
+                );
+                return { modifierGroup: group };
+            } catch (err: any) {
+                fastify.log.error(err);
+                if (err.message.includes('not found')) {
+                    return reply.status(404).send({ error: err.message });
+                }
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * DELETE /vendors/:vendorId/menu/modifier-groups/:groupId
+     * Delete a modifier group
+     */
+    fastify.delete<{ Params: { vendorId: string; groupId: string } }>(
+        "/:vendorId/menu/modifier-groups/:groupId",
+        { schema: deleteModifierGroupSchema },
+        async (request, reply) => {
+            try {
+                await menuService.deleteModifierGroup(
+                    request.params.vendorId,
+                    request.params.groupId
+                );
+                return reply.status(204).send();
+            } catch (err: any) {
+                fastify.log.error(err);
+                if (err.message.includes('Cannot delete')) {
+                    return reply.status(400).send({ error: err.message });
+                }
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * PUT /vendors/:vendorId/menu/modifier-groups/:groupId/modifiers/:modifierId
+     * Update a modifier
+     */
+    fastify.put<{ Params: { vendorId: string; groupId: string; modifierId: string } }>(
+        "/:vendorId/menu/modifier-groups/:groupId/modifiers/:modifierId",
+        { schema: updateModifierSchema },
+        async (request, reply) => {
+            try {
+                const modifier = await menuService.updateModifier(
+                    request.params.vendorId,
+                    request.params.groupId,
+                    request.params.modifierId,
+                    request.body as any
+                );
+                return { modifier };
+            } catch (err: any) {
+                fastify.log.error(err);
+                if (err.message.includes('not found')) {
+                    return reply.status(404).send({ error: err.message });
+                }
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * DELETE /vendors/:vendorId/menu/modifier-groups/:groupId/modifiers/:modifierId
+     * Delete a modifier
+     */
+    fastify.delete<{ Params: { vendorId: string; groupId: string; modifierId: string } }>(
+        "/:vendorId/menu/modifier-groups/:groupId/modifiers/:modifierId",
+        { schema: deleteModifierSchema },
+        async (request, reply) => {
+            try {
+                await menuService.deleteModifier(
+                    request.params.vendorId,
+                    request.params.groupId,
+                    request.params.modifierId
+                );
+                return reply.status(204).send();
+            } catch (err: any) {
+                fastify.log.error(err);
+                if (err.message.includes('not found')) {
+                    return reply.status(404).send({ error: err.message });
+                }
                 return reply.status(500).send({ error: "Internal server error" });
             }
         }

@@ -1,3 +1,9 @@
+interface WhatsAppApiError {
+    error?: {
+        message?: string;
+    };
+}
+
 export class WhatsappService {
     private apiUrl: string;
     private token: string;
@@ -35,7 +41,7 @@ export class WhatsappService {
             body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const data = await res.json() as WhatsAppApiError;
 
         if (!res.ok) {
             console.error("WhatsApp API error:", data);
@@ -103,7 +109,7 @@ export class WhatsappService {
             body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const data = await res.json() as WhatsAppApiError;
         if (!res.ok) {
             console.error("WhatsApp API error:", data);
             throw new Error(`WhatsApp API error: ${data?.error?.message || "Unknown error"}`);
@@ -156,7 +162,7 @@ export class WhatsappService {
             body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const data = await res.json() as WhatsAppApiError;
         console.log('Full API response:', JSON.stringify(data, null, 2));
 
         if (!res.ok) {
@@ -219,7 +225,7 @@ export class WhatsappService {
             body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const data = await res.json() as WhatsAppApiError;
 
         if (!res.ok) {
             console.error("WhatsApp API error:", data);

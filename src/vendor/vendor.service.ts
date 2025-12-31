@@ -1,5 +1,5 @@
 import { Vendor, VendorMenuItem, VendorMenuGroup } from "./vendor.types";
-import { supabase } from "../../supabase";
+import { supabase } from "../lib/supabase";
 import { fromDbMenuItem, fromDbVendor, toDbMenuItem, toDbVendor } from "./utils";
 import { redis, cache, CACHE_TTL } from "../lib/redis";
 

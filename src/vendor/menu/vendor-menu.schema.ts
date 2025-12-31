@@ -542,6 +542,36 @@ export const updateEventMenuItemSchema = {
     },
 };
 
+export const getEventMenuItemSchema = {
+    description: 'Get a single event menu item by ID with full details',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            eventId: { type: 'string' },
+            eventMenuItemId: { type: 'string' },
+        },
+        required: ['vendorId', 'eventId', 'eventMenuItemId'],
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: {
+                eventMenuItem: {
+                    type: 'object',
+                    additionalProperties: true
+                }
+            },
+        },
+        404: {
+            type: 'object',
+            properties: { error: { type: 'string' } },
+        },
+        500: errorResponse,
+    },
+};
+
 export const bulkUpdateEventMenuItemsSchema = {
     description: 'Bulk update event menu items',
     tags: ['vendor-menu'],
@@ -628,6 +658,11 @@ export const resetEventMenuPricesSchema = {
             eventId: { type: 'string' },
         },
         required: ['vendorId', 'eventId'],
+    },
+    body: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
     },
     response: {
         200: {
@@ -1149,6 +1184,109 @@ export const addModifierSchema = {
             type: 'object',
             properties: { modifier: { type: 'object', properties: modifierProperties } },
         },
+        500: errorResponse,
+    },
+};
+
+export const updateModifierGroupSchema = {
+    description: 'Update a modifier group',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            groupId: { type: 'string' },
+        },
+        required: ['vendorId', 'groupId'],
+    },
+    body: {
+        type: 'object',
+        properties: {
+            name: { type: 'string', minLength: 1, maxLength: 100 },
+            description: { type: 'string', maxLength: 500 },
+            selectionType: { type: 'string', enum: ['SINGLE', 'MULTIPLE'] },
+            isRequired: { type: 'boolean' },
+            minSelections: { type: 'number', minimum: 0 },
+            maxSelections: { type: 'number', minimum: 1 },
+            displayOrder: { type: 'number' },
+            isActive: { type: 'boolean' },
+        },
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: { modifierGroup: { type: 'object', properties: modifierGroupProperties } },
+        },
+        404: errorResponse,
+        500: errorResponse,
+    },
+};
+
+export const deleteModifierGroupSchema = {
+    description: 'Delete a modifier group',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            groupId: { type: 'string' },
+        },
+        required: ['vendorId', 'groupId'],
+    },
+    response: {
+        204: { type: 'null' },
+        400: errorResponse,
+        500: errorResponse,
+    },
+};
+
+export const updateModifierSchema = {
+    description: 'Update a modifier',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            groupId: { type: 'string' },
+            modifierId: { type: 'string' },
+        },
+        required: ['vendorId', 'groupId', 'modifierId'],
+    },
+    body: {
+        type: 'object',
+        properties: {
+            name: { type: 'string', minLength: 1, maxLength: 100 },
+            description: { type: 'string', maxLength: 500 },
+            priceAdjustment: { type: 'number' },
+            isDefault: { type: 'boolean' },
+            isAvailable: { type: 'boolean' },
+            displayOrder: { type: 'number' },
+        },
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: { modifier: { type: 'object', properties: modifierProperties } },
+        },
+        404: errorResponse,
+        500: errorResponse,
+    },
+};
+
+export const deleteModifierSchema = {
+    description: 'Delete a modifier',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            groupId: { type: 'string' },
+            modifierId: { type: 'string' },
+        },
+        required: ['vendorId', 'groupId', 'modifierId'],
+    },
+    response: {
+        204: { type: 'null' },
         500: errorResponse,
     },
 };

@@ -8,9 +8,9 @@
  * - Analytics and reporting
  */
 
-import { supabase } from "../../../supabase";
+import { supabase } from "../../lib/supabase";
 import { cache, CACHE_TTL } from "../../lib/redis";
-import { handleDatabaseError } from "../../lib/errors";
+import { handleDatabaseError, assertExists } from "../../lib/errors";
 import {
     DefaultMenuItem,
     EventMenuItem,
@@ -412,6 +412,44 @@ export class VendorMenuService {
     }
 
     /**
+     * Get a single event menu item by ID with full details
+     */
+    async getEventMenuItem(vendorId: string, eventId: string, eventMenuItemId: string): Promise<ResolvedEventMenuItem> {
+        console.log('[GET EVENT MENU ITEM] Fetching:', { vendorId, eventId, eventMenuItemId });
+
+        // Fetch the event menu item with its default item details
+        const { data, error } = await supabase
+            .from('event_menu_items')
+            .select(`
+                *,
+                default_menu_items (
+                    *,
+                    menu_categories (*)
+                )
+            `)
+            .eq('id', eventMenuItemId)
+            .eq('vendor_id', vendorId)
+            .eq('event_id', eventId)
+            .single();
+
+        if (error) {
+            handleDatabaseError('fetch event menu item', error, { vendorId, eventId, eventMenuItemId });
+        }
+
+        assertExists(data, 'Event menu item not found', { eventMenuItemId, eventId });
+
+        // Convert to resolved event menu item format
+        const eventItem = fromDbEventMenuItem(data);
+        const defaultItem = fromDbDefaultMenuItem(data.default_menu_items);
+
+        const resolved = resolveEventMenuItem(defaultItem, eventItem);
+
+        console.log('[GET EVENT MENU ITEM] Found:', { itemName: resolved.name, effectivePrice: resolved.effectivePrice });
+
+        return resolved;
+    }
+
+    /**
      * Create or update event menu item override
      */
     async upsertEventMenuItem(vendorId: string, eventId: string, input: CreateEventMenuItemInput): Promise<EventMenuItem> {
@@ -424,12 +462,12 @@ export class VendorMenuService {
             .single();
 
         const dbItem = toDbEventMenuItem({
+            ...input,
             eventId,
             vendorId,
             isIncluded: input.isIncluded ?? true,
             isFeaturedAtEvent: input.isFeaturedAtEvent ?? false,
             currentOrderCount: 0,
-            ...input,
         });
 
         let data, error;
@@ -897,7 +935,7 @@ export class VendorMenuService {
     }
 
     async createCategory(vendorId: string, input: Omit<MenuCategory, 'id' | 'vendorId' | 'createdAt' | 'updatedAt'>): Promise<MenuCategory> {
-        const dbCategory = toDbMenuCategory({ vendorId, slug: generateSlug(input.name), isActive: true, ...input });
+        const dbCategory = toDbMenuCategory({ ...input, vendorId, slug: generateSlug(input.name), isActive: true });
 
         const { data, error } = await supabase
             .from('menu_categories')
@@ -1001,7 +1039,7 @@ export class VendorMenuService {
     }
 
     async createModifierGroup(vendorId: string, input: Omit<ModifierGroup, 'id' | 'vendorId' | 'modifiers' | 'createdAt' | 'updatedAt'>): Promise<ModifierGroup> {
-        const dbGroup = toDbModifierGroup({ vendorId, isActive: true, ...input });
+        const dbGroup = toDbModifierGroup({ ...input, vendorId, isActive: true });
 
         const { data, error } = await supabase
             .from('modifier_groups')
@@ -1024,7 +1062,7 @@ export class VendorMenuService {
 
         if (!group) throw new Error('Modifier group not found');
 
-        const dbModifier = toDbModifier({ groupId, isAvailable: true, ...input });
+        const dbModifier = toDbModifier({ ...input, groupId, isAvailable: true });
 
         const { data, error } = await supabase
             .from('modifiers')
@@ -1035,6 +1073,102 @@ export class VendorMenuService {
         if (error) throw new Error(`Failed to add modifier: ${error.message}`);
 
         return fromDbModifier(data);
+    }
+
+    async updateModifierGroup(vendorId: string, groupId: string, input: Partial<ModifierGroup>): Promise<ModifierGroup> {
+        const dbGroup = toDbModifierGroup(input);
+
+        const { data, error } = await supabase
+            .from('modifier_groups')
+            .update(dbGroup)
+            .eq('id', groupId)
+            .eq('vendor_id', vendorId)
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116') {
+                throw new Error('Modifier group not found');
+            }
+            throw new Error(`Failed to update modifier group: ${error.message}`);
+        }
+
+        await this.invalidateMenuCaches(vendorId);
+        return fromDbModifierGroup(data, []);
+    }
+
+    async deleteModifierGroup(vendorId: string, groupId: string): Promise<void> {
+        const { data: modifiers } = await supabase
+            .from('modifiers')
+            .select('id')
+            .eq('group_id', groupId)
+            .limit(1);
+
+        if (modifiers && modifiers.length > 0) {
+            throw new Error('Cannot delete modifier group with existing modifiers');
+        }
+
+        const { error } = await supabase
+            .from('modifier_groups')
+            .delete()
+            .eq('id', groupId)
+            .eq('vendor_id', vendorId);
+
+        if (error) throw new Error(`Failed to delete modifier group: ${error.message}`);
+
+        await this.invalidateMenuCaches(vendorId);
+    }
+
+    async updateModifier(vendorId: string, groupId: string, modifierId: string, input: Partial<Modifier>): Promise<Modifier> {
+        const { data: group } = await supabase
+            .from('modifier_groups')
+            .select('id')
+            .eq('id', groupId)
+            .eq('vendor_id', vendorId)
+            .single();
+
+        if (!group) throw new Error('Modifier group not found');
+
+        const dbModifier = toDbModifier(input);
+
+        const { data, error } = await supabase
+            .from('modifiers')
+            .update(dbModifier)
+            .eq('id', modifierId)
+            .eq('group_id', groupId)
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116') {
+                throw new Error('Modifier not found');
+            }
+            throw new Error(`Failed to update modifier: ${error.message}`);
+        }
+
+        await this.invalidateMenuCaches(vendorId);
+        return fromDbModifier(data);
+    }
+
+    async deleteModifier(vendorId: string, groupId: string, modifierId: string): Promise<void> {
+        const { data: group } = await supabase
+            .from('modifier_groups')
+            .select('id')
+            .eq('id', groupId)
+            .eq('vendor_id', vendorId)
+            .single();
+
+        if (!group) throw new Error('Modifier group not found');
+
+        const { error } = await supabase
+            .from('modifiers')
+            .delete()
+            .eq('id', modifierId)
+            .eq('group_id', groupId);
+
+        if (error) throw new Error(`Failed to delete modifier: ${error.message}`);
+
+        await this.invalidateMenuCaches(vendorId);
     }
 
     // ==================== TAGS ====================
@@ -1051,7 +1185,7 @@ export class VendorMenuService {
     }
 
     async createTag(input: Omit<Tag, 'id' | 'createdAt' | 'updatedAt'>): Promise<Tag> {
-        const dbTag = toDbTag({ slug: generateSlug(input.name), isActive: true, ...input });
+        const dbTag = toDbTag({ ...input, slug: generateSlug(input.name), isActive: true });
 
         const { data, error } = await supabase
             .from('menu_tags')

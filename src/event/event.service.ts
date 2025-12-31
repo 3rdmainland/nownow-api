@@ -1,4 +1,4 @@
-import { supabase } from "../../supabase";
+import { supabase } from "../lib/supabase";
 import { Event } from "./event.types";
 import {OrderStatus} from "../orders/order.types";
 import {fromDbEvent, toDbEvent} from "./util";

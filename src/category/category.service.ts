@@ -2,7 +2,7 @@
 // category.service.ts
 // ============================================
 
-import { supabase } from '../../supabase';
+import { supabase } from '../lib/supabase';
 import { Category, CategoryType } from './category.types';
 import { toDbCategory, fromDbCategory } from './utils';
 

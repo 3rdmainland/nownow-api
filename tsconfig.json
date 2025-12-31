@@ -11,8 +11,8 @@
     "allowJs": true,
     "checkJs": false,
     "outDir": "dist",
-    "noEmit": true
+    "rootDir": "src"
   },
-  "include": ["src", "*.ts"],
+  "include": ["src"],
   "exclude": ["node_modules", "dist"]
 }

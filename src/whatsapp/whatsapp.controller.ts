@@ -17,8 +17,8 @@ const whatsappController: FastifyPluginAsync = async (fastify) => {
         { schema: sendWhatsAppMessageSchema },
         async (req, reply) => {
             try {
-                const { to, message } = req.body;
-                await whatsappService.sendWhatsAppMessage(to, message);
+                const { to } = req.body;
+                await whatsappService.sendWhatsAppMessage(to);
                 return reply.status(201).send({ success: true });
             } catch (err) {
                 req.log.error({ err }, "Failed to send WhatsApp message");
@@ -37,7 +37,7 @@ const whatsappController: FastifyPluginAsync = async (fastify) => {
                     orderId,
                     total,
                     prepTimeMinutes,
-                    qrImageUrl
+                    qrImageUrl: qrImageUrl ?? undefined
                 });
                 return reply.status(201).send({ success: true });
             } catch (err: unknown) {

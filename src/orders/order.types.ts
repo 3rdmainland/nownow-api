@@ -7,6 +7,8 @@ export interface OrderItem {
     quantity: number;
     vendorId: string;
     vendorName: string;
+    selectedModifiers?: Record<string, string[]>; // Map of modifier group IDs to selected modifier IDs
+    modifierSummary?: string; // Human-readable summary of modifiers (e.g., "Family Size, Extra Cheese")
 }
 
 export enum OrderType {

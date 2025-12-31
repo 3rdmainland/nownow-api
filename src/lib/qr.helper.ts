@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { supabase } from '../../supabase';
+import { supabase } from './supabase';
 
 export interface QRCodeResult {
     qr_code: string;

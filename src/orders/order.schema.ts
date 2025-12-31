@@ -10,6 +10,18 @@ const orderItemSchema = {
         quantity: { type: "number" },
         vendorId: { type: "string" },
         vendorName: { type: "string" },
+        selectedModifiers: {
+            type: "object",
+            description: "Map of modifier group IDs to arrays of selected modifier IDs",
+            additionalProperties: {
+                type: "array",
+                items: { type: "string" }
+            }
+        },
+        modifierSummary: {
+            type: "string",
+            description: "Human-readable summary of selected modifiers (e.g., 'Family Size, Extra Cheese')"
+        }
     },
     required: ["id", "name", "price", "quantity", "vendorId", "vendorName"]
 };

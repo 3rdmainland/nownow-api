@@ -1,5 +1,5 @@
 import {Order, OrderStatus, OrderType} from "./order.types";
-import {supabase} from "../../supabase";
+import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';

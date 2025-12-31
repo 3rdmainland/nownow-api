@@ -19,7 +19,7 @@ import {
 } from "./order.schema";
 import { OrderService } from "./order.service";
 import {OrderStatus} from "./order.types";
-import {supabase} from "../../supabase";
+import {supabase} from "../lib/supabase";
 
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();

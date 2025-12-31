@@ -14,7 +14,8 @@ const fastify = Fastify({ logger: true });
 
 // CORS
 await fastify.register(fastifyCors, {
-    origin: ["http://localhost:3000","http://localhost:3001","http://localhost:3003", "https://your.app"],
+    origin: ["http://localhost:3000","http://localhost:3001","http://localhost:3003",
+        "https://nownow-dev-api-production.up.railway.app", ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     // credentials: true, // uncomment if you use cookies/auth headers cross-site
@@ -78,7 +79,7 @@ fastify.setErrorHandler((error, request, reply) => {
 
 (async () => {
     try {
-        const port = parseInt(process.env.SERVER_PORT!, 10);
+        const port = parseInt(process.env.PORT || process.env.SERVER_PORT || '3002', 10);
         await fastify.listen({ port, host: "0.0.0.0" });
         fastify.log.info(`Server running at http://localhost:${port}`);
     } catch (err) {
