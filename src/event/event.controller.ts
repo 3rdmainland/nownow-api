@@ -24,7 +24,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
 
     fastify.get<{ Params: { id: string } }>("/:id", { schema: getEventByIdResponseSchema }, async (request, reply) => {
         try {
-            const event = await eventService.getEventByIdOrCode(request.params.id);
+            const event = await eventService.getEventById(request.params.id);
             if (!event) return reply.status(404).send({ error: "Event not found" });
             return { event };
         } catch (err) {
