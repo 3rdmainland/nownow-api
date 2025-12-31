@@ -343,7 +343,7 @@ export class VendorService {
     async getVendorsByEvent(
         eventIdOrCode: string,
         opts?: { page?: number; pageSize?: number }
-    ): Promise<{ eventId: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }> {
+    ): Promise<{ id: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }> {
         // Normalize pagination
         const page = Math.max(1, Number(opts?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize || 20)));
@@ -360,7 +360,7 @@ export class VendorService {
 
         try {
             // Try cache first
-            const cached = await cache.get<{ eventId: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }>(cacheKey);
+            const cached = await cache.get<{ id: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }>(cacheKey);
             if (cached) {
                 console.log(`Cache HIT: getVendorsByEvent(${eventId}, ${page}, ${pageSize})`);
                 return cached;
@@ -381,7 +381,7 @@ export class VendorService {
             const vendorIds = (eventVendors || []).map(ev => ev.vendor_id);
 
             if (vendorIds.length === 0) {
-                return { eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+                return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
             }
 
             // Get the actual vendor data with pagination and total count
