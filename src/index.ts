@@ -15,7 +15,7 @@ const fastify = Fastify({ logger: true });
 // CORS
 await fastify.register(fastifyCors, {
     origin: ["http://localhost:3000","http://localhost:3001","http://localhost:3003",
-        "https://nownow-dev-api-production.up.railway.app",],
+        "https://nownow-dev-api-production.up.railway.app", "https://nownow-9w671nzrv-jenyojohnson-gmailcoms-projects.vercel.app"],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     // credentials: true, // uncomment if you use cookies/auth headers cross-site
