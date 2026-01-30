@@ -59,7 +59,7 @@ export class OrderScheduler {
         return new Date(Date.UTC(y, mo - 1, d, h, m, 0, 0));
     }
 
-    // Build effective allowed intervals based on event_day_hours with optional vendor_event_hours overrides
+    // Build effective slots allowed intervals based on event_day_hours, vendor_event_hours, and vendor's own operating hours
     private async buildAllowedIntervals(
         event: any,
         vendorId: string,
@@ -71,6 +71,7 @@ export class OrderScheduler {
         // Fetch hours; tolerate absence of tables
         let eventDayHours: Array<{ date: string; open_time: string; close_time: string; is_closed: boolean }> = [];
         let vendorEventHours: Array<{ date: string; open_time: string; close_time: string; is_closed: boolean }> = [];
+        let vendorHours: Array<{ dayOfWeek: number; openTime: string; closeTime: string; isClosed: boolean }> = [];
 
         try {
             const { data } = await supabase
@@ -89,30 +90,108 @@ export class OrderScheduler {
             vendorEventHours = (data || []) as any;
         } catch (_) { /* ignore if table missing */ }
 
-        // If no config, fallback to a single full-window interval
-        const hasAnyConfig = (eventDayHours && eventDayHours.length) || (vendorEventHours && vendorEventHours.length);
-        if (!hasAnyConfig) {
+        // Fetch vendor's own operating hours (day-of-week based)
+        try {
+            const { data: vendor } = await supabase
+                .from('vendors')
+                .select('hours')
+                .eq('id', vendorId)
+                .single();
+            if (vendor?.hours && Array.isArray(vendor.hours)) {
+                vendorHours = vendor.hours;
+            }
+        } catch (_) { /* ignore if not found */ }
+
+        console.log('[getAvailableTimeSlots] Debug:', {
+            vendorId,
+            eventId: event.id,
+            eventStart: eventStart.toISOString(),
+            eventEnd: eventEnd.toISOString(),
+            now: now.toISOString(),
+            eventDayHoursCount: eventDayHours.length,
+            vendorEventHoursCount: vendorEventHours.length,
+            vendorHours: vendorHours,
+        });
+
+        // Build vendor hours lookup by day of week (0=Sunday, 6=Saturday)
+        // Handle both camelCase (from app) and snake_case (from DB) formats
+        const vendorHoursByDayOfWeek = new Map<number, { openTime: string; closeTime: string; isClosed: boolean }>();
+        for (const h of vendorHours) {
+            const dayOfWeek = h.dayOfWeek ?? (h as any).day_of_week;
+            const openTime = h.openTime ?? (h as any).open_time;
+            const closeTime = h.closeTime ?? (h as any).close_time;
+            const isClosed = h.isClosed ?? (h as any).is_closed;
+            if (dayOfWeek !== undefined) {
+                vendorHoursByDayOfWeek.set(dayOfWeek, { openTime, closeTime, isClosed });
+            }
+        }
+
+        // If no event config but vendor has hours, use vendor hours
+        // If no config at all, fallback to a single full-window interval
+        const hasEventConfig = (eventDayHours && eventDayHours.length) || (vendorEventHours && vendorEventHours.length);
+        const hasVendorHours = vendorHours.length > 0;
+
+        if (!hasEventConfig && !hasVendorHours) {
             const start = this.roundUpToNearest5Minutes(eventStart > now ? eventStart : now);
             return start < eventEnd ? [{ start, end: eventEnd }] : [];
         }
 
         const byDate = new Map<string, { open_time: string; close_time: string; is_closed: boolean }>();
         for (const r of eventDayHours) byDate.set(r.date, { open_time: r.open_time, close_time: r.close_time, is_closed: r.is_closed });
-        // override with vendor-specific
+        // override with vendor-specific event hours
         for (const r of vendorEventHours) byDate.set(r.date, { open_time: r.open_time, close_time: r.close_time, is_closed: r.is_closed });
 
         const days = this.enumerateEventDaysUTC(event.start_date, event.end_date);
         const intervals: Array<{ start: Date; end: Date }> = [];
 
         for (const day of days) {
-            const config = byDate.get(day);
-            if (!config || config.is_closed) continue;
-            const open = this.toUTCDate(day, config.open_time || '00:00');
-            const close = this.toUTCDate(day, config.close_time || '23:59');
+            const dateObj = new Date(day + 'T00:00:00Z');
+            const dayOfWeek = dateObj.getUTCDay(); // 0=Sunday, 6=Saturday
 
-            // If close <= open, treat as overnight: split into [open, dayEnd] and [nextDayStart, nextClose]
-            const dayEnd = new Date(Date.UTC(open.getUTCFullYear(), open.getUTCMonth(), open.getUTCDate(), 23, 59, 0, 0));
-            const nextDay = new Date(Date.UTC(open.getUTCFullYear(), open.getUTCMonth(), open.getUTCDate() + 1));
+            // Check vendor's day-of-week operating hours
+            const vendorDayHours = vendorHoursByDayOfWeek.get(dayOfWeek);
+            if (vendorDayHours?.isClosed) continue; // Vendor closed on this day of week
+
+            const eventConfig = byDate.get(day);
+
+            // Determine the effective hours for this day
+            let effectiveOpen: string;
+            let effectiveClose: string;
+
+            // Determine effective hours based on available config
+            // Priority: vendor_event_hours > event_day_hours > vendor.hours > default event window
+            if (eventConfig) {
+                if (eventConfig.is_closed) continue;
+                effectiveOpen = eventConfig.open_time || '00:00';
+                effectiveClose = eventConfig.close_time || '23:59';
+
+                // If vendor has hours for this day of week, intersect with event hours
+                if (vendorDayHours && !vendorDayHours.isClosed) {
+                    const vendorOpen = vendorDayHours.openTime || '00:00';
+                    const vendorClose = vendorDayHours.closeTime || '23:59';
+                    // Use the later opening time and earlier closing time
+                    effectiveOpen = vendorOpen > effectiveOpen ? vendorOpen : effectiveOpen;
+                    effectiveClose = vendorClose < effectiveClose ? vendorClose : effectiveClose;
+                }
+            } else if (vendorDayHours && !vendorDayHours.isClosed) {
+                // No event config for this day, but vendor has hours for this day of week
+                effectiveOpen = vendorDayHours.openTime || '00:00';
+                effectiveClose = vendorDayHours.closeTime || '23:59';
+            } else if (hasEventConfig && !hasVendorHours) {
+                // Event has config for other days but not this one, and no vendor hours at all - skip
+                continue;
+            } else {
+                // No event config for this day, vendor hours don't specify this day of week
+                // Use default full day (event window will be applied in pushClamped)
+                effectiveOpen = '00:00';
+                effectiveClose = '23:59';
+            }
+
+            const open = this.toUTCDate(day, effectiveOpen);
+            const close = this.toUTCDate(day, effectiveClose);
+
+            // Skip if close is before or equal to open (invalid interval after intersection)
+            if (close <= open) continue;
 
             const pushClamped = (s: Date, e: Date) => {
                 const start = new Date(Math.max(s.getTime(), now.getTime(), eventStart.getTime()));
@@ -120,19 +199,16 @@ export class OrderScheduler {
                 if (start < end) intervals.push({ start: this.roundUpToNearest5Minutes(start), end });
             };
 
-            if (close <= open) {
-                // segment 1: same day until 23:59
-                pushClamped(open, dayEnd);
-                // segment 2: next day from 00:00 to close
-                const nextClose = new Date(Date.UTC(nextDay.getUTCFullYear(), nextDay.getUTCMonth(), nextDay.getUTCDate(), close.getUTCHours(), close.getUTCMinutes(), 0, 0));
-                pushClamped(nextDay, nextClose);
-            } else {
-                pushClamped(open, close);
-            }
+            pushClamped(open, close);
         }
 
         // Sort intervals by start
         intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
+        console.log('[buildAllowedIntervals] Result:', {
+            days: days,
+            intervalsCount: intervals.length,
+            intervals: intervals.map(i => ({ start: i.start.toISOString(), end: i.end.toISOString() })),
+        });
         return intervals;
     }
     /**
@@ -314,9 +390,29 @@ export class OrderScheduler {
         const eventEnd = new Date(event.end_date);
         const now = new Date();
 
+        // Calculate end of tomorrow (limit slots to today and tomorrow only)
+        const endOfTomorrow = new Date(Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate() + 2, // Day after tomorrow at 00:00 UTC
+            0, 0, 0, 0
+        ));
+        // Use the earlier of event end or end of tomorrow as the cutoff
+        const slotsCutoff = eventEnd < endOfTomorrow ? eventEnd : endOfTomorrow;
+
+        console.log('[getAvailableTimeSlots] Cutoff:', {
+            endOfTomorrow: endOfTomorrow.toISOString(),
+            slotsCutoff: slotsCutoff.toISOString(),
+        });
+
         // Build allowed intervals using per-day hours
         const intervals = await this.buildAllowedIntervals(event, vendorId, now);
         const firstStart = intervals[0]?.start || this.roundUpToNearest5Minutes(eventStart > now ? eventStart : now);
+
+        console.log('[getAvailableTimeSlots] Intervals:', {
+            intervalsCount: intervals.length,
+            firstStart: firstStart.toISOString(),
+        });
 
         // 2) Fetch all orders for the vendor within the window in ONE query
         const { data: orders, error: ordersError } = await supabase
@@ -324,21 +420,25 @@ export class OrderScheduler {
             .select('scheduled_pickup_time,status')
             .eq('vendor_id', vendorId)
             .gte('scheduled_pickup_time', firstStart.toISOString())
-            .lt('scheduled_pickup_time', eventEnd.toISOString())
+            .lt('scheduled_pickup_time', slotsCutoff.toISOString())
             .in('status', [OrderStatus.PENDING, OrderStatus.PREPARING]);
         if (ordersError) throw new Error(ordersError.message);
 
         const pending = (orders || []).map(o => new Date(o.scheduled_pickup_time));
 
-        // 3) Build slots within allowed intervals and count in memory
+        // 3) Build slots within allowed intervals and count in memory (limited to today and tomorrow)
         const slots = [] as Array<{ startTime: string; endTime: string; available: boolean; queueLength: number; }>;
         const effectiveIntervals = intervals.length ? intervals : [{ start: firstStart, end: eventEnd }];
 
         for (const { start, end } of effectiveIntervals) {
+            // Skip intervals that start after our cutoff
+            if (start >= slotsCutoff) continue;
+            // Clamp the interval end to our cutoff
+            const clampedEnd = end > slotsCutoff ? slotsCutoff : end;
             let cursor = new Date(start);
-            while (cursor < end) {
+            while (cursor < clampedEnd) {
                 const slotEnd = new Date(cursor.getTime() + slotDurationMinutes * 60000);
-                if (slotEnd > end) break;
+                if (slotEnd > clampedEnd) break;
                 const count = pending.reduce((acc, t) => (t >= cursor && t < slotEnd ? acc + 1 : acc), 0);
                 slots.push({
                     startTime: cursor.toISOString(),
