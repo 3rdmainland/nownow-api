@@ -9,6 +9,7 @@ import vendorMenuController from "./vendor/menu/vendor-menu.controller";
 import fastifyCors from "@fastify/cors";
 import redis from "./lib/redis";
 import whatsappController from "./whatsapp/whatsapp.controller";
+import { websocketController } from "./websocket";
 
 const fastify = Fastify({ logger: true });
 
@@ -41,6 +42,9 @@ await fastify.register(fastifySwagger, {
 await fastify.register(fastifySwaggerUI, {
     routePrefix: '/documentation'
 });
+
+// Register WebSocket controller (must be before other routes)
+fastify.register(websocketController);
 
 // Register order controller with prefix
 fastify.register(orderController, { prefix: "/orders" });

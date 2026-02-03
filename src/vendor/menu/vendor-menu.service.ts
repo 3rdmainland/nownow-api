@@ -11,6 +11,7 @@
 import { supabase } from "../../lib/supabase";
 import { cache, CACHE_TTL } from "../../lib/redis";
 import { handleDatabaseError, assertExists } from "../../lib/errors";
+import { broadcastPriceUpdate, broadcastAvailabilityUpdate } from "../../websocket";
 import {
     DefaultMenuItem,
     EventMenuItem,
@@ -502,6 +503,15 @@ export class VendorMenuService {
         eventItemId: string,
         input: UpdateEventMenuItemInput
     ): Promise<EventMenuItem> {
+        // Get the current item to compare prices
+        const { data: currentItem } = await supabase
+            .from('event_menu_items')
+            .select('*, default_menu_items(base_price, name)')
+            .eq('id', eventItemId)
+            .eq('vendor_id', vendorId)
+            .eq('event_id', eventId)
+            .single();
+
         const dbItem = toDbEventMenuItem(input as Partial<EventMenuItem>);
 
         const { data, error } = await supabase
@@ -514,6 +524,39 @@ export class VendorMenuService {
             .single();
 
         if (error) throw new Error(`Failed to update event menu item: ${error.message}`);
+
+        // Broadcast price update if price changed
+        if (input.priceOverride !== undefined && currentItem) {
+            const oldPrice = currentItem.price_override ?? currentItem.default_menu_items?.base_price ?? 0;
+            const newPrice = input.priceOverride ?? currentItem.default_menu_items?.base_price ?? 0;
+
+            if (oldPrice !== newPrice) {
+                broadcastPriceUpdate({
+                    vendorId,
+                    eventId,
+                    items: [{
+                        menuItemId: currentItem.default_menu_item_id,
+                        eventMenuItemId: eventItemId,
+                        oldPrice,
+                        newPrice,
+                        name: currentItem.default_menu_items?.name,
+                    }],
+                });
+            }
+        }
+
+        // Broadcast availability update if availability changed
+        if (input.availabilityOverride !== undefined && input.availabilityOverride !== null && currentItem) {
+            const availability = input.availabilityOverride;
+            broadcastAvailabilityUpdate({
+                vendorId,
+                eventId,
+                menuItemId: currentItem.default_menu_item_id,
+                eventMenuItemId: eventItemId,
+                available: availability === 'AVAILABLE' || availability === 'LIMITED',
+                availabilityStatus: availability,
+            });
+        }
 
         await this.invalidateEventMenuCaches(vendorId, eventId);
         return fromDbEventMenuItem(data);
@@ -550,7 +593,7 @@ export class VendorMenuService {
     async bulkPriceAdjustment(vendorId: string, input: BulkPriceAdjustmentInput): Promise<{ updatedCount: number }> {
         let query = supabase
             .from('default_menu_items')
-            .select('id, base_price')
+            .select('id, base_price, name')
             .eq('vendor_id', vendorId)
             .eq('is_active', true);
 
@@ -561,6 +604,7 @@ export class VendorMenuService {
         if (!items?.length) return { updatedCount: 0 };
 
         let updatedCount = 0;
+        const priceUpdates: { menuItemId: string; oldPrice: number; newPrice: number; name?: string }[] = [];
 
         for (const item of items) {
             const adjustedPrice = applyPriceAdjustment(item.base_price, input.adjustment);
@@ -575,7 +619,24 @@ export class VendorMenuService {
                     is_included: true,
                 }, { onConflict: 'event_id,vendor_id,default_menu_item_id' });
 
-            if (!error) updatedCount++;
+            if (!error) {
+                updatedCount++;
+                priceUpdates.push({
+                    menuItemId: item.id,
+                    oldPrice: item.base_price,
+                    newPrice: adjustedPrice,
+                    name: item.name,
+                });
+            }
+        }
+
+        // Broadcast all price updates
+        if (priceUpdates.length > 0) {
+            broadcastPriceUpdate({
+                vendorId,
+                eventId: input.eventId,
+                items: priceUpdates,
+            });
         }
 
         await this.invalidateEventMenuCaches(vendorId, input.eventId);
@@ -589,6 +650,13 @@ export class VendorMenuService {
      */
     async resetEventMenuPrices(vendorId: string, eventId: string): Promise<{ resetCount: number }> {
         console.log('[RESET PRICES] Starting reset for event:', { vendorId, eventId });
+
+        // Get current event items with their prices before reset
+        const { data: currentItems } = await supabase
+            .from('event_menu_items')
+            .select('id, default_menu_item_id, price_override, default_menu_items(base_price, name)')
+            .eq('vendor_id', vendorId)
+            .eq('event_id', eventId);
 
         // Step 1: Remove price overrides from individual items
         const { data, error } = await supabase
@@ -618,6 +686,27 @@ export class VendorMenuService {
 
         console.log('[RESET PRICES] Global price adjustment removed');
         console.log('[RESET PRICES] Reset complete:', { totalItemsReset: resetCount });
+
+        // Broadcast price updates for all affected items
+        if (currentItems && currentItems.length > 0) {
+            const priceUpdates = currentItems
+                .filter((item: any) => item.price_override !== null)
+                .map((item: any) => ({
+                    menuItemId: item.default_menu_item_id,
+                    eventMenuItemId: item.id,
+                    oldPrice: item.price_override,
+                    newPrice: item.default_menu_items?.base_price ?? 0,
+                    name: item.default_menu_items?.name,
+                }));
+
+            if (priceUpdates.length > 0) {
+                broadcastPriceUpdate({
+                    vendorId,
+                    eventId,
+                    items: priceUpdates,
+                });
+            }
+        }
 
         // Invalidate caches
         await this.invalidateEventMenuCaches(vendorId, eventId);
