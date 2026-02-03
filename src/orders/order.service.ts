@@ -3,6 +3,7 @@ import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
+import { broadcastOrderStatusUpdate } from "../websocket";
 
 export class OrderService {
     private scheduler: OrderScheduler;
@@ -296,6 +297,20 @@ export class OrderService {
             } catch (notifyErr) {
                 console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
             }
+        }
+
+        // Broadcast order status update via WebSocket
+        if (data.phone) {
+            console.log('[OrderService] Broadcasting order status update for phone:', data.phone);
+            broadcastOrderStatusUpdate({
+                orderId: data.id,
+                phone: data.phone,
+                status: data.status,
+                vendorId: data.vendor_id,
+                eventId: data.event_id,
+            });
+        } else {
+            console.log('[OrderService] No phone on order, skipping WebSocket broadcast');
         }
 
         return data;

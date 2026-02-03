@@ -6,7 +6,8 @@ export type WebSocketEventType =
   | 'PRICE_UPDATE'
   | 'MENU_ITEM_UPDATE'
   | 'ITEM_AVAILABILITY_UPDATE'
-  | 'VENDOR_STATUS_UPDATE';
+  | 'VENDOR_STATUS_UPDATE'
+  | 'ORDER_STATUS_UPDATE';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;
@@ -52,8 +53,17 @@ export interface VendorStatusPayload {
   isPaused: boolean;
 }
 
+export interface OrderStatusUpdatePayload {
+  orderId: string;
+  phone: string;
+  status: string;
+  vendorId: string;
+  eventId?: string;
+}
+
 // Client subscription tracking
 export interface ClientSubscription {
   eventId?: string;
   vendorId?: string;
+  phone?: string; // For order tracking
 }

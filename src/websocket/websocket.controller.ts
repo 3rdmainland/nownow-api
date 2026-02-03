@@ -7,6 +7,7 @@ import type {
   MenuItemUpdatePayload,
   ItemAvailabilityPayload,
   VendorStatusPayload,
+  OrderStatusUpdatePayload,
   ClientSubscription,
 } from './websocket.types';
 
@@ -113,6 +114,43 @@ export function broadcastVendorStatus(payload: VendorStatusPayload): void {
   };
 
   broadcastToVendor(payload.vendorId, message);
+}
+
+/**
+ * Broadcast to clients subscribed to a specific phone number (for order tracking)
+ */
+export function broadcastToPhone<T>(phone: string, message: WebSocketMessage<T>): void {
+  const messageStr = JSON.stringify(message);
+
+  console.log(`[WebSocket] Broadcasting to phone: ${phone}`);
+  console.log(`[WebSocket] Total connected clients: ${clients.size}`);
+
+  let matchedClients = 0;
+  for (const [socket, client] of clients) {
+    console.log(`[WebSocket] Client subscription phone: "${client.subscriptions.phone}", target: "${phone}"`);
+    if (socket.readyState === socket.OPEN) {
+      // Send to clients subscribed to this phone number
+      if (client.subscriptions.phone === phone) {
+        console.log(`[WebSocket] Found matching client, sending message`);
+        socket.send(messageStr);
+        matchedClients++;
+      }
+    }
+  }
+  console.log(`[WebSocket] Sent to ${matchedClients} clients`);
+}
+
+/**
+ * Broadcast order status update to the customer tracking their order
+ */
+export function broadcastOrderStatusUpdate(payload: OrderStatusUpdatePayload): void {
+  const message: WebSocketMessage<OrderStatusUpdatePayload> = {
+    type: 'ORDER_STATUS_UPDATE',
+    payload,
+    timestamp: new Date().toISOString(),
+  };
+
+  broadcastToPhone(payload.phone, message);
 }
 
 /**
