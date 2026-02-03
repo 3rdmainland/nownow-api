@@ -301,7 +301,6 @@ export class OrderService {
 
         // Broadcast order status update via WebSocket
         if (data.phone) {
-            console.log('[OrderService] Broadcasting order status update for phone:', data.phone);
             broadcastOrderStatusUpdate({
                 orderId: data.id,
                 phone: data.phone,
@@ -309,8 +308,6 @@ export class OrderService {
                 vendorId: data.vendor_id,
                 eventId: data.event_id,
             });
-        } else {
-            console.log('[OrderService] No phone on order, skipping WebSocket broadcast');
         }
 
         return data;

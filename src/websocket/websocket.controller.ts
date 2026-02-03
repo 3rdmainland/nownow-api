@@ -122,22 +122,14 @@ export function broadcastVendorStatus(payload: VendorStatusPayload): void {
 export function broadcastToPhone<T>(phone: string, message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
 
-  console.log(`[WebSocket] Broadcasting to phone: ${phone}`);
-  console.log(`[WebSocket] Total connected clients: ${clients.size}`);
-
-  let matchedClients = 0;
   for (const [socket, client] of clients) {
-    console.log(`[WebSocket] Client subscription phone: "${client.subscriptions.phone}", target: "${phone}"`);
     if (socket.readyState === socket.OPEN) {
       // Send to clients subscribed to this phone number
       if (client.subscriptions.phone === phone) {
-        console.log(`[WebSocket] Found matching client, sending message`);
         socket.send(messageStr);
-        matchedClients++;
       }
     }
   }
-  console.log(`[WebSocket] Sent to ${matchedClients} clients`);
 }
 
 /**
