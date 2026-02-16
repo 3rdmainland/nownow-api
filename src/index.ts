@@ -1,4 +1,6 @@
 import Fastify from "fastify";
+import fastifyCookie from "@fastify/cookie";
+import fastifyJwt from "@fastify/jwt";
 import orderController from "./orders/order.controller";
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUI from '@fastify/swagger-ui';
@@ -10,6 +12,8 @@ import fastifyCors from "@fastify/cors";
 import redis from "./lib/redis";
 import whatsappController from "./whatsapp/whatsapp.controller";
 import { websocketController } from "./websocket";
+import authController from "./auth/auth.controller";
+import { AppError } from "./lib/errors";
 
 const fastify = Fastify({ logger: true });
 
@@ -25,7 +29,17 @@ await fastify.register(fastifyCors, {
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    // credentials: true, // uncomment if you use cookies/auth headers cross-site
+    credentials: true,
+});
+
+// Cookie & JWT
+await fastify.register(fastifyCookie);
+await fastify.register(fastifyJwt, {
+    secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    cookie: {
+        cookieName: 'token',
+        signed: false,
+    },
 });
 
 // Register Swagger
@@ -55,6 +69,7 @@ fastify.register(vendorController, { prefix: "/vendor" });
 fastify.register(eventController, { prefix: "/event" });
 fastify.register(categoryController, { prefix: "/category" });
 fastify.register(whatsappController, { prefix: "/whatsapp" });
+fastify.register(authController, { prefix: "/auth" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {
@@ -79,6 +94,11 @@ fastify.get('/health', async (request, reply) => {
 
 fastify.setErrorHandler((error, request, reply) => {
     fastify.log.error(error);
+
+    // Handle custom AppError subclasses (UnauthorizedError, ConflictError, etc.)
+    if (error instanceof AppError && error.statusCode < 500) {
+        return reply.status(error.statusCode).send({ error: error.message });
+    }
 
     if ((error as any)?.message?.includes("Database") || (error as any)?.code) {
         return reply.status(500).send({ error: "Supabase request failed" });
