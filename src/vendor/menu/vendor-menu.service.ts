@@ -12,6 +12,7 @@ import { supabase } from "../../lib/supabase";
 import { cache, CACHE_TTL } from "../../lib/redis";
 import { handleDatabaseError, assertExists } from "../../lib/errors";
 import { broadcastPriceUpdate, broadcastAvailabilityUpdate } from "../../websocket";
+import { DiscountService } from "../../discount/discount.service.js";
 import {
     DefaultMenuItem,
     EventMenuItem,
@@ -387,6 +388,25 @@ export class VendorMenuService {
                 }
 
                 resolvedItems.push(resolvedItem);
+            }
+
+            // Resolve discounts for all items in a single batch query
+            const discountService = new DiscountService();
+            const discountMap = await discountService.resolveDiscountsForMenu(
+                eventId,
+                vendorId,
+                resolvedItems.map(item => ({ itemId: item.id, price: item.effectivePrice }))
+            );
+
+            for (let i = 0; i < resolvedItems.length; i++) {
+                const discount = discountMap.get(resolvedItems[i].id);
+                if (discount) {
+                    resolvedItems[i] = {
+                        ...resolvedItems[i],
+                        effectivePrice: discount.discountedPrice,
+                        discount,
+                    };
+                }
             }
 
             resolvedItems.sort((a, b) => a.displayOrder - b.displayOrder);

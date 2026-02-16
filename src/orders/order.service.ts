@@ -4,6 +4,7 @@ import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate } from "../websocket";
+import { DiscountService } from "../discount/discount.service.js";
 
 export class OrderService {
     private scheduler: OrderScheduler;
@@ -81,9 +82,43 @@ export class OrderService {
             }
         }
 
+        // Server-side discount validation: re-resolve discounts and recompute prices
+        const discountService = new DiscountService();
+        const validatedItems = await Promise.all(
+            order.items.map(async (item: any) => {
+                const basePrice = item.basePrice ?? item.price;
+                const resolvedDiscount = await discountService.resolveDiscount(
+                    order.event_id,
+                    item.vendorId || order.vendor_id,
+                    item.id,
+                    basePrice
+                );
+
+                if (resolvedDiscount) {
+                    // Preserve modifier delta (difference between submitted price and base)
+                    const modifierDelta = item.price - basePrice;
+                    const serverPrice = Math.max(0, Math.round((resolvedDiscount.discountedPrice + modifierDelta) * 100) / 100);
+                    return {
+                        ...item,
+                        price: serverPrice,
+                        originalPrice: basePrice + modifierDelta,
+                        discountId: resolvedDiscount.discountId,
+                        discountSavings: resolvedDiscount.savings,
+                    };
+                }
+                return item;
+            })
+        );
+
+        const validatedTotal = validatedItems.reduce(
+            (sum: number, item: any) => sum + (item.price * item.quantity), 0
+        );
+
         // Set defaults including estimated prep time and scheduling data
         const orderWithDefaults = {
             ...order,
+            items: validatedItems,
+            total: Math.round(validatedTotal * 100) / 100,
             status: OrderStatus.PENDING,
             type: OrderType.CART,
             estimated_prep_time: estimatedPrepTime,

@@ -571,6 +571,17 @@ export interface ResolvedEventMenuItem extends BaseMenuItem {
     // Source tracking
     hasEventOverrides: boolean;
     overriddenFields: string[];
+
+    // Discount (populated by discount resolution, undefined if no discount applies)
+    discount?: {
+        discountId: string;
+        type: 'PERCENTAGE' | 'FIXED';
+        value: number;
+        originalPrice: number;
+        discountedPrice: number;
+        discountPercentage: number;
+        savings: number;
+    };
 }
 
 export interface MenuTemplateResponse {

@@ -13,6 +13,7 @@ import redis from "./lib/redis";
 import whatsappController from "./whatsapp/whatsapp.controller";
 import { websocketController } from "./websocket";
 import authController from "./auth/auth.controller";
+import discountController from "./discount/discount.controller";
 import { AppError } from "./lib/errors";
 
 const fastify = Fastify({ logger: true });
@@ -70,6 +71,7 @@ fastify.register(eventController, { prefix: "/event" });
 fastify.register(categoryController, { prefix: "/category" });
 fastify.register(whatsappController, { prefix: "/whatsapp" });
 fastify.register(authController, { prefix: "/auth" });
+fastify.register(discountController, { prefix: "/discount" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {
