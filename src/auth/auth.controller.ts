@@ -6,6 +6,7 @@ import {
   loginSchema,
   meSchema,
   logoutSchema,
+  changePasswordSchema,
 } from './auth.schema.js';
 import { AuthService } from './auth.service.js';
 import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
@@ -85,6 +86,17 @@ const authController: FastifyPluginAsync = async (fastify) => {
     reply
       .clearCookie(COOKIE_NAME, { path: '/' })
       .send({ message: 'Logged out' });
+  });
+
+  // POST /auth/change-password — Change password (protected)
+  fastify.post('/change-password', {
+    schema: changePasswordSchema,
+    preHandler: [authenticate],
+  }, async (request, reply) => {
+    const { userId } = request.user as JwtPayload;
+    const { currentPassword, newPassword } = request.body as { currentPassword: string; newPassword: string };
+    await authService.changePassword(userId, currentPassword, newPassword);
+    return { message: 'Password changed successfully' };
   });
 
   // GET /auth/me — Get current user (protected)

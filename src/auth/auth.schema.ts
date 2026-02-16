@@ -126,3 +126,23 @@ export const logoutSchema = {
     },
   },
 };
+
+export const changePasswordSchema = {
+  description: 'Change password for authenticated vendor user',
+  tags: ['auth'],
+  body: {
+    type: 'object',
+    required: ['currentPassword', 'newPassword'],
+    properties: {
+      currentPassword: { type: 'string' },
+      newPassword: { type: 'string', minLength: 8 },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: { message: { type: 'string' } },
+    },
+    401: errorResponse,
+  },
+};

@@ -182,6 +182,34 @@ export class AuthService {
     };
   }
 
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const { data, error } = await supabase
+      .from('vendor_users')
+      .select('id, password_hash')
+      .eq('id', userId)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundError('User not found');
+    }
+
+    const valid = await bcrypt.compare(currentPassword, data.password_hash);
+    if (!valid) {
+      throw new UnauthorizedError('Current password is incorrect');
+    }
+
+    const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    const { error: updateErr } = await supabase
+      .from('vendor_users')
+      .update({ password_hash: newHash, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    if (updateErr) {
+      throw new Error(`Failed to update password: ${updateErr.message}`);
+    }
+  }
+
   async getUserById(userId: string): Promise<SafeVendorUser | null> {
     const { data, error } = await supabase
       .from('vendor_users')
