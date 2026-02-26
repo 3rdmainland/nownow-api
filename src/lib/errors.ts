@@ -95,6 +95,17 @@ export class ConflictError extends AppError {
 }
 
 /**
+ * 429 Too Many Requests
+ * Use for rate limiting
+ */
+export class TooManyRequestsError extends AppError {
+    constructor(message: string = 'Too many requests', context?: ErrorContext) {
+        super(message, 429, context);
+        this.name = 'TooManyRequestsError';
+    }
+}
+
+/**
  * 422 Unprocessable Entity
  * Use for semantic errors (valid format but logically incorrect)
  */

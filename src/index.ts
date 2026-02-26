@@ -14,7 +14,12 @@ import whatsappController from "./whatsapp/whatsapp.controller";
 import { websocketController } from "./websocket";
 import authController from "./auth/auth.controller";
 import discountController from "./discount/discount.controller";
+import organizerAuthController from "./organizer/organizer-auth.controller";
 import { AppError } from "./lib/errors";
+
+if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET environment variable is required");
+}
 
 const fastify = Fastify({ logger: true });
 
@@ -37,7 +42,7 @@ await fastify.register(fastifyCors, {
 // Cookie & JWT
 await fastify.register(fastifyCookie);
 await fastify.register(fastifyJwt, {
-    secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+    secret: process.env.JWT_SECRET,
     cookie: {
         cookieName: 'token',
         signed: false,
@@ -48,7 +53,7 @@ await fastify.register(fastifyJwt, {
 await fastify.register(fastifySwagger, {
     openapi: {
         info: {
-            title: 'Your API',
+            title: 'Now Now API',
             version: '1.0.0'
         }
     }
@@ -73,6 +78,7 @@ fastify.register(categoryController, { prefix: "/category" });
 fastify.register(whatsappController, { prefix: "/whatsapp" });
 fastify.register(authController, { prefix: "/auth" });
 fastify.register(discountController, { prefix: "/discount" });
+fastify.register(organizerAuthController, { prefix: "/organizer/auth" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {

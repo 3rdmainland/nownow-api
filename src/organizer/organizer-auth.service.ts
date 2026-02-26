@@ -1,10 +1,10 @@
 import { supabase } from '../lib/supabase.js';
 import {
-  RegisterPayload,
-  LoginPayload,
-  InvitePayload,
-  SafeVendorUser,
-} from './auth.types.js';
+  OrganizerLoginPayload,
+  OrganizerRegisterPayload,
+  OrganizerInvitePayload,
+  SafeOrganizerUser,
+} from './organizer-auth.types.js';
 import {
   ConflictError,
   UnauthorizedError,
@@ -17,38 +17,25 @@ import { nanoid } from 'nanoid';
 const INVITE_EXPIRY_DAYS = 7;
 const SALT_ROUNDS = 10;
 
-export class AuthService {
-  async createInvite(payload: InvitePayload): Promise<{ inviteToken: string; expiresAt: string }> {
-    // Verify vendor exists
-    const { data: vendor, error: vendorErr } = await supabase
-      .from('vendors')
-      .select('id')
-      .eq('id', payload.vendorId)
-      .single();
-
-    if (vendorErr || !vendor) {
-      throw new NotFoundError('Vendor not found', { vendorId: payload.vendorId });
-    }
-
+export class OrganizerAuthService {
+  async createInvite(payload: OrganizerInvitePayload): Promise<{ inviteToken: string; expiresAt: string }> {
     // Check if a user already exists with this email
     const { data: existingUser } = await supabase
-      .from('vendor_users')
+      .from('organizer_users')
       .select('id')
       .eq('email', payload.email)
       .single();
 
     if (existingUser) {
-      throw new ConflictError('A user with this email already exists');
+      throw new ConflictError('An organizer with this email already exists');
     }
 
-    // Generate invite token
     const token = nanoid(32);
     const expiresAt = new Date(Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
     const { error } = await supabase
-      .from('vendor_invites')
+      .from('organizer_invites')
       .insert([{
-        vendor_id: payload.vendorId,
         email: payload.email,
         token,
         expires_at: expiresAt,
@@ -61,10 +48,10 @@ export class AuthService {
     return { inviteToken: token, expiresAt };
   }
 
-  async validateInvite(token: string): Promise<{ email: string; vendorName: string }> {
+  async validateInvite(token: string): Promise<{ email: string }> {
     const { data: invite, error } = await supabase
-      .from('vendor_invites')
-      .select('email, vendor_id, expires_at, used_at')
+      .from('organizer_invites')
+      .select('email, expires_at, used_at')
       .eq('token', token)
       .single();
 
@@ -80,23 +67,12 @@ export class AuthService {
       throw new ValidationError('Invite has expired');
     }
 
-    // Get vendor name
-    const { data: vendor } = await supabase
-      .from('vendors')
-      .select('name')
-      .eq('id', invite.vendor_id)
-      .single();
-
-    return {
-      email: invite.email,
-      vendorName: vendor?.name || 'Unknown Vendor',
-    };
+    return { email: invite.email };
   }
 
-  async register(payload: RegisterPayload): Promise<SafeVendorUser> {
-    // Validate invite token
+  async register(payload: OrganizerRegisterPayload): Promise<SafeOrganizerUser> {
     const { data: invite, error: inviteErr } = await supabase
-      .from('vendor_invites')
+      .from('organizer_invites')
       .select('*')
       .eq('token', payload.token)
       .single();
@@ -113,9 +89,8 @@ export class AuthService {
       throw new ValidationError('Invite has expired');
     }
 
-    // Check if email already registered
     const { data: existing } = await supabase
-      .from('vendor_users')
+      .from('organizer_users')
       .select('id')
       .eq('email', invite.email)
       .single();
@@ -124,42 +99,39 @@ export class AuthService {
       throw new ConflictError('Email already registered');
     }
 
-    // Hash password
     const passwordHash = await bcrypt.hash(payload.password, SALT_ROUNDS);
 
-    // Insert user
     const { data, error } = await supabase
-      .from('vendor_users')
+      .from('organizer_users')
       .insert([{
-        vendor_id: invite.vendor_id,
         email: invite.email,
+        name: payload.name,
         password_hash: passwordHash,
       }])
-      .select('id, vendor_id, email, created_at, updated_at')
+      .select('id, email, name, created_at, updated_at')
       .single();
 
     if (error) {
       throw new Error(`Registration failed: ${error.message}`);
     }
 
-    // Mark invite as used
     await supabase
-      .from('vendor_invites')
+      .from('organizer_invites')
       .update({ used_at: new Date().toISOString() })
       .eq('token', payload.token);
 
     return {
       id: data.id,
-      vendorId: data.vendor_id,
       email: data.email,
+      name: data.name,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
   }
 
-  async login(payload: LoginPayload): Promise<SafeVendorUser> {
+  async login(payload: OrganizerLoginPayload): Promise<SafeOrganizerUser> {
     const { data, error } = await supabase
-      .from('vendor_users')
+      .from('organizer_users')
       .select('*')
       .eq('email', payload.email)
       .single();
@@ -175,45 +147,35 @@ export class AuthService {
 
     return {
       id: data.id,
-      vendorId: data.vendor_id,
       email: data.email,
+      name: data.name,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
   }
 
-  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  async getUserById(userId: string): Promise<SafeOrganizerUser | null> {
     const { data, error } = await supabase
-      .from('vendor_users')
-      .select('id, password_hash')
+      .from('organizer_users')
+      .select('id, email, name, created_at, updated_at')
       .eq('id', userId)
       .single();
 
-    if (error || !data) {
-      throw new NotFoundError('User not found');
-    }
+    if (error || !data) return null;
 
-    const valid = await bcrypt.compare(currentPassword, data.password_hash);
-    if (!valid) {
-      throw new UnauthorizedError('Current password is incorrect');
-    }
-
-    const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-
-    const { error: updateErr } = await supabase
-      .from('vendor_users')
-      .update({ password_hash: newHash, updated_at: new Date().toISOString() })
-      .eq('id', userId);
-
-    if (updateErr) {
-      throw new Error(`Failed to update password: ${updateErr.message}`);
-    }
+    return {
+      id: data.id,
+      email: data.email,
+      name: data.name,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
   }
 
   async createPasswordReset(email: string): Promise<{ token: string }> {
     // Silently succeed even if email doesn't exist (prevents email enumeration)
     const { data: user } = await supabase
-      .from('vendor_users')
+      .from('organizer_users')
       .select('id')
       .eq('email', email)
       .single();
@@ -224,7 +186,7 @@ export class AuthService {
 
     // Invalidate any existing unused tokens for this email
     await supabase
-      .from('vendor_password_resets')
+      .from('organizer_password_resets')
       .update({ used_at: new Date().toISOString() })
       .eq('email', email)
       .is('used_at', null);
@@ -233,7 +195,7 @@ export class AuthService {
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
 
     const { error } = await supabase
-      .from('vendor_password_resets')
+      .from('organizer_password_resets')
       .insert([{ email, token, expires_at: expiresAt }]);
 
     if (error) {
@@ -245,7 +207,7 @@ export class AuthService {
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const { data: reset, error } = await supabase
-      .from('vendor_password_resets')
+      .from('organizer_password_resets')
       .select('email, expires_at, used_at')
       .eq('token', token)
       .single();
@@ -265,7 +227,7 @@ export class AuthService {
     const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
     const { error: updateErr } = await supabase
-      .from('vendor_users')
+      .from('organizer_users')
       .update({ password_hash: newHash, updated_at: new Date().toISOString() })
       .eq('email', reset.email);
 
@@ -274,26 +236,59 @@ export class AuthService {
     }
 
     await supabase
-      .from('vendor_password_resets')
+      .from('organizer_password_resets')
       .update({ used_at: new Date().toISOString() })
       .eq('token', token);
   }
 
-  async getUserById(userId: string): Promise<SafeVendorUser | null> {
+  async adminResetPassword(email: string, newPassword: string): Promise<void> {
     const { data, error } = await supabase
-      .from('vendor_users')
-      .select('id, vendor_id, email, created_at, updated_at')
+      .from('organizer_users')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundError('Organizer not found');
+    }
+
+    const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    const { error: updateErr } = await supabase
+      .from('organizer_users')
+      .update({ password_hash: newHash, updated_at: new Date().toISOString() })
+      .eq('id', data.id);
+
+    if (updateErr) {
+      throw new Error(`Failed to reset password: ${updateErr.message}`);
+    }
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const { data, error } = await supabase
+      .from('organizer_users')
+      .select('id, password_hash')
       .eq('id', userId)
       .single();
 
-    if (error || !data) return null;
+    if (error || !data) {
+      throw new NotFoundError('User not found');
+    }
 
-    return {
-      id: data.id,
-      vendorId: data.vendor_id,
-      email: data.email,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
+    const valid = await bcrypt.compare(currentPassword, data.password_hash);
+    if (!valid) {
+      throw new UnauthorizedError('Current password is incorrect');
+    }
+
+    const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    const { error: updateErr } = await supabase
+      .from('organizer_users')
+      .update({ password_hash: newHash, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    if (updateErr) {
+      throw new Error(`Failed to update password: ${updateErr.message}`);
+    }
   }
 }

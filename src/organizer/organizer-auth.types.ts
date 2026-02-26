@@ -1,0 +1,31 @@
+export interface OrganizerLoginPayload {
+  email: string;
+  password: string;
+}
+
+export interface OrganizerRegisterPayload {
+  token: string;
+  password: string;
+  name: string;
+}
+
+export interface OrganizerInvitePayload {
+  email: string;
+}
+
+export interface OrganizerJwtPayload {
+  userId: string;
+  email: string;
+  role: 'organizer';
+}
+
+export interface OrganizerUser {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SafeOrganizerUser = Omit<OrganizerUser, 'passwordHash'>;

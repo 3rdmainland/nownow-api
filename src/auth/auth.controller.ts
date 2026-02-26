@@ -7,6 +7,8 @@ import {
   meSchema,
   logoutSchema,
   changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } from './auth.schema.js';
 import { AuthService } from './auth.service.js';
 import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
@@ -97,6 +99,28 @@ const authController: FastifyPluginAsync = async (fastify) => {
     const { currentPassword, newPassword } = request.body as { currentPassword: string; newPassword: string };
     await authService.changePassword(userId, currentPassword, newPassword);
     return { message: 'Password changed successfully' };
+  });
+
+  // POST /auth/forgot-password — Request a reset token
+  fastify.post('/forgot-password', { schema: forgotPasswordSchema }, async (request, reply) => {
+    const { email } = request.body as { email: string };
+    const { token } = await authService.createPasswordReset(email);
+
+    if (token) {
+      const resetUrl = `${process.env.VENDOR_APP_URL || 'http://localhost:3001'}/auth/reset-password?token=${token}`;
+      // TODO: replace with email provider (Resend, SendGrid, etc.)
+      fastify.log.info({ resetUrl }, 'Vendor password reset link generated');
+    }
+
+    // Always return the same message to prevent email enumeration
+    return { message: 'If that email exists, a reset link has been sent' };
+  });
+
+  // POST /auth/reset-password — Set new password via token
+  fastify.post('/reset-password', { schema: resetPasswordSchema }, async (request, reply) => {
+    const { token, newPassword } = request.body as { token: string; newPassword: string };
+    await authService.resetPassword(token, newPassword);
+    return { message: 'Password reset successfully' };
   });
 
   // GET /auth/me — Get current user (protected)

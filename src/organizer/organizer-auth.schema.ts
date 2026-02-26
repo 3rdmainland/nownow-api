@@ -1,8 +1,9 @@
-const userProperties = {
+const organizerUserProperties = {
   id: { type: 'string' },
-  vendorId: { type: 'string' },
   email: { type: 'string' },
+  name: { type: 'string' },
   createdAt: { type: 'string' },
+  updatedAt: { type: 'string' },
 };
 
 const errorResponse = {
@@ -10,14 +11,13 @@ const errorResponse = {
   properties: { error: { type: 'string' } },
 };
 
-export const inviteSchema = {
-  description: 'Create an invite for a vendor user',
-  tags: ['auth'],
+export const organizerInviteSchema = {
+  description: 'Create an invite for an organizer',
+  tags: ['organizer-auth'],
   body: {
     type: 'object',
-    required: ['vendorId', 'email'],
+    required: ['email'],
     properties: {
-      vendorId: { type: 'string', format: 'uuid' },
       email: { type: 'string', format: 'email' },
     },
   },
@@ -29,14 +29,13 @@ export const inviteSchema = {
         expiresAt: { type: 'string' },
       },
     },
-    404: errorResponse,
     409: errorResponse,
   },
 };
 
-export const validateInviteSchema = {
-  description: 'Validate an invite token',
-  tags: ['auth'],
+export const organizerValidateInviteSchema = {
+  description: 'Validate an organizer invite token',
+  tags: ['organizer-auth'],
   params: {
     type: 'object',
     required: ['token'],
@@ -49,7 +48,6 @@ export const validateInviteSchema = {
       type: 'object',
       properties: {
         email: { type: 'string' },
-        vendorName: { type: 'string' },
       },
     },
     400: errorResponse,
@@ -57,22 +55,23 @@ export const validateInviteSchema = {
   },
 };
 
-export const registerSchema = {
-  description: 'Register a vendor user via invite token',
-  tags: ['auth'],
+export const organizerRegisterSchema = {
+  description: 'Register an organizer via invite token',
+  tags: ['organizer-auth'],
   body: {
     type: 'object',
-    required: ['token', 'password'],
+    required: ['token', 'password', 'name'],
     properties: {
       token: { type: 'string' },
       password: { type: 'string', minLength: 8 },
+      name: { type: 'string', minLength: 1 },
     },
   },
   response: {
     201: {
       type: 'object',
       properties: {
-        user: { type: 'object', properties: userProperties },
+        user: { type: 'object', properties: organizerUserProperties },
       },
     },
     400: errorResponse,
@@ -80,9 +79,9 @@ export const registerSchema = {
   },
 };
 
-export const loginSchema = {
-  description: 'Login vendor user',
-  tags: ['auth'],
+export const organizerLoginSchema = {
+  description: 'Login organizer',
+  tags: ['organizer-auth'],
   body: {
     type: 'object',
     required: ['email', 'password'],
@@ -95,30 +94,17 @@ export const loginSchema = {
     200: {
       type: 'object',
       properties: {
-        user: { type: 'object', properties: userProperties },
+        user: { type: 'object', properties: organizerUserProperties },
       },
     },
     401: errorResponse,
+    429: errorResponse,
   },
 };
 
-export const meSchema = {
-  description: 'Get current authenticated user',
-  tags: ['auth'],
-  response: {
-    200: {
-      type: 'object',
-      properties: {
-        user: { type: 'object', properties: userProperties },
-      },
-    },
-    401: errorResponse,
-  },
-};
-
-export const logoutSchema = {
-  description: 'Logout vendor user',
-  tags: ['auth'],
+export const organizerLogoutSchema = {
+  description: 'Logout organizer',
+  tags: ['organizer-auth'],
   response: {
     200: {
       type: 'object',
@@ -127,9 +113,9 @@ export const logoutSchema = {
   },
 };
 
-export const forgotPasswordSchema = {
+export const organizerForgotPasswordSchema = {
   description: 'Request a password reset link',
-  tags: ['auth'],
+  tags: ['organizer-auth'],
   body: {
     type: 'object',
     required: ['email'],
@@ -145,9 +131,9 @@ export const forgotPasswordSchema = {
   },
 };
 
-export const resetPasswordSchema = {
+export const organizerResetPasswordSchema = {
   description: 'Reset password using a reset token',
-  tags: ['auth'],
+  tags: ['organizer-auth'],
   body: {
     type: 'object',
     required: ['token', 'newPassword'],
@@ -166,9 +152,9 @@ export const resetPasswordSchema = {
   },
 };
 
-export const changePasswordSchema = {
-  description: 'Change password for authenticated vendor user',
-  tags: ['auth'],
+export const organizerChangePasswordSchema = {
+  description: 'Change password for authenticated organizer',
+  tags: ['organizer-auth'],
   body: {
     type: 'object',
     required: ['currentPassword', 'newPassword'],
@@ -181,6 +167,41 @@ export const changePasswordSchema = {
     200: {
       type: 'object',
       properties: { message: { type: 'string' } },
+    },
+    401: errorResponse,
+  },
+};
+
+export const organizerAdminResetPasswordSchema = {
+  description: 'Admin-initiated password reset for an organizer',
+  tags: ['organizer-auth'],
+  body: {
+    type: 'object',
+    required: ['email', 'newPassword'],
+    properties: {
+      email: { type: 'string', format: 'email' },
+      newPassword: { type: 'string', minLength: 8 },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: { message: { type: 'string' } },
+    },
+    401: errorResponse,
+    404: errorResponse,
+  },
+};
+
+export const organizerMeSchema = {
+  description: 'Get current authenticated organizer',
+  tags: ['organizer-auth'],
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        user: { type: 'object', properties: organizerUserProperties },
+      },
     },
     401: errorResponse,
   },
