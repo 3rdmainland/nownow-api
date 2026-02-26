@@ -11,7 +11,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '../lib/errors.js';
-import * as bcrypt from 'bcryptjs';
+import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
 const INVITE_EXPIRY_DAYS = 7;

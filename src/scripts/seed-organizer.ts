@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
-import * as bcrypt from 'bcryptjs';
+import bcrypt from 'bcryptjs';
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,

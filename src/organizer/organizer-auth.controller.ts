@@ -26,8 +26,8 @@ const COOKIE_NAME = 'token';
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
 const JWT_EXPIRY = '24h';
 
-// Rate limiting: max 10 login attempts per email per 15 minutes
-const LOGIN_MAX_ATTEMPTS = 10;
+// Rate limiting: max 20 login attempts per email per 15 minutes
+const LOGIN_MAX_ATTEMPTS = 20;
 const LOGIN_WINDOW_SECONDS = 15 * 60;
 
 function cookieOpts() {
