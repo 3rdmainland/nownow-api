@@ -7,13 +7,13 @@ declare module '@fastify/jwt' {
       userId: string;
       email: string;
       vendorId?: string;
-      role?: 'organizer';
+      role?: 'organizer' | 'vendor';
     };
     user: {
       userId: string;
       email: string;
       vendorId?: string;
-      role?: 'organizer';
+      role?: 'organizer' | 'vendor';
     };
   }
 }

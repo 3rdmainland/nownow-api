@@ -43,6 +43,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
       userId: user.id,
       vendorId: user.vendorId,
       email: user.email,
+      role: 'vendor',
     };
 
     const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '1h' });
@@ -68,6 +69,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
       userId: user.id,
       vendorId: user.vendorId,
       email: user.email,
+      role: 'vendor',
     };
 
     const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '1h' });

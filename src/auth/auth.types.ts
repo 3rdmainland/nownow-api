@@ -17,6 +17,7 @@ export interface JwtPayload {
   userId: string;
   vendorId: string;
   email: string;
+  role: 'vendor';
 }
 
 export interface VendorUser {
