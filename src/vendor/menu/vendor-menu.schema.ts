@@ -132,6 +132,19 @@ const resolvedEventMenuItemProperties = {
     availableTo: { type: 'string', format: 'date-time' },
     hasEventOverrides: { type: 'boolean' },
     overriddenFields: { type: 'array', items: { type: 'string' } },
+    discount: {
+        type: 'object',
+        nullable: true,
+        properties: {
+            discountId: { type: 'string' },
+            type: { type: 'string', enum: ['PERCENTAGE', 'FIXED'] },
+            value: { type: 'number' },
+            originalPrice: { type: 'number' },
+            discountedPrice: { type: 'number' },
+            discountPercentage: { type: 'number' },
+            savings: { type: 'number' },
+        },
+    },
 };
 
 const templateProperties = {

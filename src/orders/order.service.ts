@@ -86,22 +86,26 @@ export class OrderService {
         const discountService = new DiscountService();
         const validatedItems = await Promise.all(
             order.items.map(async (item: any) => {
+                // basePrice = effective price without modifiers (may already be discounted)
                 const basePrice = item.basePrice ?? item.price;
+                // Use the original pre-discount price for server-side discount resolution
+                // to avoid double-applying discounts on already-discounted prices
+                const priceForDiscount = item.originalPrice ?? basePrice;
                 const resolvedDiscount = await discountService.resolveDiscount(
                     order.event_id,
                     item.vendorId || order.vendor_id,
                     item.id,
-                    basePrice
+                    priceForDiscount
                 );
 
                 if (resolvedDiscount) {
-                    // Preserve modifier delta (difference between submitted price and base)
+                    // modifierDelta = (submitted price) - (effective price without modifiers)
                     const modifierDelta = item.price - basePrice;
                     const serverPrice = Math.max(0, Math.round((resolvedDiscount.discountedPrice + modifierDelta) * 100) / 100);
                     return {
                         ...item,
                         price: serverPrice,
-                        originalPrice: basePrice + modifierDelta,
+                        originalPrice: priceForDiscount + modifierDelta,
                         discountId: resolvedDiscount.discountId,
                         discountSavings: resolvedDiscount.savings,
                     };

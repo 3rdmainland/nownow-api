@@ -976,12 +976,12 @@ export class VendorMenuService {
 
         let items = (itemsData || []).map(fromDbDefaultMenuItem);
 
-        if (template.includedCategoryIds.length) {
-            items = items.filter(item => template.includedCategoryIds.includes(item.categoryId));
-        }
-
-        if (template.includedItemIds.length) {
-            items = items.filter(item => template.includedItemIds.includes(item.id));
+        // Union: include items from selected categories OR explicitly included items
+        if (template.includedCategoryIds.length || template.includedItemIds.length) {
+            items = items.filter(item =>
+                template.includedCategoryIds.includes(item.categoryId) ||
+                template.includedItemIds.includes(item.id)
+            );
         }
 
         if (template.excludedItemIds.length) {
@@ -1015,10 +1015,12 @@ export class VendorMenuService {
             };
         });
 
-        const { data: inserted } = await supabase
+        const { data: inserted, error: insertError } = await supabase
             .from('event_menu_items')
             .insert(eventMenuItems)
             .select();
+
+        if (insertError) throw new Error(`Failed to apply template: ${insertError.message}`);
 
         await supabase
             .from('menu_templates')

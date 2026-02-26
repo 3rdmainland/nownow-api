@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase.js';
+import { cache } from '../lib/redis.js';
 import { ValidationError, NotFoundError } from '../lib/errors.js';
 import {
     Discount,
@@ -68,6 +69,27 @@ function discountAppliesToItem(discount: Discount, vendorId: string, itemId: str
     return false;
 }
 
+// ==================== HELPERS ====================
+
+async function invalidateEventMenuCaches(eventId: string, vendorId: string | null | undefined): Promise<void> {
+    try {
+        if (vendorId) {
+            await cache.del(`menu:event:${vendorId}:${eventId}`);
+        } else {
+            // Organizer discount — invalidate caches for all vendors at this event
+            const { data } = await supabase
+                .from('event_menu_configurations')
+                .select('vendor_id')
+                .eq('event_id', eventId);
+            if (data && data.length > 0) {
+                await Promise.all(data.map(row => cache.del(`menu:event:${row.vendor_id}:${eventId}`)));
+            }
+        }
+    } catch (err) {
+        console.error('Failed to invalidate event menu cache after discount change:', err);
+    }
+}
+
 // ==================== SERVICE ====================
 
 export class DiscountService {
@@ -104,7 +126,9 @@ export class DiscountService {
             .single();
 
         if (error) throw new ValidationError(`Failed to create discount: ${error.message}`);
-        return fromDbDiscount(data);
+        const discount = fromDbDiscount(data);
+        await invalidateEventMenuCaches(discount.eventId, discount.vendorId);
+        return discount;
     }
 
     async listEventDiscounts(eventId: string, vendorId?: string): Promise<Discount[]> {
@@ -169,16 +193,24 @@ export class DiscountService {
             .single();
 
         if (error) throw new NotFoundError(`Discount not found: ${error.message}`);
-        return fromDbDiscount(data);
+        const discount = fromDbDiscount(data);
+        await invalidateEventMenuCaches(discount.eventId, discount.vendorId);
+        return discount;
     }
 
     async deleteDiscount(id: string): Promise<void> {
-        const { error } = await supabase
+        const { data, error } = await supabase
             .from('discounts')
             .delete()
-            .eq('id', id);
+            .eq('id', id)
+            .select()
+            .single();
 
         if (error) throw new NotFoundError(`Discount not found: ${error.message}`);
+        if (data) {
+            const discount = fromDbDiscount(data);
+            await invalidateEventMenuCaches(discount.eventId, discount.vendorId);
+        }
     }
 
     /**

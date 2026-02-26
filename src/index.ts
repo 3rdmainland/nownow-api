@@ -98,12 +98,17 @@ fastify.get('/health', async (request, reply) => {
 fastify.setErrorHandler((error, request, reply) => {
     fastify.log.error(error);
 
+    // Fastify schema validation errors (FST_ERR_VALIDATION) — return 400
+    if ((error as any)?.code === 'FST_ERR_VALIDATION') {
+        return reply.status(400).send({ error: error.message });
+    }
+
     // Handle custom AppError subclasses (UnauthorizedError, ConflictError, etc.)
     if (error instanceof AppError && error.statusCode < 500) {
         return reply.status(error.statusCode).send({ error: error.message });
     }
 
-    if ((error as any)?.message?.includes("Database") || (error as any)?.code) {
+    if ((error as any)?.message?.includes("Database")) {
         return reply.status(500).send({ error: "Supabase request failed" });
     }
 
