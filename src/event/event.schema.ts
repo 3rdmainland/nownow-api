@@ -156,6 +156,43 @@ export const deleteEventSchema = {
     }
 };
 
+// ADD vendors to event
+export const addVendorsToEventSchema = {
+    description: "Add vendors to an event",
+    tags: ['events'],
+    params: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"]
+    },
+    body: {
+        type: "object",
+        properties: {
+            vendorIds: { type: "array", items: { type: "string" } }
+        },
+        required: ["vendorIds"]
+    },
+    response: {
+        204: { type: "null" },
+        500: { type: "object", properties: { error: { type: "string" } } }
+    }
+};
+
+// REMOVE vendor from event
+export const removeVendorFromEventSchema = {
+    description: "Remove a vendor from an event",
+    tags: ['events'],
+    params: {
+        type: "object",
+        properties: { id: { type: "string" }, vendorId: { type: "string" } },
+        required: ["id", "vendorId"]
+    },
+    response: {
+        204: { type: "null" },
+        500: { type: "object", properties: { error: { type: "string" } } }
+    }
+};
+
 // GET events by vendor ID
 export const getEventsByVendorSchema = {
     description: "Get all events for a particular vendor",

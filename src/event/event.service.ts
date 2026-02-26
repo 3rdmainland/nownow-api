@@ -2,6 +2,7 @@ import { supabase } from "../lib/supabase";
 import { Event } from "./event.types";
 import {OrderStatus} from "../orders/order.types";
 import {fromDbEvent, toDbEvent} from "./util";
+import { cache } from "../lib/redis";
 
 export class EventService {
 // In event.service.ts
@@ -85,6 +86,39 @@ export class EventService {
     async deleteEvent(id: string): Promise<void> {
         const { error } = await supabase.from("events").delete().eq("id", id);
         if (error) throw new Error(`Failed to delete event: ${error.message}`);
+    }
+
+    async addVendorsToEvent(eventId: string, vendorIds: string[]): Promise<void> {
+        const rows = vendorIds.map(vendorId => ({ event_id: eventId, vendor_id: vendorId }));
+        const { error } = await supabase
+            .from("event_vendors")
+            .upsert(rows, { onConflict: "event_id,vendor_id" });
+        if (error) throw new Error(`Failed to add vendors to event: ${error.message}`);
+        await this.invalidateEventVendorCache(eventId);
+    }
+
+    async removeVendorFromEvent(eventId: string, vendorId: string): Promise<void> {
+        const { error } = await supabase
+            .from("event_vendors")
+            .delete()
+            .eq("event_id", eventId)
+            .eq("vendor_id", vendorId);
+        if (error) throw new Error(`Failed to remove vendor from event: ${error.message}`);
+        await this.invalidateEventVendorCache(eventId);
+    }
+
+    // Upstash doesn't support SCAN so we delete the most common paginated keys
+    private async invalidateEventVendorCache(eventId: string): Promise<void> {
+        const commonSizes = [10, 20, 50];
+        const pages = [1, 2, 3];
+        const keys = pages.flatMap(page =>
+            commonSizes.map(size => `vendors:event:${eventId}:page:${page}:size:${size}`)
+        );
+        try {
+            await cache.del(...keys);
+        } catch {
+            // Cache invalidation failure should not break the operation
+        }
     }
 
     async getEventsByVendorId(vendorId: string): Promise<Event[]> {
