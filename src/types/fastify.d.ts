@@ -1,16 +1,19 @@
 import '@fastify/jwt';
+import '@fastify/cookie';
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
     payload: {
       userId: string;
-      vendorId: string;
       email: string;
+      vendorId?: string;
+      role?: 'organizer';
     };
     user: {
       userId: string;
-      vendorId: string;
       email: string;
+      vendorId?: string;
+      role?: 'organizer';
     };
   }
 }
