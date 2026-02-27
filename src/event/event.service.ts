@@ -78,9 +78,12 @@ export class EventService {
     }
 
     async updateEvent(id: string, updates: Partial<Event>): Promise<Event> {
-        const { data, error } = await supabase.from("events").update(updates).eq("id", id).select().single();
+        const dbUpdates = Object.fromEntries(
+            Object.entries(toDbEvent(updates)).filter(([, v]) => v !== undefined)
+        );
+        const { data, error } = await supabase.from("events").update(dbUpdates).eq("id", id).select().single();
         if (error) throw new Error(`Failed to update event: ${error.message}`);
-        return data;
+        return fromDbEvent(data);
     }
 
     async deleteEvent(id: string): Promise<void> {
