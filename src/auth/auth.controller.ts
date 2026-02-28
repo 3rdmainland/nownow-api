@@ -15,7 +15,7 @@ import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth
 import { authenticate } from '../lib/auth.js';
 
 const COOKIE_NAME = 'token';
-const COOKIE_MAX_AGE = 60 * 60; // 1 hour
+const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
 
 const authController: FastifyPluginAsync = async (fastify) => {
   const authService = new AuthService();
@@ -46,7 +46,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
       role: 'vendor',
     };
 
-    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '1h' });
+    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '24h' });
 
     reply
       .setCookie(COOKIE_NAME, jwtToken, {
@@ -72,7 +72,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
       role: 'vendor',
     };
 
-    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '1h' });
+    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '24h' });
 
     reply
       .setCookie(COOKIE_NAME, jwtToken, {

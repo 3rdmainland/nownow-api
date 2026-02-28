@@ -50,6 +50,7 @@ export interface Vendor {
     isPaused: boolean;
     minimumOrder?: number;
     deliveryFee?: number;
+    serviceFeePercent?: number;
     estimatedPrepTime?: number;
     paymentMethods: string[];
     createdAt: string;

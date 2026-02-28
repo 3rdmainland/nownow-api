@@ -292,16 +292,31 @@ export interface EventMenuConfiguration {
     categoryConfigurations: EventCategoryConfiguration[];
 
     // Global event settings
-    globalPriceAdjustment?: PriceAdjustment;
     isAcceptingOrders: boolean;
 
     // Capacity management
     maxConcurrentOrders?: number;
     currentActiveOrders: number;
-    orderCooldownMinutes?: number; // Minimum time between orders
+    orderCooldownMinutes?: number;          // Minimum minutes between accepting new orders
 
-    // Operating hours for this event
+    // Customer limits
+    maxOrdersPerCustomerEvent?: number;     // Max orders a single customer can place per event
+
+    // Operating hours for this event (HH:MM format, e.g. '10:00' - '22:00')
+    eventOpenTime?: string;
+    eventCloseTime?: string;
     operatingSchedule?: EventOperatingSchedule[];
+
+    // Pricing & fees
+    globalPriceAdjustment?: PriceAdjustment;
+    minimumOrderValue?: number;             // Minimum order total required
+    serviceFeePercent?: number;             // Service charge added at checkout (%)
+    prepTimeBufferMinutes?: number;         // Extra minutes added to all item prep times
+
+    // Operational info visible to customers
+    estimatedWaitMinutes?: number;          // Vendor-set wait time shown to customers
+    boothInfo?: string;                     // Stand/booth location at venue
+    vendorNotice?: string;                  // Custom notice shown before ordering
 
     // Status
     status: EventMenuStatus;
@@ -470,7 +485,16 @@ export interface CreateEventMenuConfigInput {
     globalPriceAdjustment?: PriceAdjustment;
     maxConcurrentOrders?: number;
     orderCooldownMinutes?: number;
+    maxOrdersPerCustomerEvent?: number;
+    eventOpenTime?: string;
+    eventCloseTime?: string;
     operatingSchedule?: EventOperatingSchedule[];
+    minimumOrderValue?: number;
+    serviceFeePercent?: number;
+    prepTimeBufferMinutes?: number;
+    estimatedWaitMinutes?: number;
+    boothInfo?: string;
+    vendorNotice?: string;
 }
 
 export interface UpdateEventMenuConfigInput {
@@ -479,7 +503,16 @@ export interface UpdateEventMenuConfigInput {
     isAcceptingOrders?: boolean;
     maxConcurrentOrders?: number | null;
     orderCooldownMinutes?: number | null;
+    maxOrdersPerCustomerEvent?: number | null;
+    eventOpenTime?: string | null;
+    eventCloseTime?: string | null;
     operatingSchedule?: EventOperatingSchedule[];
+    minimumOrderValue?: number | null;
+    serviceFeePercent?: number | null;
+    prepTimeBufferMinutes?: number | null;
+    estimatedWaitMinutes?: number | null;
+    boothInfo?: string | null;
+    vendorNotice?: string | null;
     status?: EventMenuStatus;
 }
 

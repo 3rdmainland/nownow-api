@@ -91,9 +91,10 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.get<{ Params: { vendorId: string } }>("/vendor/:vendorId", { schema: getEventsByVendorSchema }, async (request, reply) => {
+    fastify.get<{ Params: { vendorId: string }; Querystring: { active?: string } }>("/vendor/:vendorId", { schema: getEventsByVendorSchema }, async (request, reply) => {
         try {
-            const events = await eventService.getEventsByVendorId(request.params.vendorId);
+            const activeOnly = request.query.active === 'true';
+            const events = await eventService.getEventsByVendorId(request.params.vendorId, activeOnly);
             return { events };
         } catch (err) {
             fastify.log.error(err);

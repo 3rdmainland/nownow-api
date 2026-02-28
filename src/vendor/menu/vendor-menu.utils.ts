@@ -370,7 +370,16 @@ export function toDbEventMenuConfig(config: Partial<EventMenuConfiguration>): Re
     if (config.maxConcurrentOrders !== undefined) dbConfig.max_concurrent_orders = config.maxConcurrentOrders;
     if (config.currentActiveOrders !== undefined) dbConfig.current_active_orders = config.currentActiveOrders;
     if (config.orderCooldownMinutes !== undefined) dbConfig.order_cooldown_minutes = config.orderCooldownMinutes;
+    if (config.maxOrdersPerCustomerEvent !== undefined) dbConfig.max_orders_per_customer_event = config.maxOrdersPerCustomerEvent;
+    if (config.eventOpenTime !== undefined) dbConfig.event_open_time = config.eventOpenTime;
+    if (config.eventCloseTime !== undefined) dbConfig.event_close_time = config.eventCloseTime;
     if (config.operatingSchedule !== undefined) dbConfig.operating_schedule = config.operatingSchedule;
+    if (config.minimumOrderValue !== undefined) dbConfig.minimum_order_value = config.minimumOrderValue;
+    if (config.serviceFeePercent !== undefined) dbConfig.service_fee_percent = config.serviceFeePercent;
+    if (config.prepTimeBufferMinutes !== undefined) dbConfig.prep_time_buffer_minutes = config.prepTimeBufferMinutes;
+    if (config.estimatedWaitMinutes !== undefined) dbConfig.estimated_wait_minutes = config.estimatedWaitMinutes;
+    if (config.boothInfo !== undefined) dbConfig.booth_info = config.boothInfo;
+    if (config.vendorNotice !== undefined) dbConfig.vendor_notice = config.vendorNotice;
     if (config.categoryConfigurations !== undefined) dbConfig.category_configurations = config.categoryConfigurations;
     if (config.status !== undefined) dbConfig.status = config.status;
     if (config.publishedAt !== undefined) dbConfig.published_at = config.publishedAt;
@@ -397,7 +406,16 @@ export function fromDbEventMenuConfig(
         maxConcurrentOrders: dbConfig.max_concurrent_orders,
         currentActiveOrders: dbConfig.current_active_orders || 0,
         orderCooldownMinutes: dbConfig.order_cooldown_minutes,
+        maxOrdersPerCustomerEvent: dbConfig.max_orders_per_customer_event,
+        eventOpenTime: dbConfig.event_open_time,
+        eventCloseTime: dbConfig.event_close_time,
         operatingSchedule: dbConfig.operating_schedule || [],
+        minimumOrderValue: dbConfig.minimum_order_value,
+        serviceFeePercent: dbConfig.service_fee_percent,
+        prepTimeBufferMinutes: dbConfig.prep_time_buffer_minutes,
+        estimatedWaitMinutes: dbConfig.estimated_wait_minutes,
+        boothInfo: dbConfig.booth_info,
+        vendorNotice: dbConfig.vendor_notice,
         status: dbConfig.status || 'DRAFT',
         publishedAt: dbConfig.published_at,
         createdAt: dbConfig.created_at,

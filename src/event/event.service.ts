@@ -124,21 +124,49 @@ export class EventService {
         }
     }
 
-    async getEventsByVendorId(vendorId: string): Promise<Event[]> {
-        const { data, error } = await supabase
+    async getEventsByVendorId(vendorId: string, activeOnly = false): Promise<Event[]> {
+        let query = supabase
             .from("event_vendors")
-            .select(`
-                events (*)
-            `)
+            .select(`events!inner(*)`)
             .eq("vendor_id", vendorId);
+
+        if (activeOnly) {
+            query = query.gte("events.end_date", new Date().toISOString());
+        }
+
+        const { data, error } = await query;
 
         if (error) {
             throw new Error(`Failed to fetch events for vendor: ${error.message}`);
         }
 
-        return (data || [])
+        const events = (data || [])
             .map(item => item.events)
             .filter(event => event !== null)
             .map(dbEvent => fromDbEvent(dbEvent));
+
+        if (events.length === 0) return events;
+
+        // Fetch menu config statuses for this vendor across all events in one query
+        const eventIds = events.map(e => e.id);
+        const { data: configs } = await supabase
+            .from("event_menu_configurations")
+            .select("event_id, status")
+            .eq("vendor_id", vendorId)
+            .in("event_id", eventIds);
+
+        const configMap = new Map<string, string>(
+            (configs || []).map(c => [c.event_id, c.status])
+        );
+
+        return events.map(event => {
+            const rawStatus = configMap.get(event.id);
+            const menuStatus: Event['menuStatus'] = !rawStatus
+                ? 'NOT_CONFIGURED'
+                : rawStatus === 'PUBLISHED'
+                    ? 'PUBLISHED'
+                    : 'DRAFT';
+            return { ...event, menuStatus };
+        });
     }
 }

@@ -8,6 +8,7 @@ import type {
   ItemAvailabilityPayload,
   VendorStatusPayload,
   OrderStatusUpdatePayload,
+  NewOrderPayload,
   ClientSubscription,
 } from './websocket.types';
 
@@ -143,6 +144,19 @@ export function broadcastOrderStatusUpdate(payload: OrderStatusUpdatePayload): v
   };
 
   broadcastToPhone(payload.phone, message);
+}
+
+/**
+ * Broadcast new order notification to the vendor
+ */
+export function broadcastNewOrder(payload: NewOrderPayload): void {
+  const message: WebSocketMessage<NewOrderPayload> = {
+    type: 'NEW_ORDER',
+    payload,
+    timestamp: new Date().toISOString(),
+  };
+
+  broadcastToVendor(payload.vendorId, message);
 }
 
 /**

@@ -24,10 +24,13 @@ import {supabase} from "../lib/supabase";
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
 
-    // Get all orders
+    // Get all orders (supports ?vendorId=&eventId=&status=&limit= filters)
     fastify.get("/", { schema: getOrdersResponseSchema }, async (request, reply) => {
         try {
-            const orders = await orderService.getAllOrders();
+            const { vendorId, eventId, status, limit } = request.query as {
+                vendorId?: string; eventId?: string; status?: string; limit?: number;
+            };
+            const orders = await orderService.getAllOrders({ vendorId, eventId, status, limit });
             return { orders };
         } catch (err) {
             fastify.log.error(err);

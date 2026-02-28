@@ -755,6 +755,15 @@ export const updateEventMenuConfigSchema = {
             isAcceptingOrders: { type: 'boolean' },
             maxConcurrentOrders: { type: ['number', 'null'] },
             orderCooldownMinutes: { type: ['number', 'null'] },
+            maxOrdersPerCustomerEvent: { type: ['number', 'null'] },
+            eventOpenTime: { type: ['string', 'null'] },
+            eventCloseTime: { type: ['string', 'null'] },
+            minimumOrderValue: { type: ['number', 'null'] },
+            serviceFeePercent: { type: ['number', 'null'] },
+            prepTimeBufferMinutes: { type: ['number', 'null'] },
+            estimatedWaitMinutes: { type: ['number', 'null'] },
+            boothInfo: { type: ['string', 'null'] },
+            vendorNotice: { type: ['string', 'null'] },
             operatingSchedule: {
                 type: 'array',
                 items: {

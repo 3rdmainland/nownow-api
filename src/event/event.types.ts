@@ -21,4 +21,5 @@ export interface Event {
     updated_at?: string;
     vendorIds: string[];
     code: string;
+    menuStatus?: 'DRAFT' | 'PUBLISHED' | 'NOT_CONFIGURED';
 }

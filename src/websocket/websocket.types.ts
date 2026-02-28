@@ -7,7 +7,8 @@ export type WebSocketEventType =
   | 'MENU_ITEM_UPDATE'
   | 'ITEM_AVAILABILITY_UPDATE'
   | 'VENDOR_STATUS_UPDATE'
-  | 'ORDER_STATUS_UPDATE';
+  | 'ORDER_STATUS_UPDATE'
+  | 'NEW_ORDER';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;
@@ -57,6 +58,12 @@ export interface OrderStatusUpdatePayload {
   orderId: string;
   phone: string;
   status: string;
+  vendorId: string;
+  eventId?: string;
+}
+
+export interface NewOrderPayload {
+  orderId: string;
   vendorId: string;
   eventId?: string;
 }

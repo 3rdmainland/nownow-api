@@ -9,6 +9,7 @@ export {
   broadcastAvailabilityUpdate,
   broadcastVendorStatus,
   broadcastOrderStatusUpdate,
+  broadcastNewOrder,
   getConnectionStats,
 } from './websocket.controller';
 export * from './websocket.types';

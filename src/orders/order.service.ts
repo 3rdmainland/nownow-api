@@ -3,7 +3,7 @@ import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
-import { broadcastOrderStatusUpdate } from "../websocket";
+import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 
 export class OrderService {
@@ -13,10 +13,17 @@ export class OrderService {
         this.scheduler = new OrderScheduler();
     }
 
-    async getAllOrders(): Promise<Order[]> {
-        const { data, error } = await supabase
-            .from("orders")
-            .select("*")
+    async getAllOrders(params?: { vendorId?: string; eventId?: string; status?: string; limit?: number }): Promise<Order[]> {
+        let query = supabase.from("orders").select("*");
+
+        if (params?.vendorId) query = query.eq('vendor_id', params.vendorId);
+        if (params?.eventId)  query = query.eq('event_id', params.eventId);
+        if (params?.status)   query = query.eq('status', params.status);
+        if (params?.limit)    query = query.limit(params.limit);
+
+        query = query.order('created_at', { ascending: false });
+
+        const { data, error } = await query;
 
         if (error) {
             throw new Error(`Failed to fetch orders: ${error.message}`);
@@ -46,7 +53,7 @@ export class OrderService {
         // Fetch vendor details including name
         const { data: vendor, error: vendorError } = await supabase
             .from('vendors')
-            .select('estimated_prep_time, name')
+            .select('estimated_prep_time, name, minimum_order, service_fee_percent')
             .eq('id', order.vendor_id)
             .single();
 
@@ -54,7 +61,151 @@ export class OrderService {
             throw new Error(`Failed to fetch vendor info: ${vendorError?.message || 'Vendor not found'}`);
         }
 
-        const estimatedPrepTime = vendor.estimated_prep_time || 12;
+        let estimatedPrepTime = vendor.estimated_prep_time || 12;
+
+        // ── Enforce event menu configuration rules ───────────────────────
+        if (order.event_id) {
+            // 0. Check event is within its overall start/end date bounds
+            const { data: eventData } = await supabase
+                .from('events')
+                .select('start_date, end_date')
+                .eq('id', order.event_id)
+                .single();
+
+            if (eventData) {
+                const now = new Date();
+                const startDate = new Date(eventData.start_date);
+                const endDate = new Date(eventData.end_date);
+                endDate.setHours(23, 59, 59, 999); // inclusive of the end day
+
+                if (now < startDate) {
+                    throw new Error('This event has not started yet.');
+                }
+                if (now > endDate) {
+                    throw new Error('This event has ended. Orders are no longer accepted.');
+                }
+            }
+
+            const { data: menuConfig } = await supabase
+                .from('event_menu_configurations')
+                .select(
+                    'is_accepting_orders, status, max_concurrent_orders, current_active_orders, ' +
+                    'order_cooldown_minutes, max_orders_per_customer_event, prep_time_buffer_minutes, ' +
+                    'event_open_time, event_close_time, operating_schedule'
+                )
+                .eq('vendor_id', order.vendor_id)
+                .eq('event_id', order.event_id)
+                .single();
+
+            if (menuConfig) {
+                // 1. Check if vendor is accepting orders
+                if (!menuConfig.is_accepting_orders) {
+                    throw new Error('This vendor is not currently accepting orders.');
+                }
+
+                // 2. Check menu status (PAUSED or CLOSED blocks orders)
+                if (menuConfig.status === 'PAUSED') {
+                    throw new Error('This vendor has temporarily paused orders. Please try again shortly.');
+                }
+                if (menuConfig.status === 'CLOSED') {
+                    throw new Error('This vendor has closed for this event.');
+                }
+
+                // 3. Check max concurrent orders
+                if (
+                    menuConfig.max_concurrent_orders !== null &&
+                    menuConfig.max_concurrent_orders !== undefined &&
+                    menuConfig.current_active_orders >= menuConfig.max_concurrent_orders
+                ) {
+                    throw new Error(
+                        `This vendor is at capacity (${menuConfig.max_concurrent_orders} concurrent orders). ` +
+                        'Please wait a few minutes and try again.'
+                    );
+                }
+
+                // 4. Check order cooldown (minimum minutes between new orders accepted)
+                if (menuConfig.order_cooldown_minutes) {
+                    const cooldownMs = menuConfig.order_cooldown_minutes * 60 * 1000;
+                    const cutoff = new Date(Date.now() - cooldownMs).toISOString();
+                    const { data: recentOrders } = await supabase
+                        .from('orders')
+                        .select('id, created_at')
+                        .eq('vendor_id', order.vendor_id)
+                        .eq('event_id', order.event_id)
+                        .gte('created_at', cutoff)
+                        .limit(1);
+
+                    if (recentOrders && recentOrders.length > 0) {
+                        const lastOrderTime = new Date(recentOrders[0].created_at);
+                        const nextAvailable = new Date(lastOrderTime.getTime() + cooldownMs);
+                        const waitSecs = Math.ceil((nextAvailable.getTime() - Date.now()) / 1000);
+                        throw new Error(
+                            `This vendor is managing order flow. ` +
+                            `Please try again in ${waitSecs < 60 ? `${waitSecs}s` : `${Math.ceil(waitSecs / 60)}m`}.`
+                        );
+                    }
+                }
+
+                // 5. Check max orders per customer for this event
+                if (menuConfig.max_orders_per_customer_event && order.phone) {
+                    const { count } = await supabase
+                        .from('orders')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('vendor_id', order.vendor_id)
+                        .eq('event_id', order.event_id)
+                        .eq('phone', order.phone);
+
+                    if (count !== null && count >= menuConfig.max_orders_per_customer_event) {
+                        throw new Error(
+                            `You have reached the maximum of ${menuConfig.max_orders_per_customer_event} ` +
+                            `order(s) allowed per customer at this event.`
+                        );
+                    }
+                }
+
+                // 6. Check event operating hours — per-day schedule first, then daily default
+                {
+                    const now = new Date();
+                    const pad = (n: number) => n.toString().padStart(2, '0');
+                    const currentHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                    const todayDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+
+                    const todaySchedule = (menuConfig.operating_schedule as any[] | null)
+                        ?.find((s: any) => s.date === todayDate);
+
+                    if (todaySchedule) {
+                        // Per-day entry exists — use it
+                        if (todaySchedule.isClosed) {
+                            throw new Error('This vendor is not operating today.');
+                        }
+                        if (todaySchedule.openTime && todaySchedule.closeTime) {
+                            if (currentHHMM < todaySchedule.openTime || currentHHMM >= todaySchedule.closeTime) {
+                                throw new Error(
+                                    `This vendor operates ${todaySchedule.openTime} – ${todaySchedule.closeTime} today.`
+                                );
+                            }
+                        }
+                    } else if (menuConfig.event_open_time && menuConfig.event_close_time) {
+                        // Fall back to daily default
+                        if (currentHHMM < menuConfig.event_open_time || currentHHMM >= menuConfig.event_close_time) {
+                            throw new Error(
+                                `This vendor is only accepting orders between ${menuConfig.event_open_time} and ${menuConfig.event_close_time}.`
+                            );
+                        }
+                    }
+                }
+
+                // 7. Apply prep time buffer (extra minutes on top of vendor default)
+                if (menuConfig.prep_time_buffer_minutes) {
+                    estimatedPrepTime += menuConfig.prep_time_buffer_minutes;
+                }
+            }
+        }
+
+        // ── Vendor-level defaults (minimum order, service fee) ────────────
+        (order as any)._minimumOrderValue = vendor.minimum_order ?? null;
+        (order as any)._serviceFeePercent = vendor.service_fee_percent ?? null;
+        // ─────────────────────────────────────────────────────────────────
 
         // Validate scheduled order if pickup time is provided
         let validationResult;
@@ -114,15 +265,36 @@ export class OrderService {
             })
         );
 
-        const validatedTotal = validatedItems.reduce(
+        let validatedTotal = validatedItems.reduce(
             (sum: number, item: any) => sum + (item.price * item.quantity), 0
         );
 
+        // 7. Check minimum order value
+        const minimumOrderValue = (order as any)._minimumOrderValue;
+        if (minimumOrderValue && validatedTotal < minimumOrderValue) {
+            throw new Error(
+                `Minimum order value is R${minimumOrderValue.toFixed(2)}. ` +
+                `Your order total is R${validatedTotal.toFixed(2)}.`
+            );
+        }
+
+        // 8. Apply service fee
+        const serviceFeePercent = (order as any)._serviceFeePercent;
+        let serviceFee = 0;
+        if (serviceFeePercent) {
+            serviceFee = Math.round(validatedTotal * (serviceFeePercent / 100) * 100) / 100;
+            validatedTotal = Math.round((validatedTotal + serviceFee) * 100) / 100;
+        }
+
+        // Strip internal fields before inserting into DB
+        const { _minimumOrderValue, _serviceFeePercent, ...cleanOrder } = order as any;
+
         // Set defaults including estimated prep time and scheduling data
         const orderWithDefaults = {
-            ...order,
+            ...cleanOrder,
             items: validatedItems,
             total: Math.round(validatedTotal * 100) / 100,
+            ...(serviceFee > 0 ? { service_fee: serviceFee } : {}),
             status: OrderStatus.PENDING,
             type: OrderType.CART,
             estimated_prep_time: estimatedPrepTime,
@@ -179,6 +351,13 @@ export class OrderService {
         } catch (notifyErr) {
             console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
         }
+
+        // Notify the vendor's live panel in real time
+        broadcastNewOrder({
+            orderId: updatedOrder.id,
+            vendorId: updatedOrder.vendor_id,
+            eventId: updatedOrder.event_id,
+        });
 
         return updatedOrder;
     }
@@ -338,7 +517,7 @@ export class OrderService {
             }
         }
 
-        // Broadcast order status update via WebSocket
+        // Broadcast to customer tracking their order
         if (data.phone) {
             broadcastOrderStatusUpdate({
                 orderId: data.id,
@@ -348,6 +527,19 @@ export class OrderService {
                 eventId: data.event_id,
             });
         }
+
+        // Broadcast to vendor's KDS and live event panel
+        broadcastToVendor(data.vendor_id, {
+            type: 'ORDER_STATUS_UPDATE',
+            payload: {
+                orderId: data.id,
+                phone: data.phone,
+                status: data.status,
+                vendorId: data.vendor_id,
+                eventId: data.event_id,
+            },
+            timestamp: new Date().toISOString(),
+        });
 
         return data;
     }
@@ -459,9 +651,9 @@ export class OrderService {
 
         const stats = {
             totalOrders: orders.length,
-            totalRevenue: orders.reduce((sum, order) => sum + order.total, 0),
+            totalRevenue: orders.reduce((sum, order) => sum + Number(order.total), 0),
             averageOrderValue: orders.length > 0
-                ? orders.reduce((sum, order) => sum + order.total, 0) / orders.length
+                ? orders.reduce((sum, order) => sum + Number(order.total), 0) / orders.length
                 : 0,
             ordersByStatus: orders.reduce((acc, order) => {
                 acc[order.status] = (acc[order.status] || 0) + 1;

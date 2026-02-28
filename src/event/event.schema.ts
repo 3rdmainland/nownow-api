@@ -202,6 +202,13 @@ export const getEventsByVendorSchema = {
         properties: { vendorId: { type: "string" } },
         required: ["vendorId"]
     },
+    querystring: {
+        type: "object",
+        properties: {
+            active: { type: "string", enum: ["true", "false"] }
+        },
+        additionalProperties: false
+    },
     response: {
         200: {
             type: "object",

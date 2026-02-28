@@ -21,6 +21,7 @@ export function toDbVendor(vendor: Partial<Vendor>) {
     if (vendor.isPaused !== undefined) dbVendor.is_paused = vendor.isPaused;
     if (vendor.minimumOrder !== undefined) dbVendor.minimum_order = vendor.minimumOrder;
     if (vendor.deliveryFee !== undefined) dbVendor.delivery_fee = vendor.deliveryFee;
+    if (vendor.serviceFeePercent !== undefined) dbVendor.service_fee_percent = vendor.serviceFeePercent;
     if (vendor.estimatedPrepTime !== undefined) dbVendor.estimated_prep_time = vendor.estimatedPrepTime;
     if (vendor.paymentMethods !== undefined) dbVendor.payment_methods = vendor.paymentMethods;
 
@@ -46,6 +47,7 @@ export function fromDbVendor(dbVendor: any): Vendor {
         isPaused: dbVendor.is_paused,
         minimumOrder: dbVendor.minimum_order,
         deliveryFee: dbVendor.delivery_fee,
+        serviceFeePercent: dbVendor.service_fee_percent,
         estimatedPrepTime: dbVendor.estimated_prep_time,
         paymentMethods: dbVendor.payment_methods,
         createdAt: dbVendor.created_at,

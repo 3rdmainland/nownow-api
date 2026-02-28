@@ -1027,6 +1027,14 @@ export class VendorMenuService {
             .update({ usage_count: template.usageCount + 1, last_used_at: new Date().toISOString() })
             .eq('id', template.id);
 
+        // Record which template was applied on the event config (upsert to handle missing config row)
+        await supabase
+            .from('event_menu_configurations')
+            .upsert(
+                { vendor_id: vendorId, event_id: input.eventId, template_id: template.id },
+                { onConflict: 'vendor_id,event_id', ignoreDuplicates: false }
+            );
+
         await this.invalidateEventMenuCaches(vendorId, input.eventId);
 
         return { appliedCount: inserted?.length || 0 };
