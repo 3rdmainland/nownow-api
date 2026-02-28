@@ -37,7 +37,7 @@ const orderSchema = {
         total: { type: "number" },
         status: {
             type: "string",
-            enum: ["PENDING", "PREPARING", "READY", "COLLECTED"]
+            enum: ["PENDING", "PREPARING", "READY", "COLLECTED", "CANCELLED"]
         },
         type: {
             type: "string",

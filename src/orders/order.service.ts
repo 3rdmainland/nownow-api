@@ -5,6 +5,7 @@ import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
+import { ValidationError } from "../lib/errors.js";
 
 export class OrderService {
     private scheduler: OrderScheduler;
@@ -447,6 +448,13 @@ export class OrderService {
 
         if (fetchError) {
             throw new Error(`Failed to fetch order: ${fetchError.message}`);
+        }
+
+        // Cancellation is only allowed from PENDING status
+        if (status === OrderStatus.CANCELLED && currentOrder.status !== OrderStatus.PENDING) {
+            throw new ValidationError('Order can only be cancelled before it starts preparing', {
+                currentStatus: currentOrder.status,
+            });
         }
 
         const updateData: Partial<Order> = { status };

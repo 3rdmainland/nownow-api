@@ -22,6 +22,7 @@ export enum OrderStatus {
     PREPARING = 'PREPARING',
     READY = 'READY',
     COLLECTED = 'COLLECTED',
+    CANCELLED = 'CANCELLED',
 }
 
 export interface Order {
