@@ -586,22 +586,25 @@ export class VendorMenuService {
      * Bulk update event menu items
      */
     async bulkUpdateEventMenuItems(vendorId: string, input: BulkUpdateEventMenuItemsInput): Promise<EventMenuItem[]> {
-        const results: EventMenuItem[] = [];
+        // Execute all updates in parallel (each targets a different row)
+        const updateResults = await Promise.all(
+            input.updates.map(async (update) => {
+                const dbItem = toDbEventMenuItem(update.changes as Partial<EventMenuItem>);
 
-        for (const update of input.updates) {
-            const dbItem = toDbEventMenuItem(update.changes as Partial<EventMenuItem>);
+                const { data, error } = await supabase
+                    .from('event_menu_items')
+                    .update(dbItem)
+                    .eq('default_menu_item_id', update.menuItemId)
+                    .eq('vendor_id', vendorId)
+                    .eq('event_id', input.eventId)
+                    .select()
+                    .single();
 
-            const { data, error } = await supabase
-                .from('event_menu_items')
-                .update(dbItem)
-                .eq('default_menu_item_id', update.menuItemId)
-                .eq('vendor_id', vendorId)
-                .eq('event_id', input.eventId)
-                .select()
-                .single();
+                return !error && data ? fromDbEventMenuItem(data) : null;
+            })
+        );
 
-            if (!error && data) results.push(fromDbEventMenuItem(data));
-        }
+        const results = updateResults.filter((r): r is EventMenuItem => r !== null);
 
         await this.invalidateEventMenuCaches(vendorId, input.eventId);
         return results;
@@ -623,32 +626,38 @@ export class VendorMenuService {
         const { data: items } = await query;
         if (!items?.length) return { updatedCount: 0 };
 
-        let updatedCount = 0;
         const priceUpdates: { menuItemId: string; oldPrice: number; newPrice: number; name?: string }[] = [];
 
-        for (const item of items) {
-            const adjustedPrice = applyPriceAdjustment(item.base_price, input.adjustment);
+        // Build all upsert rows and execute in parallel
+        const upsertRows = items.map(item => ({
+            event_id: input.eventId,
+            vendor_id: vendorId,
+            default_menu_item_id: item.id,
+            price_override: applyPriceAdjustment(item.base_price, input.adjustment),
+            is_included: true,
+        }));
 
-            const { error } = await supabase
-                .from('event_menu_items')
-                .upsert({
-                    event_id: input.eventId,
-                    vendor_id: vendorId,
-                    default_menu_item_id: item.id,
-                    price_override: adjustedPrice,
-                    is_included: true,
-                }, { onConflict: 'event_id,vendor_id,default_menu_item_id' });
+        const upsertResults = await Promise.all(
+            upsertRows.map((row, i) =>
+                supabase
+                    .from('event_menu_items')
+                    .upsert(row, { onConflict: 'event_id,vendor_id,default_menu_item_id' })
+                    .then(({ error }) => {
+                        if (!error) {
+                            priceUpdates.push({
+                                menuItemId: items[i].id,
+                                oldPrice: items[i].base_price,
+                                newPrice: row.price_override,
+                                name: items[i].name,
+                            });
+                            return true;
+                        }
+                        return false;
+                    })
+            )
+        );
 
-            if (!error) {
-                updatedCount++;
-                priceUpdates.push({
-                    menuItemId: item.id,
-                    oldPrice: item.base_price,
-                    newPrice: adjustedPrice,
-                    name: item.name,
-                });
-            }
-        }
+        const updatedCount = upsertResults.filter(Boolean).length;
 
         // Broadcast all price updates
         if (priceUpdates.length > 0) {
@@ -772,13 +781,12 @@ export class VendorMenuService {
             return { clonedCount: data?.length || 0 };
         }
 
-        let clonedCount = 0;
-        for (const item of targetItems) {
-            const { error } = await supabase
-                .from('event_menu_items')
-                .upsert(item, { onConflict: 'event_id,vendor_id,default_menu_item_id' });
-            if (!error) clonedCount++;
-        }
+        // Batch upsert all items at once instead of sequential loop
+        const { data: upsertedData, error: upsertError } = await supabase
+            .from('event_menu_items')
+            .upsert(targetItems, { onConflict: 'event_id,vendor_id,default_menu_item_id' })
+            .select();
+        const clonedCount = upsertError ? 0 : (upsertedData?.length || 0);
 
         await this.invalidateEventMenuCaches(vendorId, input.targetEventId);
         return { clonedCount };
@@ -1102,13 +1110,16 @@ export class VendorMenuService {
     }
 
     async reorderCategories(vendorId: string, orders: { id: string; displayOrder: number }[]): Promise<void> {
-        for (const order of orders) {
-            await supabase
-                .from('menu_categories')
-                .update({ display_order: order.displayOrder })
-                .eq('id', order.id)
-                .eq('vendor_id', vendorId);
-        }
+        // Execute all reorder updates in parallel (each targets a different row)
+        await Promise.all(
+            orders.map((order) =>
+                supabase
+                    .from('menu_categories')
+                    .update({ display_order: order.displayOrder })
+                    .eq('id', order.id)
+                    .eq('vendor_id', vendorId)
+            )
+        );
 
         await this.invalidateMenuCaches(vendorId);
     }
@@ -1116,25 +1127,12 @@ export class VendorMenuService {
     // ==================== MODIFIER GROUPS ====================
 
     async getVendorModifierGroups(vendorId: string): Promise<ModifierGroup[]> {
-        console.log('Fetching modifier groups for vendor:', vendorId);
-        console.log('Fetching modifier groups for vendor:', vendorId);
-
-        // First, let's see ALL modifier groups in the table (no filters)
-        const { data: allGroups, error: allError } = await supabase
-            .from('modifier_groups')
-            .select('*');
-
-        console.log('ALL modifier groups in table:', JSON.stringify(allGroups, null, 2));
-        console.log('All groups error:', allError);
-
         const { data: groupsData, error: groupsError } = await supabase
             .from('modifier_groups')
             .select('*')
             .eq('vendor_id', vendorId)
             .eq('is_active', true)
             .order('display_order', { ascending: true });
-
-        console.log('Groups query result:', { groupsData, groupsError });
 
         const groupIds = (groupsData || []).map(g => g.id);
 
@@ -1320,7 +1318,7 @@ export class VendorMenuService {
     // ==================== ANALYTICS ====================
 
     async getMenuAnalytics(vendorId: string, eventId?: string, startDate?: string, endDate?: string): Promise<MenuAnalyticsResponse> {
-        let query = supabase.from('orders').select('*').eq('vendor_id', vendorId);
+        let query = supabase.from('orders').select('items').eq('vendor_id', vendorId);
 
         if (eventId) query = query.eq('event_id', eventId);
         if (startDate) query = query.gte('created_at', startDate);

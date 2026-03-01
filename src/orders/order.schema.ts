@@ -70,19 +70,43 @@ const orderSchema = {
     ]
 };
 
+// ---------------- Pagination Fragments ----------------
+
+const paginationQuerystringProperties = {
+    page: { type: "integer", minimum: 1, default: 1 },
+    pageSize: { type: "integer", minimum: 1, maximum: 100, default: 20 }
+};
+
+const paginationResponseProperties = {
+    page: { type: "integer" },
+    pageSize: { type: "integer" },
+    total: { type: "integer" },
+    totalPages: { type: "integer" }
+};
+
 // ---------------- API Schemas ----------------
 
 // GET all orders
 export const getOrdersResponseSchema = {
     description: "Get all orders",
     tags: ['orders'],
+    querystring: {
+        type: "object",
+        properties: {
+            vendorId: { type: "string" },
+            eventId: { type: "string" },
+            status: { type: "string" },
+            ...paginationQuerystringProperties
+        }
+    },
     response: {
         200: {
             type: "object",
             properties: {
-                orders: { type: "array", items: orderSchema }
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
             },
-            required: ["orders"]
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",
@@ -190,11 +214,18 @@ export const getOrdersByVendorSchema = {
         properties: { vendorId: { type: "string" } },
         required: ["vendorId"]
     },
+    querystring: {
+        type: "object",
+        properties: { ...paginationQuerystringProperties }
+    },
     response: {
         200: {
             type: "object",
-            properties: { orders: { type: "array", items: orderSchema } },
-            required: ["orders"]
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",
@@ -209,14 +240,20 @@ export const getOrdersByPhoneSchema = {
     tags: ['orders'],
     querystring: {
         type: "object",
-        properties: { phone: { type: "string" } },
+        properties: {
+            phone: { type: "string" },
+            ...paginationQuerystringProperties
+        },
         required: ["phone"]
     },
     response: {
         200: {
             type: "object",
-            properties: { orders: { type: "array", items: orderSchema } },
-            required: ["orders"]
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",
@@ -235,15 +272,19 @@ export const getOrdersByStatusSchema = {
             status: {
                 type: "string",
                 enum: ["PENDING", "PREPARING", "READY", "COLLECTED", "CANCELLED"]
-            }
+            },
+            ...paginationQuerystringProperties
         },
         required: ["status"]
     },
     response: {
         200: {
             type: "object",
-            properties: { orders: { type: "array", items: orderSchema } },
-            required: ["orders"]
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",
@@ -301,15 +342,19 @@ export const getOrdersByDateRangeSchema = {
         type: "object",
         properties: {
             startDate: { type: "string", format: "date-time" },
-            endDate: { type: "string", format: "date-time" }
+            endDate: { type: "string", format: "date-time" },
+            ...paginationQuerystringProperties
         },
         required: ["startDate", "endDate"]
     },
     response: {
         200: {
             type: "object",
-            properties: { orders: { type: "array", items: orderSchema } },
-            required: ["orders"]
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",
@@ -336,9 +381,28 @@ export const getOrderStatsSchema = {
                 ordersByStatus: {
                     type: "object",
                     additionalProperties: { type: "number" }
+                },
+                grossSales: { type: "number" },
+                collectedRevenue: { type: "number" },
+                cancelledCount: { type: "number" },
+                cancelledValue: { type: "number" },
+                topItem: {
+                    type: ["object", "null"],
+                    properties: {
+                        name: { type: "string" },
+                        qty: { type: "number" }
+                    }
+                },
+                paymentBreakdown: {
+                    type: "object",
+                    additionalProperties: { type: "number" }
                 }
             },
-            required: ["totalOrders", "totalRevenue", "averageOrderValue", "ordersByStatus"]
+            required: [
+                "totalOrders", "totalRevenue", "averageOrderValue", "ordersByStatus",
+                "grossSales", "collectedRevenue", "cancelledCount", "cancelledValue",
+                "topItem", "paymentBreakdown"
+            ]
         },
         500: {
             type: "object",
@@ -355,15 +419,19 @@ export const searchOrdersSchema = {
         type: "object",
         properties: {
             q: { type: "string", minLength: 1 },
-            eventId: { type: "string", description: "If provided, limits search to this event's orders" }
+            eventId: { type: "string", description: "If provided, limits search to this event's orders" },
+            ...paginationQuerystringProperties
         },
         required: ["q"]
     },
     response: {
         200: {
             type: "object",
-            properties: { orders: { type: "array", items: orderSchema } },
-            required: ["orders"]
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",
@@ -382,11 +450,18 @@ export const getOrdersByEventSchema = {
         properties: { eventId: { type: "string" } },
         required: ["eventId"]
     },
+    querystring: {
+        type: "object",
+        properties: { ...paginationQuerystringProperties }
+    },
     response: {
         200: {
             type: "object",
-            properties: { orders: { type: "array", items: orderSchema } },
-            required: ["orders"]
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
         },
         500: {
             type: "object",

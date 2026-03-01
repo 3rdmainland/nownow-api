@@ -24,14 +24,14 @@ import {supabase} from "../lib/supabase";
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
 
-    // Get all orders (supports ?vendorId=&eventId=&status=&limit= filters)
+    // Get all orders (supports ?vendorId=&eventId=&status=&page=&pageSize= filters)
     fastify.get("/", { schema: getOrdersResponseSchema }, async (request, reply) => {
         try {
-            const { vendorId, eventId, status, limit } = request.query as {
-                vendorId?: string; eventId?: string; status?: string; limit?: number;
+            const { vendorId, eventId, status, page, pageSize } = request.query as {
+                vendorId?: string; eventId?: string; status?: string; page?: number; pageSize?: number;
             };
-            const orders = await orderService.getAllOrders({ vendorId, eventId, status, limit });
-            return { orders };
+            const result = await orderService.getAllOrders({ vendorId, eventId, status, pagination: { page, pageSize } });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });
@@ -65,9 +65,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Search orders
     fastify.get("/search", { schema: searchOrdersSchema }, async (request, reply) => {
         try {
-            const { q, eventId } = request.query as { q: string; eventId?: string };
-            const orders = await orderService.searchOrders(q, eventId);
-            return { orders };
+            const { q, eventId, page, pageSize } = request.query as { q: string; eventId?: string; page?: number; pageSize?: number };
+            const result = await orderService.searchOrders(q, eventId, { page, pageSize });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });
@@ -77,9 +77,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Get orders by phone
     fastify.get("/phone", { schema: getOrdersByPhoneSchema }, async (request, reply) => {
         try {
-            const { phone } = request.query as { phone: string };
-            const orders = await orderService.getOrdersByPhone(phone);
-            return { orders };
+            const { phone, page, pageSize } = request.query as { phone: string; page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByPhone(phone, { page, pageSize });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });
@@ -89,9 +89,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Get orders by status
     fastify.get("/status", { schema: getOrdersByStatusSchema }, async (request, reply) => {
         try {
-            const { status } = request.query as { status: string };
-            const orders = await orderService.getOrdersByStatus(status);
-            return { orders };
+            const { status, page, pageSize } = request.query as { status: string; page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByStatus(status, { page, pageSize });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });
@@ -101,9 +101,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Get orders by date range
     fastify.get("/date-range", { schema: getOrdersByDateRangeSchema }, async (request, reply) => {
         try {
-            const { startDate, endDate } = request.query as { startDate: string; endDate: string };
-            const orders = await orderService.getOrdersByDateRange(startDate, endDate);
-            return { orders };
+            const { startDate, endDate, page, pageSize } = request.query as { startDate: string; endDate: string; page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByDateRange(startDate, endDate, { page, pageSize });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });
@@ -114,8 +114,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     fastify.get("/vendor/:vendorId", { schema: getOrdersByVendorSchema }, async (request, reply) => {
         try {
             const { vendorId } = request.params as { vendorId: string };
-            const orders = await orderService.getOrdersByVendor(vendorId);
-            return { orders };
+            const { page, pageSize } = request.query as { page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByVendor(vendorId, { page, pageSize });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });
@@ -126,8 +127,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     fastify.get("/event/:eventId", { schema: getOrdersByEventSchema }, async (request, reply) => {
         try {
             const { eventId } = request.params as { eventId: string };
-            const orders = await orderService.getOrdersByEvent(eventId);
-            return { orders };
+            const { page, pageSize } = request.query as { page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByEvent(eventId, { page, pageSize });
+            return result;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

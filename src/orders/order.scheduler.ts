@@ -480,13 +480,15 @@ export class OrderScheduler {
 
         const orders = (pendingOrders || []) as Order[];
 
-        // Update queue positions
-        for (let i = 0; i < orders.length; i++) {
-            await supabase
-                .from('orders')
-                .update({ queue_position: i + 1 })
-                .eq('id', orders[i].id);
-        }
+        // Update queue positions in parallel (each targets a different row)
+        await Promise.all(
+            orders.map((order, i) =>
+                supabase
+                    .from('orders')
+                    .update({ queue_position: i + 1 })
+                    .eq('id', order.id)
+            )
+        );
     }
 
     /**

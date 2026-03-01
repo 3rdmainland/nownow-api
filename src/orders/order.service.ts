@@ -1,4 +1,4 @@
-import {Order, OrderStatus, OrderType} from "./order.types";
+import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats} from "./order.types";
 import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
@@ -27,23 +27,29 @@ export class OrderService {
         this.scheduler = new OrderScheduler();
     }
 
-    async getAllOrders(params?: { vendorId?: string; eventId?: string; status?: string; limit?: number }): Promise<Order[]> {
-        let query = supabase.from("orders").select("*");
+    async getAllOrders(params?: { vendorId?: string; eventId?: string; status?: string; pagination?: PaginationParams }): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(params?.pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(params?.pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        let query = supabase.from("orders").select("*", { count: 'exact' });
 
         if (params?.vendorId) query = query.eq('vendor_id', params.vendorId);
         if (params?.eventId)  query = query.eq('event_id', params.eventId);
         if (params?.status)   query = query.eq('status', params.status);
-        if (params?.limit)    query = query.limit(params.limit);
 
-        query = query.order('created_at', { ascending: false });
+        query = query.order('created_at', { ascending: false }).range(from, to);
 
-        const { data, error } = await query;
+        const { data, error, count } = await query;
 
         if (error) {
             throw new Error(`Failed to fetch orders: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
     async getOrderById(id: string): Promise<Order | null> {
@@ -566,46 +572,70 @@ export class OrderService {
         return data;
     }
 
-    async getOrdersByVendor(vendorId: string): Promise<Order[]> {
-        const { data, error } = await supabase
+    async getOrdersByVendor(vendorId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        const { data, error, count } = await supabase
             .from('orders')
-            .select('*')
+            .select('*', { count: 'exact' })
             .eq('vendor_id', vendorId)
             .order('created_at', { ascending: false })
+            .range(from, to);
 
         if (error) {
             throw new Error(`Failed to fetch vendor orders: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
-    async getOrdersByPhone(phone: string): Promise<Order[]> {
-        const { data, error } = await supabase
+    async getOrdersByPhone(phone: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        const { data, error, count } = await supabase
             .from('orders')
-            .select('*')
+            .select('*', { count: 'exact' })
             .eq('phone', phone)
             .order('created_at', { ascending: false })
+            .range(from, to);
 
         if (error) {
             throw new Error(`Failed to fetch orders by phone: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
-    async getOrdersByStatus(status: string): Promise<Order[]> {
-        const { data, error } = await supabase
+    async getOrdersByStatus(status: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        const { data, error, count } = await supabase
             .from('orders')
-            .select('*')
+            .select('*', { count: 'exact' })
             .eq('status', status)
             .order('created_at', { ascending: false })
+            .range(from, to);
 
         if (error) {
             throw new Error(`Failed to fetch orders by status: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
     async getRecentOrders(limit: number = 10): Promise<Order[]> {
@@ -633,28 +663,31 @@ export class OrderService {
         }
     }
 
-    async getOrdersByDateRange(startDate: string, endDate: string): Promise<Order[]> {
-        const { data, error } = await supabase
+    async getOrdersByDateRange(startDate: string, endDate: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        const { data, error, count } = await supabase
             .from('orders')
-            .select('*')
+            .select('*', { count: 'exact' })
             .gte('created_at', startDate)
             .lte('created_at', endDate)
             .order('created_at', { ascending: false })
+            .range(from, to);
 
         if (error) {
             throw new Error(`Failed to fetch orders by date range: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
-    async getOrderStats(vendorId?: string, eventId?: string): Promise<{
-        totalOrders: number;
-        totalRevenue: number;
-        averageOrderValue: number;
-        ordersByStatus: Record<string, number>;
-    }> {
-        let query = supabase.from('orders').select('*');
+    async getOrderStats(vendorId?: string, eventId?: string): Promise<OrderStats> {
+        let query = supabase.from('orders').select('total, status, items, payment_method');
 
         if (vendorId) {
             query = query.eq('vendor_id', vendorId);
@@ -671,53 +704,101 @@ export class OrderService {
 
         const orders = data || [];
 
-        const stats = {
-            totalOrders: orders.length,
-            totalRevenue: orders.reduce((sum, order) => sum + Number(order.total), 0),
-            averageOrderValue: orders.length > 0
-                ? orders.reduce((sum, order) => sum + Number(order.total), 0) / orders.length
-                : 0,
-            ordersByStatus: orders.reduce((acc, order) => {
-                acc[order.status] = (acc[order.status] || 0) + 1;
-                return acc;
-            }, {} as Record<string, number>)
-        };
+        const nonCancelled = orders.filter(o => o.status !== OrderStatus.CANCELLED);
+        const cancelled = orders.filter(o => o.status === OrderStatus.CANCELLED);
+        const collected = orders.filter(o => o.status === OrderStatus.COLLECTED);
 
-        return stats;
+        const totalRevenue = orders.reduce((sum, o) => sum + Number(o.total), 0);
+        const grossSales = nonCancelled.reduce((sum, o) => sum + Number(o.total), 0);
+        const collectedRevenue = collected.reduce((sum, o) => sum + Number(o.total), 0);
+        const cancelledValue = cancelled.reduce((sum, o) => sum + Number(o.total), 0);
+
+        // Top item by quantity across non-cancelled orders
+        const itemCounts: Record<string, number> = {};
+        nonCancelled.forEach(o => {
+            const items = Array.isArray(o.items) ? o.items : [];
+            items.forEach((i: any) => {
+                const name = i.name || 'Unknown';
+                itemCounts[name] = (itemCounts[name] || 0) + (Number(i.quantity) || 1);
+            });
+        });
+        const topEntry = Object.entries(itemCounts).sort((a, b) => b[1] - a[1])[0];
+
+        // Payment method breakdown (non-cancelled)
+        const paymentBreakdown: Record<string, number> = {};
+        nonCancelled.forEach(o => {
+            const method = o.payment_method ?? 'Unknown';
+            paymentBreakdown[method] = (paymentBreakdown[method] || 0) + Number(o.total);
+        });
+
+        return {
+            totalOrders: orders.length,
+            totalRevenue,
+            averageOrderValue: orders.length > 0 ? totalRevenue / orders.length : 0,
+            ordersByStatus: orders.reduce((acc, o) => {
+                acc[o.status] = (acc[o.status] || 0) + 1;
+                return acc;
+            }, {} as Record<string, number>),
+            grossSales,
+            collectedRevenue,
+            cancelledCount: cancelled.length,
+            cancelledValue,
+            topItem: topEntry ? { name: topEntry[0], qty: topEntry[1] } : null,
+            paymentBreakdown,
+        };
     }
 
-    async getOrdersByEvent(eventId: string): Promise<Order[]> {
-        const { data, error } = await supabase
+    async getOrdersByEvent(eventId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        const { data, error, count } = await supabase
             .from('orders')
-            .select('*')
+            .select('*', { count: 'exact' })
             .eq('event_id', eventId)
             .order('created_at', { ascending: false })
+            .range(from, to);
 
         if (error) {
             throw new Error(`Failed to fetch event orders: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
-    async searchOrders(searchTerm: string, eventId?: string): Promise<Order[]> {
+    async searchOrders(searchTerm: string, eventId?: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        // Sanitize PostgREST filter metacharacters in user input
+        const sanitized = searchTerm.replace(/%/g, '\\%').replace(/_/g, '\\_');
+
         let query = supabase
             .from('orders')
-            .select('*');
+            .select('*', { count: 'exact' });
 
         if (eventId) {
             query = query.eq('event_id', eventId);
         }
 
-        const { data, error } = await query
-            .or(`phone.ilike.%${searchTerm}%,qr_code.ilike.%${searchTerm}%,id.ilike.%${searchTerm}%`)
-            .order('created_at', { ascending: false });
+        const { data, error, count } = await query
+            .or(`phone.ilike.%${sanitized}%,qr_code.ilike.%${sanitized}%,id.ilike.%${sanitized}%`)
+            .order('created_at', { ascending: false })
+            .range(from, to);
 
         if (error) {
             throw new Error(`Failed to search orders: ${error.message}`);
         }
 
-        return data || [];
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders: data || [], page, pageSize, total, totalPages };
     }
 
     async health(): Promise<void> {

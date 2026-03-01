@@ -783,10 +783,10 @@ export class VendorService {
 
             console.log(`Cache MISS: getVendorStats(${vendorId})`);
 
-            // Get orders for this vendor
+            // Get orders for this vendor (only needed columns for stats)
             const { data: orders, error: ordersError } = await supabase
                 .from('orders')
-                .select('*')
+                .select('total, status, created_at')
                 .eq('vendor_id', vendorId);
 
             if (ordersError) {
@@ -804,7 +804,7 @@ export class VendorService {
                     new Date(order.created_at) >= today
                 ).length || 0,
                 activeOrders: orders?.filter(order =>
-                    ['pending', 'preparing', 'ready'].includes(order.status)
+                    ['PENDING', 'PREPARING', 'READY'].includes(order.status)
                 ).length || 0
             };
 

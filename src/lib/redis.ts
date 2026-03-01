@@ -13,7 +13,7 @@ export const redis = new Redis({
 
 // Cache TTL constants (in seconds)
 export const CACHE_TTL = {
-    VENDOR_LIST: 3600,      // 5 minutes
+    VENDOR_LIST: 3600,      // 60 minutes (1 hour)
     VENDOR_DETAILS: 60,    // 1 minute
     MENU_ITEMS: 300,            // 5 minutes
     ITEM_AVAILABILITY: 10,     // 10 seconds
