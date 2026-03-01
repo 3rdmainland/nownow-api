@@ -100,7 +100,7 @@ function makeOrderInput(overrides: Record<string, any> = {}) {
     event_id: EVENT_ID,
     phone: '+27821234567',
     items: [
-      { id: 'item-1', name: 'Burger', price: 80, quantity: 1, vendorId: VENDOR_ID, vendorName: 'Test Vendor', prepTime: 10 },
+      { id: 'item-1', name: 'Burger', price: 80, quantity: 1, vendorId: VENDOR_ID, vendorName: 'Test Vendor', prepTime: 10, imageUrl: '' },
     ],
     total: 80,
     payment_method: 'CASH',

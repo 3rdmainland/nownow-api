@@ -300,7 +300,7 @@ describe('VendorService', () => {
 
       const result = await service.toggleVendorStatus('vendor-toggle', false);
 
-      expect(result.is_active).toBe(false);
+      expect((result as any).is_active).toBe(false);
     });
 
     it('throws when Supabase update fails', async () => {
@@ -326,7 +326,7 @@ describe('VendorService', () => {
 
       const result = await service.pauseVendor('vendor-pause', true);
 
-      expect(result.is_paused).toBe(true);
+      expect((result as any).is_paused).toBe(true);
     });
 
     it('unpauses vendor (isPaused=false)', async () => {
@@ -338,7 +338,7 @@ describe('VendorService', () => {
 
       const result = await service.pauseVendor('vendor-pause', false);
 
-      expect(result.is_paused).toBe(false);
+      expect((result as any).is_paused).toBe(false);
     });
 
     it('throws when Supabase update fails', async () => {

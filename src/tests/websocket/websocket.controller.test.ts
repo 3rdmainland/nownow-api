@@ -53,7 +53,8 @@ async function simulateConnection(subscriptions: {
   fireMessage: (data: string) => void;
   fireError: (err: Error) => void;
 }> {
-  const { default: websocketController } = await import('../../websocket/websocket.controller.js');
+  const mod = await import('../../websocket/websocket.controller.js');
+  const websocketController = mod.default as (...args: any[]) => Promise<void>;
 
   const socket = makeMockSocket();
 
@@ -77,7 +78,7 @@ async function simulateConnection(subscriptions: {
   await websocketController(fakeWsPlugin, {});
   if (!routeHandler) throw new Error('No /ws handler registered');
 
-  routeHandler(socket, {});
+  (routeHandler as (socket: any, req: any) => void)(socket, {});
 
   if (Object.keys(subscriptions).length > 0) {
     const messageHandlers = handlers['message'] ?? [];

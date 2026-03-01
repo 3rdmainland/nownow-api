@@ -92,8 +92,8 @@ describe('Auth Middleware', () => {
           userId: 'user-1',
           email: 'test@test.com',
           role: 'vendor',
-          exp: Math.floor(Date.now() / 1000) - 10,
-        },
+        } as any,
+        { expiresIn: -10 },
       );
 
       const response = await app.inject({
@@ -290,7 +290,7 @@ describe('Auth Middleware', () => {
         userId: 'user-1',
         email: 'test@test.com',
         role: 'admin',
-      });
+      } as any);
 
       const response = await app.inject({
         method: 'GET',

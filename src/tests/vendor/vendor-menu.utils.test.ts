@@ -224,14 +224,14 @@ describe('vendor-menu.utils', () => {
       const dbData = toDbModifierGroup({
         vendorId: 'v1',
         name: 'Sauces',
-        selectionType: 'MULTI',
+        selectionType: 'MULTIPLE',
         isRequired: false,
         minSelections: 0,
         maxSelections: 3,
       });
 
       expect(dbData.vendor_id).toBe('v1');
-      expect(dbData.selection_type).toBe('MULTI');
+      expect(dbData.selection_type).toBe('MULTIPLE');
       expect(dbData.max_selections).toBe(3);
 
       const modifiers = [{ id: 'm1', groupId: 'mg1', name: 'Ketchup', priceAdjustment: 5 }];
@@ -309,11 +309,11 @@ describe('vendor-menu.utils', () => {
       const dbData = toDbMenuTemplate({
         vendorId: 'v1',
         name: 'Festival Menu',
-        templateType: 'EVENT',
+        templateType: 'FESTIVAL',
         includedCategoryIds: ['c1'],
       });
       expect(dbData.vendor_id).toBe('v1');
-      expect(dbData.template_type).toBe('EVENT');
+      expect(dbData.template_type).toBe('FESTIVAL');
       expect(dbData.included_category_ids).toEqual(['c1']);
 
       const apiData = fromDbMenuTemplate({

@@ -494,10 +494,10 @@ describe('VendorMenuService', () => {
       mockFromSequence([existingMock, insertMock]);
 
       const result = await service.upsertEventMenuItem(vendorId, eventId, {
+        eventId,
         defaultMenuItemId: defaultItemId,
         isIncluded: true,
         isFeaturedAtEvent: false,
-        currentOrderCount: 0,
       });
 
       expect(result.defaultMenuItemId).toBe(defaultItemId);
@@ -524,11 +524,11 @@ describe('VendorMenuService', () => {
       mockFromSequence([existingMock, updateMock]);
 
       const result = await service.upsertEventMenuItem(vendorId, eventId, {
+        eventId,
         defaultMenuItemId: defaultItemId,
         priceOverride: 120,
         isIncluded: true,
         isFeaturedAtEvent: false,
-        currentOrderCount: 0,
       });
 
       expect(result.id).toBe(existingEventItemId);

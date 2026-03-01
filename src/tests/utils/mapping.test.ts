@@ -23,7 +23,7 @@ describe('Vendor Utils', () => {
         rating: 4.5,
         totalReviews: 10,
         location: { latitude: -33.9, longitude: 18.4 },
-        hours: [{ dayOfWeek: 1, openTime: '08:00', closeTime: '22:00' }],
+        hours: [{ dayOfWeek: 1, openTime: '08:00', closeTime: '22:00', isClosed: false }],
         isActive: true,
         isPaused: false,
         minimumOrder: 50,
@@ -47,7 +47,7 @@ describe('Vendor Utils', () => {
         rating: 4.5,
         total_reviews: 10,
         location: { latitude: -33.9, longitude: 18.4 },
-        hours: [{ dayOfWeek: 1, openTime: '08:00', closeTime: '22:00' }],
+        hours: [{ dayOfWeek: 1, openTime: '08:00', closeTime: '22:00', isClosed: false }],
         is_active: true,
         is_paused: false,
         minimum_order: 50,
@@ -170,7 +170,7 @@ describe('Vendor Utils', () => {
         description: 'Juicy beef',
         price: 80,
         imageUrl: 'https://img.test/burger.jpg',
-        type: 'FOOD',
+        type: 'FOOD' as const,
         prepTime: 10,
         available: true,
       };
@@ -285,7 +285,7 @@ describe('Event Utils', () => {
         imageUrl: 'https://img.test/event.jpg',
         isPublic: true,
         code: 'TESTEVENT',
-        status: 'PENDING',
+        status: 'PENDING' as const,
       };
 
       const result = toDbEvent(event);
@@ -318,7 +318,7 @@ describe('Event Utils', () => {
     it('should set branding to undefined when null', () => {
       const event = {
         name: 'No Brand',
-        branding: null,
+        branding: null as any,
       };
 
       const result = toDbEvent(event);
@@ -394,7 +394,7 @@ describe('Category Utils', () => {
       const category = {
         name: 'Fast Food',
         description: 'Quick service food',
-        type: 'VENDOR',
+        type: 'VENDOR' as const,
       };
 
       const result = toDbCategory(category);

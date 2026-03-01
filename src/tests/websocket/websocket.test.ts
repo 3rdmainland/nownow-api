@@ -82,7 +82,8 @@ async function simulateConnection(subscriptions: {
   vendorId?: string;
   phone?: string;
 } = {}): Promise<{ socket: ReturnType<typeof makeMockSocket>; cleanup: () => void }> {
-  const { default: websocketController } = await import('../../websocket/websocket.controller.js');
+  const mod = await import('../../websocket/websocket.controller.js');
+  const websocketController = mod.default as (...args: any[]) => Promise<void>;
 
   const socket = makeMockSocket();
 
@@ -102,7 +103,7 @@ async function simulateConnection(subscriptions: {
     get: vi.fn((path: string, opts: any, handler: (socket: any, req: any) => void) => {
       if (path === '/ws') routeHandler = handler;
     }),
-    register: vi.fn().mockImplementation(async (plugin: any, opts?: any) => {
+    register: vi.fn().mockImplementation(async (_plugin: any, _opts?: any) => {
       // Simulate @fastify/websocket doing nothing in the test
     }),
     log: fakeLog,
@@ -117,7 +118,7 @@ async function simulateConnection(subscriptions: {
   }
 
   // Simulate the client connecting (this adds the socket to `clients`)
-  routeHandler(socket, {});
+  (routeHandler as (socket: any, req: any) => void)(socket, {});
 
   // Simulate sending a SUBSCRIBE message if subscriptions are provided
   if (Object.keys(subscriptions).length > 0) {
@@ -776,7 +777,7 @@ describe('WebSocket controller – subscription message handling', () => {
     const { socket, cleanup } = await simulateConnection({ eventId: 'event-ack' });
 
     // Calls so far: [CONNECTED, SUBSCRIBED]
-    const subbedCall = socket.send.mock.calls.find((call: [string]) => {
+    const subbedCall = socket.send.mock.calls.find((call: any[]) => {
       const p = JSON.parse(call[0]);
       return p.type === 'SUBSCRIBED';
     });
