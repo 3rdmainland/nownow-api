@@ -1,3 +1,40 @@
+// Branding schema
+const brandingSchema = {
+    type: "object",
+    properties: {
+        theme: {
+            type: "object",
+            properties: {
+                primary: { type: "string" },
+                secondary: { type: "string" },
+                accent: { type: "string" },
+                background: { type: "string" },
+                foreground: { type: "string" },
+                landingBackground: { type: "string" },
+            },
+            additionalProperties: false,
+        },
+        assets: {
+            type: "object",
+            properties: {
+                logoLight: { type: "string" },
+                logoDark: { type: "string" },
+                favicon: { type: "string" },
+                backgroundImage: { type: "string" },
+            },
+            additionalProperties: false,
+        },
+        copy: {
+            type: "object",
+            properties: {
+                tagline: { type: "string" },
+            },
+            additionalProperties: false,
+        },
+    },
+    additionalProperties: false,
+};
+
 // Location schema
 const locationSchema = {
     type: "object",
@@ -31,7 +68,8 @@ const eventSchema = {
         created_at: { type: "string" },
         updated_at: { type: "string" },
         vendorIds: { type: "array", items: { type: "string" } },
-        code: { type: "string" }
+        code: { type: "string" },
+        branding: brandingSchema,
     },
     required: [
         "id",
@@ -59,6 +97,26 @@ export const getEventsResponseSchema = {
             properties: { events: { type: "array", items: eventSchema } },
             required: ["events"]
         },
+        500: { type: "object", properties: { error: { type: "string" } }, required: ["error"] }
+    }
+};
+
+// GET event by code
+export const getEventByCodeResponseSchema = {
+    description: "Get event by code",
+    tags: ['events'],
+    params: {
+        type: "object",
+        properties: { code: { type: "string" } },
+        required: ["code"]
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: { event: eventSchema },
+            required: ["event"]
+        },
+        404: { type: "object", properties: { error: { type: "string" } }, required: ["error"] },
         500: { type: "object", properties: { error: { type: "string" } }, required: ["error"] }
     }
 };
@@ -93,7 +151,8 @@ export const createEventSchema = {
             imageUrl: { type: "string" },
             isPublic: { type: "boolean" },
             vendorIds: { type: "array", items: { type: "string" } },
-            code: { type: "string" }
+            code: { type: "string" },
+            branding: brandingSchema,
         },
         required: ["name", "startDate", "endDate", "location", "isPublic", "vendorIds", "code"]
     },
@@ -128,7 +187,8 @@ export const updateEventSchema = {
             isPublic: { type: "boolean" },
             status: { type: "string", enum: ["PENDING", "APPROVED", "ONGOING", "REJECTED"] },
             vendorIds: { type: "array", items: { type: "string" } },
-            code: { type: "string" }
+            code: { type: "string" },
+            branding: brandingSchema,
         }
     },
     response: {

@@ -7,6 +7,19 @@ import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from
 import { DiscountService } from "../discount/discount.service.js";
 import { ValidationError } from "../lib/errors.js";
 
+interface EventMenuConfig {
+    is_accepting_orders: boolean;
+    status: string;
+    max_concurrent_orders: number | null;
+    current_active_orders: number;
+    order_cooldown_minutes: number | null;
+    max_orders_per_customer_event: number | null;
+    prep_time_buffer_minutes: number | null;
+    event_open_time: string | null;
+    event_close_time: string | null;
+    operating_schedule: any[] | null;
+}
+
 export class OrderService {
     private scheduler: OrderScheduler;
 
@@ -87,7 +100,7 @@ export class OrderService {
                 }
             }
 
-            const { data: menuConfig } = await supabase
+            const { data } = await supabase
                 .from('event_menu_configurations')
                 .select(
                     'is_accepting_orders, status, max_concurrent_orders, current_active_orders, ' +
@@ -97,6 +110,7 @@ export class OrderService {
                 .eq('vendor_id', order.vendor_id)
                 .eq('event_id', order.event_id)
                 .single();
+            const menuConfig = data as EventMenuConfig | null;
 
             if (menuConfig) {
                 // 1. Check if vendor is accepting orders

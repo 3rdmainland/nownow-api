@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from "fastify";
 import {
     getEventsResponseSchema,
     getEventByIdResponseSchema,
+    getEventByCodeResponseSchema,
     createEventSchema,
     updateEventSchema,
     deleteEventSchema,
@@ -18,6 +19,17 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         try {
             const events = await eventService.getAllEvents();
             return { events };
+        } catch (err) {
+            fastify.log.error(err);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
+    fastify.get<{ Params: { code: string } }>("/code/:code", { schema: getEventByCodeResponseSchema }, async (request, reply) => {
+        try {
+            const event = await eventService.getEventByCode(request.params.code);
+            if (!event) return reply.status(404).send({ error: "Event not found" });
+            return { event };
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

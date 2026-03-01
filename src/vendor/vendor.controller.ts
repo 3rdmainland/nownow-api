@@ -72,11 +72,11 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get vendors that have items in a given menu category
+    // Get vendors that have items in a given menu category, optionally scoped to an event
     fastify.get("/category/items", { schema: getVendorsWithItemsInCategorySchema }, async (request, reply) => {
         try {
-            const { categoryId } = request.query as { categoryId: string };
-            const vendors = await vendorService.getVendorsWithItemsInCategory(categoryId);
+            const { categoryId, eventCode } = request.query as { categoryId: string; eventCode?: string };
+            const vendors = await vendorService.getVendorsWithItemsInCategory(categoryId, eventCode);
             return { vendors };
         } catch (err) {
             fastify.log.error(err);

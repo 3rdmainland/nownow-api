@@ -15,7 +15,8 @@ const cacheKeys = {
         `vendors:event:${eventId}:page:${page}:size:${pageSize}`,
     vendorSearch: (term: string, eventId?: string) =>
         `vendors:search:${term}${eventId ? `:event:${eventId}` : ''}`,
-    vendorsWithItemsByCategory: (categoryId: string) => `vendors:menuCategory:${categoryId}`,
+    vendorsWithItemsByCategory: (categoryId: string, eventId?: string) =>
+        `vendors:menuCategory:${categoryId}${eventId ? `:event:${eventId}` : ''}`,
 } as const;
 
 export class VendorService {
@@ -258,27 +259,51 @@ export class VendorService {
 
     /**
      * Return active vendors that have at least one AVAILABLE menu item
-     * in the specified menu category (categoryId refers to vendor_menu_items.category_id)
+     * in the specified menu category, optionally scoped to an event.
      */
-    async getVendorsWithItemsInCategory(categoryId: string): Promise<Vendor[]> {
-        const cacheKey = cacheKeys.vendorsWithItemsByCategory(categoryId);
+    async getVendorsWithItemsInCategory(categoryId: string, eventIdOrCode?: string): Promise<Vendor[]> {
+        // Resolve event ID when scoping to an event
+        let eventId: string | undefined;
+        let allowedVendorIds: string[] | undefined;
+
+        if (eventIdOrCode) {
+            const resolved = await this.getEventByIdOrCode(eventIdOrCode);
+            if (resolved) {
+                eventId = resolved;
+                const { data: eventVendors } = await supabase
+                    .from('event_vendors')
+                    .select('vendor_id')
+                    .eq('event_id', eventId);
+                allowedVendorIds = (eventVendors || []).map((ev: any) => ev.vendor_id);
+                if (allowedVendorIds.length === 0) {
+                    return [];
+                }
+            }
+        }
+
+        const cacheKey = cacheKeys.vendorsWithItemsByCategory(categoryId, eventId);
 
         try {
-            // Try cache first
             const cached = await cache.get<Vendor[]>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorsWithItemsInCategory(${categoryId})`);
+                console.log(`Cache HIT: getVendorsWithItemsInCategory(${categoryId}, ${eventId})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorsWithItemsInCategory(${categoryId})`);
+            console.log(`Cache MISS: getVendorsWithItemsInCategory(${categoryId}, ${eventId})`);
 
-            // Find vendor ids that have at least one available item in category
-            const { data: items, error: itemsError } = await supabase
+            // Find vendor IDs with at least one available item in the category
+            let itemQuery = supabase
                 .from('vendor_menu_items')
                 .select('vendor_id')
                 .eq('category_id', categoryId)
                 .eq('available', true);
+
+            if (allowedVendorIds) {
+                itemQuery = itemQuery.in('vendor_id', allowedVendorIds);
+            }
+
+            const { data: items, error: itemsError } = await itemQuery;
 
             if (itemsError) {
                 throw new Error(`Failed to fetch menu items for category: ${itemsError.message}`);
@@ -291,7 +316,6 @@ export class VendorService {
                 return [];
             }
 
-            // Fetch active vendors by ids
             const { data: vendorsData, error: vendorsError } = await supabase
                 .from('vendors')
                 .select('*')
@@ -304,7 +328,6 @@ export class VendorService {
 
             const vendors = (vendorsData || []).map(fromDbVendor);
 
-            // Cache the result
             await cache.set(cacheKey, vendors, CACHE_TTL.VENDOR_LIST);
 
             return vendors;

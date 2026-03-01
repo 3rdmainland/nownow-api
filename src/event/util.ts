@@ -11,7 +11,8 @@ export function toDbEvent(event: Partial<Event>) {
         image_url: event.imageUrl,
         is_public: event.isPublic,
         code: event.code,
-        status: event.status
+        status: event.status,
+        branding: event.branding ?? undefined,
     };
 }
 
@@ -29,6 +30,7 @@ export function fromDbEvent(dbEvent: any): Event {
         code: dbEvent.code,
         created_at: dbEvent.created_at,
         updated_at: dbEvent.updated_at,
-        vendorIds: []
+        vendorIds: [],
+        branding: dbEvent.branding ?? undefined,
     };
 }

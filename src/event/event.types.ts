@@ -1,5 +1,25 @@
 export type EventStatus = 'PENDING' | 'APPROVED' | 'ONGOING' | 'REJECTED';
 
+export interface EventBranding {
+    theme?: {
+        primary?: string;
+        secondary?: string;
+        accent?: string;
+        background?: string;
+        foreground?: string;
+        landingBackground?: string;
+    };
+    assets?: {
+        logoLight?: string;
+        logoDark?: string;
+        favicon?: string;
+        backgroundImage?: string;
+    };
+    copy?: {
+        tagline?: string;
+    };
+}
+
 export interface Event {
     id: string;
     name: string;
@@ -22,4 +42,5 @@ export interface Event {
     vendorIds: string[];
     code: string;
     menuStatus?: 'DRAFT' | 'PUBLISHED' | 'NOT_CONFIGURED';
+    branding?: EventBranding;
 }

@@ -379,7 +379,8 @@ export const getVendorsWithItemsInCategorySchema = {
         type: 'object',
         required: ['categoryId'],
         properties: {
-            categoryId: { type: 'string' }
+            categoryId: { type: 'string' },
+            eventCode: { type: 'string' }
         }
     },
     response: {

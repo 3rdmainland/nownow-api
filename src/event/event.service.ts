@@ -33,6 +33,17 @@ export class EventService {
 
         return data ? fromDbEvent(data) : null;
     }
+    async getEventByCode(code: string): Promise<Event | null> {
+        const { data, error } = await supabase
+            .from('events')
+            .select('*')
+            .eq('code', code)
+            .single();
+
+        if (error) return null;
+        return data ? fromDbEvent(data) : null;
+    }
+
     // Add a helper method to get event by ID or code
     async getEventByIdOrCode(eventIdOrCode: string): Promise<string | null> {
         // First try as UUID (ID)
