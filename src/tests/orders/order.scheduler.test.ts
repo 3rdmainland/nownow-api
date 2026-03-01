@@ -108,7 +108,7 @@ describe('OrderScheduler', () => {
       // Event that ends in 5 minutes
       const event = makeEvent({
         end_date: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-        status: 'ONGOING',
+        status: 'ACTIVE',
       });
 
       mockFromSequence([
@@ -126,7 +126,7 @@ describe('OrderScheduler', () => {
       // Event that ends in 2 hours
       const event = makeEvent({
         end_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-        status: 'ONGOING',
+        status: 'ACTIVE',
       });
 
       mockFromSequence([
@@ -162,7 +162,7 @@ describe('OrderScheduler', () => {
     });
 
     it('should return isValid false when event is not active', async () => {
-      const event = makeEvent({ status: 'PENDING' });
+      const event = makeEvent({ status: 'CANCELED' });
 
       mockFromSequence([
         { data: event, error: null },
@@ -183,7 +183,7 @@ describe('OrderScheduler', () => {
       const event = makeEvent({
         start_date: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
         end_date: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        status: 'ONGOING',
+        status: 'ACTIVE',
       });
 
       mockFromSequence([
@@ -206,7 +206,7 @@ describe('OrderScheduler', () => {
       const event = makeEvent({
         start_date: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
         end_date: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
-        status: 'ONGOING',
+        status: 'ACTIVE',
       });
 
       mockFromSequence([
@@ -229,7 +229,7 @@ describe('OrderScheduler', () => {
       const event = makeEvent({
         start_date: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
         end_date: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
-        status: 'ONGOING',
+        status: 'ACTIVE',
       });
 
       mockFromSequence([

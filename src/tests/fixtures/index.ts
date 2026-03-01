@@ -64,7 +64,7 @@ export const makeEvent = (overrides: Record<string, any> = {}) => ({
     zipCode: '8001',
   },
   is_public: true,
-  status: 'ONGOING',
+  status: 'ACTIVE',
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
   ...overrides,

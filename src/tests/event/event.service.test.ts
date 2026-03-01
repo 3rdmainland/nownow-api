@@ -69,7 +69,7 @@ describe('EventService', () => {
       expect(events[0]).toMatchObject({
         name: 'Summer Fest',
         code: 'SUMFEST',
-        status: 'ONGOING',
+        status: 'ACTIVE',
       });
       expect(events[1]).toMatchObject({
         name: 'Winter Gala',
@@ -210,12 +210,12 @@ describe('EventService', () => {
   // ── createEvent ──────────────────────────────────────────────────────────────
 
   describe('createEvent', () => {
-    it('inserts a new event and returns the mapped result with PENDING status', async () => {
+    it('inserts a new event and returns the mapped result with ACTIVE status', async () => {
       const insertedDbEvent = makeEvent({
         id: 'new-event-id',
         name: 'Brand New Event',
         code: 'NEWEV',
-        status: 'PENDING',
+        status: 'ACTIVE',
       });
 
       supabaseMock.from.mockReturnValue(
@@ -245,7 +245,7 @@ describe('EventService', () => {
         id: 'new-event-id',
         name: 'Brand New Event',
         code: 'NEWEV',
-        status: 'PENDING',
+        status: 'ACTIVE',
       });
       // vendorIds is always initialised as empty array by fromDbEvent
       expect(event.vendorIds).toEqual([]);
@@ -286,19 +286,19 @@ describe('EventService', () => {
       const updatedDbEvent = makeEvent({
         id: 'event-to-update',
         name: 'Updated Name',
-        status: 'APPROVED',
+        status: 'ACTIVE',
       });
 
       supabaseMock.from.mockReturnValue(
         createSupabaseMock({ data: updatedDbEvent, error: null }),
       );
 
-      const event = await service.updateEvent('event-to-update', { name: 'Updated Name', status: 'APPROVED' });
+      const event = await service.updateEvent('event-to-update', { name: 'Updated Name', status: 'ACTIVE' });
 
       expect(event).toMatchObject({
         id: 'event-to-update',
         name: 'Updated Name',
-        status: 'APPROVED',
+        status: 'ACTIVE',
       });
     });
 

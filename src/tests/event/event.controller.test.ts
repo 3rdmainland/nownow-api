@@ -203,7 +203,7 @@ describe('Event Controller (integration)', () => {
         id: 'new-event-uuid',
         name: 'Cape Town Food Fest',
         code: 'CTFOODFEST',
-        status: 'PENDING',
+        status: 'ACTIVE',
       });
 
       supabaseMock.from.mockReturnValue(
@@ -221,7 +221,7 @@ describe('Event Controller (integration)', () => {
       expect(body).toHaveProperty('event');
       expect(body.event.name).toBe('Cape Town Food Fest');
       expect(body.event.code).toBe('CTFOODFEST');
-      expect(body.event.status).toBe('PENDING');
+      expect(body.event.status).toBe('ACTIVE');
     });
 
     it('returns 500 when the database insert fails', async () => {
@@ -258,7 +258,7 @@ describe('Event Controller (integration)', () => {
       const updatedDbEvent = makeEvent({
         id: 'ev-patch-id',
         name: 'Renamed Event',
-        status: 'APPROVED',
+        status: 'ACTIVE',
       });
 
       supabaseMock.from.mockReturnValue(
@@ -268,13 +268,13 @@ describe('Event Controller (integration)', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/event/ev-patch-id',
-        payload: { name: 'Renamed Event', status: 'APPROVED' },
+        payload: { name: 'Renamed Event', status: 'ACTIVE' },
       });
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.event.name).toBe('Renamed Event');
-      expect(body.event.status).toBe('APPROVED');
+      expect(body.event.status).toBe('ACTIVE');
     });
 
     it('returns 500 when the event to update does not exist', async () => {

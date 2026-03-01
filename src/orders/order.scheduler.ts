@@ -224,7 +224,7 @@ export class OrderScheduler {
         const now = new Date();
 
         // 2. Validate event is active
-        if (event.status !== 'ONGOING' && event.status !== 'APPROVED') {
+        if (event.status !== 'ACTIVE') {
             return {
                 isValid: false,
                 error: 'Event is not active'

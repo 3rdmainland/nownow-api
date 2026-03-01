@@ -1,4 +1,4 @@
-export type EventStatus = 'PENDING' | 'APPROVED' | 'ONGOING' | 'REJECTED';
+export type EventStatus = 'ACTIVE' | 'CANCELED';
 
 export interface EventBranding {
     theme?: {

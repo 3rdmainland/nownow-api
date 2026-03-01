@@ -285,7 +285,7 @@ describe('Event Utils', () => {
         imageUrl: 'https://img.test/event.jpg',
         isPublic: true,
         code: 'TESTEVENT',
-        status: 'PENDING' as const,
+        status: 'ACTIVE' as const,
       };
 
       const result = toDbEvent(event);
@@ -299,7 +299,7 @@ describe('Event Utils', () => {
         image_url: 'https://img.test/event.jpg',
         is_public: true,
         code: 'TESTEVENT',
-        status: 'PENDING',
+        status: 'ACTIVE',
         branding: undefined,
       });
     });
@@ -338,7 +338,7 @@ describe('Event Utils', () => {
         location: { latitude: -33.9, longitude: 18.4 },
         image_url: 'https://img.test/event.jpg',
         is_public: true,
-        status: 'ONGOING',
+        status: 'ACTIVE',
         code: 'DBEV',
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-02T00:00:00Z',
@@ -356,7 +356,7 @@ describe('Event Utils', () => {
         location: { latitude: -33.9, longitude: 18.4 },
         imageUrl: 'https://img.test/event.jpg',
         isPublic: true,
-        status: 'ONGOING',
+        status: 'ACTIVE',
         code: 'DBEV',
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-02T00:00:00Z',

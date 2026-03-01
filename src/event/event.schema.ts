@@ -63,7 +63,7 @@ const eventSchema = {
         isPublic: { type: "boolean" },
         status: {
             type: "string",
-            enum: ["PENDING", "APPROVED", "ONGOING", "REJECTED"]
+            enum: ["ACTIVE", "CANCELED"]
         },
         created_at: { type: "string" },
         updated_at: { type: "string" },
@@ -185,7 +185,7 @@ export const updateEventSchema = {
             location: locationSchema,
             imageUrl: { type: "string" },
             isPublic: { type: "boolean" },
-            status: { type: "string", enum: ["PENDING", "APPROVED", "ONGOING", "REJECTED"] },
+            status: { type: "string", enum: ["ACTIVE", "CANCELED"] },
             vendorIds: { type: "array", items: { type: "string" } },
             code: { type: "string" },
             branding: brandingSchema,

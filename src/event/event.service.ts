@@ -97,9 +97,10 @@ export class EventService {
     }
 
     async createEvent(event: Omit<Event, "id" | "created_at" | "status">): Promise<Event> {
+        const { status: _ignored, ...safeDbEvent } = toDbEvent(event as Partial<Event>);
         const dbEvent = {
-            ...toDbEvent(event),
-            status: 'PENDING' as const
+            ...safeDbEvent,
+            status: 'ACTIVE' as const
         };
 
         const { data, error } = await supabase
