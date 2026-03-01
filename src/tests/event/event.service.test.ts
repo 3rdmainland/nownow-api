@@ -46,6 +46,9 @@ describe('EventService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    cacheMock.get.mockResolvedValue(null);
+    cacheMock.set.mockResolvedValue(undefined);
+    cacheMock.del.mockResolvedValue(undefined);
     service = new EventService();
   });
 
@@ -314,17 +317,27 @@ describe('EventService', () => {
 
   describe('deleteEvent', () => {
     it('resolves without error on successful deletion', async () => {
-      supabaseMock.from.mockReturnValue(
+      const existingEvent = makeEvent({ id: 'event-id-to-delete', code: 'DEL01' });
+
+      mockFromSequence([
+        // 1st call: getEventById → select from events
+        createSupabaseMock({ data: existingEvent, error: null }),
+        // 2nd call: delete from events
         createSupabaseMock({ data: null, error: null }),
-      );
+      ]);
 
       await expect(service.deleteEvent('event-id-to-delete')).resolves.toBeUndefined();
     });
 
     it('throws an error when the deletion fails', async () => {
-      supabaseMock.from.mockReturnValue(
+      const existingEvent = makeEvent({ id: 'locked-event-id', code: 'LOCKED' });
+
+      mockFromSequence([
+        // 1st call: getEventById → select from events (succeeds)
+        createSupabaseMock({ data: existingEvent, error: null }),
+        // 2nd call: delete from events (fails)
         createSupabaseMock({ data: null, error: { message: 'foreign key violation' } }),
-      );
+      ]);
 
       await expect(service.deleteEvent('locked-event-id')).rejects.toThrow(
         'Failed to delete event: foreign key violation',

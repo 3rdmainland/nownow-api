@@ -65,6 +65,7 @@ vi.mock('../../discount/discount.service.js', () => ({
     DiscountService: vi.fn(function() {
         return {
             resolveDiscount: vi.fn().mockResolvedValue(null),
+            resolveDiscountsForMenu: vi.fn().mockResolvedValue(new Map()),
         };
     }),
 }));
@@ -429,7 +430,14 @@ describe('OrderService', () => {
                 makeOrder({ total: 100, status: OrderStatus.COLLECTED, items: [{ name: 'Burger', quantity: 1, price: 100, id: '1', vendorId: 'v1', vendorName: 'V' }], payment_method: 'CASH' }),
                 makeOrder({ total: 50, status: OrderStatus.CANCELLED, items: [{ name: 'Fries', quantity: 2, price: 25, id: '2', vendorId: 'v1', vendorName: 'V' }], payment_method: 'CASH' }),
             ];
-            mockFrom({ data: orders, error: null });
+            // getOrderStats makes 2 parallel queries: summaryQuery (all orders) and
+            // itemsQuery (non-cancelled only, via .neq('status','CANCELLED')).
+            // The mock doesn't actually filter, so we use mockFromSequence to return
+            // the correct subset for each query.
+            mockFromSequence(
+                { data: orders, error: null },              // summaryQuery – all orders
+                { data: [orders[0]], error: null },          // itemsQuery  – non-cancelled only
+            );
 
             const result = await service.getOrderStats();
 

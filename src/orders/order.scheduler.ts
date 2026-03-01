@@ -102,17 +102,6 @@ export class OrderScheduler {
             }
         } catch (_) { /* ignore if not found */ }
 
-        console.log('[getAvailableTimeSlots] Debug:', {
-            vendorId,
-            eventId: event.id,
-            eventStart: eventStart.toISOString(),
-            eventEnd: eventEnd.toISOString(),
-            now: now.toISOString(),
-            eventDayHoursCount: eventDayHours.length,
-            vendorEventHoursCount: vendorEventHours.length,
-            vendorHours: vendorHours,
-        });
-
         // Build vendor hours lookup by day of week (0=Sunday, 6=Saturday)
         // Handle both camelCase (from app) and snake_case (from DB) formats
         const vendorHoursByDayOfWeek = new Map<number, { openTime: string; closeTime: string; isClosed: boolean }>();
@@ -204,11 +193,6 @@ export class OrderScheduler {
 
         // Sort intervals by start
         intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
-        console.log('[buildAllowedIntervals] Result:', {
-            days: days,
-            intervalsCount: intervals.length,
-            intervals: intervals.map(i => ({ start: i.start.toISOString(), end: i.end.toISOString() })),
-        });
         return intervals;
     }
     /**
@@ -400,19 +384,9 @@ export class OrderScheduler {
         // Use the earlier of event end or end of tomorrow as the cutoff
         const slotsCutoff = eventEnd < endOfTomorrow ? eventEnd : endOfTomorrow;
 
-        console.log('[getAvailableTimeSlots] Cutoff:', {
-            endOfTomorrow: endOfTomorrow.toISOString(),
-            slotsCutoff: slotsCutoff.toISOString(),
-        });
-
         // Build allowed intervals using per-day hours
         const intervals = await this.buildAllowedIntervals(event, vendorId, now);
         const firstStart = intervals[0]?.start || this.roundUpToNearest5Minutes(eventStart > now ? eventStart : now);
-
-        console.log('[getAvailableTimeSlots] Intervals:', {
-            intervalsCount: intervals.length,
-            firstStart: firstStart.toISOString(),
-        });
 
         // 2) Fetch all orders for the vendor within the window in ONE query
         const { data: orders, error: ordersError } = await supabase
@@ -468,7 +442,7 @@ export class OrderScheduler {
     async updateQueuePositions(vendorId: string): Promise<void> {
         const { data: pendingOrders, error } = await supabase
             .from('orders')
-            .select('*')
+            .select('id')
             .eq('vendor_id', vendorId)
             .eq('status', OrderStatus.PENDING)
             .order('scheduled_pickup_time', { ascending: true });
@@ -478,7 +452,7 @@ export class OrderScheduler {
             return;
         }
 
-        const orders = (pendingOrders || []) as Order[];
+        const orders = (pendingOrders || []) as { id: string }[];
 
         // Update queue positions in parallel (each targets a different row)
         await Promise.all(

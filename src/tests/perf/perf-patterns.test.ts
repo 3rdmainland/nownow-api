@@ -82,7 +82,11 @@ describe('Performance Pattern Verification', () => {
             const statsMethod = source.slice(statsMethodStart, statsMethodEnd);
 
             expect(statsMethod).not.toContain("select('*')");
-            expect(statsMethod).toContain("select('total, status, items, payment_method')");
+            // getOrderStats now uses 2 parallel queries:
+            // summaryQuery with select('total, status, payment_method')
+            // itemsQuery with select('items, status')
+            expect(statsMethod).toContain("select('total, status, payment_method')");
+            expect(statsMethod).toContain("select('items, status')");
         });
 
         it('getVendorStats should not fetch all order columns', async () => {
@@ -97,7 +101,12 @@ describe('Performance Pattern Verification', () => {
             const statsMethod = source.slice(statsMethodStart, statsMethodEnd);
 
             expect(statsMethod).not.toContain("select('*')");
-            expect(statsMethod).toContain("select('total, status, created_at')");
+            // getVendorStats now uses 3 parallel queries:
+            // revenueQuery with select('total, status')
+            // todayQuery with select('id', { count: 'exact', head: true })
+            // activeQuery with select('id', { count: 'exact', head: true })
+            expect(statsMethod).toContain("select('total, status')");
+            expect(statsMethod).toContain("{ count: 'exact', head: true }");
         });
     });
 

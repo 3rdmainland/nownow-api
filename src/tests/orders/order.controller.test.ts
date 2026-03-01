@@ -60,6 +60,7 @@ vi.mock('../../discount/discount.service.js', () => ({
     DiscountService: vi.fn(function() {
         return {
             resolveDiscount: vi.fn().mockResolvedValue(null),
+            resolveDiscountsForMenu: vi.fn().mockResolvedValue(new Map()),
         };
     }),
 }));

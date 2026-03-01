@@ -824,9 +824,11 @@ describe('VendorService', () => {
       ];
 
       cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbOrders, error: null })
-      );
+      mockFromSequence([
+        createSupabaseMock({ data: dbOrders, error: null }),        // revenue query: orders with total + status
+        createSupabaseMock({ data: null, error: null, count: 2 }), // today count query (head: true)
+        createSupabaseMock({ data: null, error: null, count: 2 }), // active count query (PENDING + PREPARING)
+      ]);
 
       const result = await service.getVendorStats('vendor-1');
 

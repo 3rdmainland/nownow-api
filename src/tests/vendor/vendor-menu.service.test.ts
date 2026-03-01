@@ -880,10 +880,10 @@ describe('VendorMenuService', () => {
       ];
 
       const itemsMock = createSupabaseMock({ data: dbItems, error: null });
-      const upsertMock1 = createSupabaseMock({ data: null, error: null });
-      const upsertMock2 = createSupabaseMock({ data: null, error: null });
+      const upsertMock = createSupabaseMock({ data: null, error: null });
 
-      mockFromSequence([itemsMock, upsertMock1, upsertMock2]);
+      // 2 calls: 1 items query + 1 batch upsert (all items in single call)
+      mockFromSequence([itemsMock, upsertMock]);
 
       const result = await service.bulkPriceAdjustment(vendorId, {
         eventId,

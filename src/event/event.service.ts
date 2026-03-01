@@ -4,10 +4,21 @@ import {OrderStatus} from "../orders/order.types";
 import {fromDbEvent, toDbEvent} from "./util";
 import { cache } from "../lib/redis";
 
+const EVENT_CACHE_TTL = 60; // 60 seconds
+
+const eventCacheKeys = {
+    all: () => 'events:all',
+    byId: (id: string) => `events:id:${id}`,
+    byCode: (code: string) => `events:code:${code}`,
+} as const;
+
 export class EventService {
-// In event.service.ts
 
     async getAllEvents(): Promise<Event[]> {
+        const cacheKey = eventCacheKeys.all();
+        const cached = await cache.get<Event[]>(cacheKey);
+        if (cached) return cached;
+
         const { data, error } = await supabase
             .from("events")
             .select("*");
@@ -16,11 +27,16 @@ export class EventService {
             throw new Error(`Failed to fetch events: ${error.message}`);
         }
 
-        // Map each event from snake_case to camelCase
-        return (data || []).map(dbEvent => fromDbEvent(dbEvent));
+        const events = (data || []).map(dbEvent => fromDbEvent(dbEvent));
+        await cache.set(cacheKey, events, EVENT_CACHE_TTL);
+        return events;
     }
 
     async getEventById(id: string): Promise<Event | null> {
+        const cacheKey = eventCacheKeys.byId(id);
+        const cached = await cache.get<Event>(cacheKey);
+        if (cached) return cached;
+
         const { data, error } = await supabase
             .from('events')
             .select('*')
@@ -31,9 +47,16 @@ export class EventService {
             throw new Error(`Failed to fetch event: ${error.message}`);
         }
 
-        return data ? fromDbEvent(data) : null;
+        const event = data ? fromDbEvent(data) : null;
+        if (event) await cache.set(cacheKey, event, EVENT_CACHE_TTL);
+        return event;
     }
+
     async getEventByCode(code: string): Promise<Event | null> {
+        const cacheKey = eventCacheKeys.byCode(code);
+        const cached = await cache.get<Event>(cacheKey);
+        if (cached) return cached;
+
         const { data, error } = await supabase
             .from('events')
             .select('*')
@@ -41,7 +64,9 @@ export class EventService {
             .single();
 
         if (error) return null;
-        return data ? fromDbEvent(data) : null;
+        const event = data ? fromDbEvent(data) : null;
+        if (event) await cache.set(cacheKey, event, EVENT_CACHE_TTL);
+        return event;
     }
 
     // Add a helper method to get event by ID or code
@@ -85,7 +110,9 @@ export class EventService {
 
         if (error) throw new Error(`Failed to create event: ${error.message}`);
 
-        return fromDbEvent(data);
+        const created = fromDbEvent(data);
+        await this.invalidateEventCaches(created.id, created.code);
+        return created;
     }
 
     async updateEvent(id: string, updates: Partial<Event>): Promise<Event> {
@@ -94,12 +121,28 @@ export class EventService {
         );
         const { data, error } = await supabase.from("events").update(dbUpdates).eq("id", id).select().single();
         if (error) throw new Error(`Failed to update event: ${error.message}`);
-        return fromDbEvent(data);
+
+        const event = fromDbEvent(data);
+        await this.invalidateEventCaches(event.id, event.code);
+        return event;
     }
 
     async deleteEvent(id: string): Promise<void> {
+        // Fetch before deleting so we can invalidate by code too
+        const existing = await this.getEventById(id);
         const { error } = await supabase.from("events").delete().eq("id", id);
         if (error) throw new Error(`Failed to delete event: ${error.message}`);
+        await this.invalidateEventCaches(id, existing?.code);
+    }
+
+    private async invalidateEventCaches(id: string, code?: string): Promise<void> {
+        const keys = [eventCacheKeys.all(), eventCacheKeys.byId(id)];
+        if (code) keys.push(eventCacheKeys.byCode(code));
+        try {
+            await cache.del(...keys);
+        } catch {
+            // Cache invalidation failure should not break the operation
+        }
     }
 
     async addVendorsToEvent(eventId: string, vendorIds: string[]): Promise<void> {

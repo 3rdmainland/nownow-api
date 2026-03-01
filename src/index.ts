@@ -1,6 +1,9 @@
 import Fastify from "fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyJwt from "@fastify/jwt";
+import fastifyCompress from "@fastify/compress";
+import fastifyHelmet from "@fastify/helmet";
+import fastifyRateLimit from "@fastify/rate-limit";
 import orderController from "./orders/order.controller";
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUI from '@fastify/swagger-ui';
@@ -37,6 +40,22 @@ await fastify.register(fastifyCors, {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
+});
+
+// Response compression (brotli + gzip)
+await fastify.register(fastifyCompress, {
+    encodings: ['br', 'gzip', 'deflate'],
+});
+
+// Security headers
+await fastify.register(fastifyHelmet, {
+    contentSecurityPolicy: false, // Disable CSP for API-only server
+});
+
+// Rate limiting (local store — Upstash REST client is not ioredis-compatible)
+await fastify.register(fastifyRateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
 });
 
 // Cookie & JWT

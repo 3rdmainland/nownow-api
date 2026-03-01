@@ -6,6 +6,7 @@ import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 import { ValidationError } from "../lib/errors.js";
+import { cache, CACHE_TTL } from "../lib/redis";
 
 interface EventMenuConfig {
     is_accepting_orders: boolean;
@@ -70,13 +71,32 @@ export class OrderService {
         order: Omit<Order, 'id' | 'created_at' | 'status' | 'type' | 'estimatedPrepTime' | 'qr_image' | 'qr_code'>
     ): Promise<Order> {
         const qrHelper = new QRHelper();
-        // Fetch vendor details including name
-        const { data: vendor, error: vendorError } = await supabase
-            .from('vendors')
-            .select('estimated_prep_time, name, minimum_order, service_fee_percent')
-            .eq('id', order.vendor_id)
-            .single();
 
+        // ── Parallel fetch: vendor, event dates, menu config ─────────────
+        const [vendorResult, eventDataResult, menuConfigResult] = await Promise.all([
+            supabase
+                .from('vendors')
+                .select('estimated_prep_time, name, minimum_order, service_fee_percent')
+                .eq('id', order.vendor_id)
+                .single(),
+            order.event_id
+                ? supabase.from('events').select('start_date, end_date').eq('id', order.event_id).single()
+                : Promise.resolve({ data: null, error: null }),
+            order.event_id
+                ? supabase
+                      .from('event_menu_configurations')
+                      .select(
+                          'is_accepting_orders, status, max_concurrent_orders, current_active_orders, ' +
+                          'order_cooldown_minutes, max_orders_per_customer_event, prep_time_buffer_minutes, ' +
+                          'event_open_time, event_close_time, operating_schedule'
+                      )
+                      .eq('vendor_id', order.vendor_id)
+                      .eq('event_id', order.event_id)
+                      .single()
+                : Promise.resolve({ data: null, error: null }),
+        ]);
+
+        const { data: vendor, error: vendorError } = vendorResult;
         if (vendorError || !vendor) {
             throw new Error(`Failed to fetch vendor info: ${vendorError?.message || 'Vendor not found'}`);
         }
@@ -85,12 +105,7 @@ export class OrderService {
 
         // ── Enforce event menu configuration rules ───────────────────────
         if (order.event_id) {
-            // 0. Check event is within its overall start/end date bounds
-            const { data: eventData } = await supabase
-                .from('events')
-                .select('start_date, end_date')
-                .eq('id', order.event_id)
-                .single();
+            const eventData = eventDataResult.data;
 
             if (eventData) {
                 const now = new Date();
@@ -106,17 +121,7 @@ export class OrderService {
                 }
             }
 
-            const { data } = await supabase
-                .from('event_menu_configurations')
-                .select(
-                    'is_accepting_orders, status, max_concurrent_orders, current_active_orders, ' +
-                    'order_cooldown_minutes, max_orders_per_customer_event, prep_time_buffer_minutes, ' +
-                    'event_open_time, event_close_time, operating_schedule'
-                )
-                .eq('vendor_id', order.vendor_id)
-                .eq('event_id', order.event_id)
-                .single();
-            const menuConfig = data as EventMenuConfig | null;
+            const menuConfig = menuConfigResult.data as EventMenuConfig | null;
 
             if (menuConfig) {
                 // 1. Check if vendor is accepting orders
@@ -144,19 +149,33 @@ export class OrderService {
                     );
                 }
 
-                // 4. Check order cooldown (minimum minutes between new orders accepted)
-                if (menuConfig.order_cooldown_minutes) {
-                    const cooldownMs = menuConfig.order_cooldown_minutes * 60 * 1000;
-                    const cutoff = new Date(Date.now() - cooldownMs).toISOString();
-                    const { data: recentOrders } = await supabase
-                        .from('orders')
-                        .select('id, created_at')
-                        .eq('vendor_id', order.vendor_id)
-                        .eq('event_id', order.event_id)
-                        .gte('created_at', cutoff)
-                        .limit(1);
+                // 4 & 5: Parallel checks — cooldown + max orders per customer
+                {
+                    const cooldownPromise = menuConfig.order_cooldown_minutes
+                        ? supabase
+                              .from('orders')
+                              .select('id, created_at')
+                              .eq('vendor_id', order.vendor_id)
+                              .eq('event_id', order.event_id)
+                              .gte('created_at', new Date(Date.now() - menuConfig.order_cooldown_minutes * 60 * 1000).toISOString())
+                              .limit(1)
+                        : Promise.resolve({ data: null });
 
-                    if (recentOrders && recentOrders.length > 0) {
+                    const maxOrdersPromise = (menuConfig.max_orders_per_customer_event && order.phone)
+                        ? supabase
+                              .from('orders')
+                              .select('id', { count: 'exact', head: true })
+                              .eq('vendor_id', order.vendor_id)
+                              .eq('event_id', order.event_id)
+                              .eq('phone', order.phone)
+                        : Promise.resolve({ count: null });
+
+                    const [cooldownResult, maxOrdersResult] = await Promise.all([cooldownPromise, maxOrdersPromise]);
+
+                    // 4. Cooldown check
+                    if (menuConfig.order_cooldown_minutes && cooldownResult.data && (cooldownResult.data as any[]).length > 0) {
+                        const cooldownMs = menuConfig.order_cooldown_minutes * 60 * 1000;
+                        const recentOrders = cooldownResult.data as any[];
                         const lastOrderTime = new Date(recentOrders[0].created_at);
                         const nextAvailable = new Date(lastOrderTime.getTime() + cooldownMs);
                         const waitSecs = Math.ceil((nextAvailable.getTime() - Date.now()) / 1000);
@@ -165,22 +184,16 @@ export class OrderService {
                             `Please try again in ${waitSecs < 60 ? `${waitSecs}s` : `${Math.ceil(waitSecs / 60)}m`}.`
                         );
                     }
-                }
 
-                // 5. Check max orders per customer for this event
-                if (menuConfig.max_orders_per_customer_event && order.phone) {
-                    const { count } = await supabase
-                        .from('orders')
-                        .select('id', { count: 'exact', head: true })
-                        .eq('vendor_id', order.vendor_id)
-                        .eq('event_id', order.event_id)
-                        .eq('phone', order.phone);
-
-                    if (count !== null && count >= menuConfig.max_orders_per_customer_event) {
-                        throw new Error(
-                            `You have reached the maximum of ${menuConfig.max_orders_per_customer_event} ` +
-                            `order(s) allowed per customer at this event.`
-                        );
+                    // 5. Max orders per customer check
+                    if (menuConfig.max_orders_per_customer_event && order.phone) {
+                        const count = (maxOrdersResult as any).count;
+                        if (count !== null && count >= menuConfig.max_orders_per_customer_event) {
+                            throw new Error(
+                                `You have reached the maximum of ${menuConfig.max_orders_per_customer_event} ` +
+                                `order(s) allowed per customer at this event.`
+                            );
+                        }
                     }
                 }
 
@@ -254,37 +267,36 @@ export class OrderService {
             }
         }
 
-        // Server-side discount validation: re-resolve discounts and recompute prices
+        // Server-side discount validation: batch-resolve all discounts in 1 DB query
         const discountService = new DiscountService();
-        const validatedItems = await Promise.all(
-            order.items.map(async (item: any) => {
-                // basePrice = effective price without modifiers (may already be discounted)
-                const basePrice = item.basePrice ?? item.price;
-                // Use the original pre-discount price for server-side discount resolution
-                // to avoid double-applying discounts on already-discounted prices
-                const priceForDiscount = item.originalPrice ?? basePrice;
-                const resolvedDiscount = await discountService.resolveDiscount(
-                    order.event_id,
-                    item.vendorId || order.vendor_id,
-                    item.id,
-                    priceForDiscount
-                );
-
-                if (resolvedDiscount) {
-                    // modifierDelta = (submitted price) - (effective price without modifiers)
-                    const modifierDelta = item.price - basePrice;
-                    const serverPrice = Math.max(0, Math.round((resolvedDiscount.discountedPrice + modifierDelta) * 100) / 100);
-                    return {
-                        ...item,
-                        price: serverPrice,
-                        originalPrice: priceForDiscount + modifierDelta,
-                        discountId: resolvedDiscount.discountId,
-                        discountSavings: resolvedDiscount.savings,
-                    };
-                }
-                return item;
-            })
+        const discountInputs = order.items.map((item: any) => ({
+            itemId: item.id,
+            price: item.originalPrice ?? item.basePrice ?? item.price,
+        }));
+        const discountMap = await discountService.resolveDiscountsForMenu(
+            order.event_id,
+            order.vendor_id,
+            discountInputs
         );
+
+        const validatedItems = order.items.map((item: any) => {
+            const basePrice = item.basePrice ?? item.price;
+            const priceForDiscount = item.originalPrice ?? basePrice;
+            const resolvedDiscount = discountMap.get(item.id);
+
+            if (resolvedDiscount) {
+                const modifierDelta = item.price - basePrice;
+                const serverPrice = Math.max(0, Math.round((resolvedDiscount.discountedPrice + modifierDelta) * 100) / 100);
+                return {
+                    ...item,
+                    price: serverPrice,
+                    originalPrice: priceForDiscount + modifierDelta,
+                    discountId: resolvedDiscount.discountId,
+                    discountSavings: resolvedDiscount.savings,
+                };
+            }
+            return item;
+        });
 
         let validatedTotal = validatedItems.reduce(
             (sum: number, item: any) => sum + (item.price * item.quantity), 0
@@ -349,8 +361,10 @@ export class OrderService {
             throw new Error(`Failed to update order with QR code: ${updateError.message}`);
         }
 
-        // Update queue positions for other pending orders
-        await this.scheduler.updateQueuePositions(order.vendor_id);
+        // Fire-and-forget: update queue positions for other pending orders
+        this.scheduler.updateQueuePositions(order.vendor_id).catch(err =>
+            console.error('Failed to update queue positions:', err?.message || err)
+        );
 
         // Fire-and-forget WhatsApp notification
         try {
@@ -513,9 +527,11 @@ export class OrderService {
             throw new Error(`Failed to update order status: ${error.message}`);
         }
 
-        // Update queue positions when order completes
+        // Fire-and-forget: update queue positions when order completes
         if (status === OrderStatus.COLLECTED || status === OrderStatus.READY) {
-            await this.scheduler.updateQueuePositions(currentOrder.vendor_id);
+            this.scheduler.updateQueuePositions(currentOrder.vendor_id).catch(err =>
+                console.error('Failed to update queue positions:', err?.message || err)
+            );
         }
 
         if (status === OrderStatus.READY) {
@@ -687,35 +703,44 @@ export class OrderService {
     }
 
     async getOrderStats(vendorId?: string, eventId?: string): Promise<OrderStats> {
-        let query = supabase.from('orders').select('total, status, items, payment_method');
+        const cacheKey = `order:stats:${vendorId || 'all'}:${eventId || 'all'}`;
+        const cached = await cache.get<OrderStats>(cacheKey);
+        if (cached) return cached;
+
+        // Parallel queries: summary stats (no items) + items for top-item calc
+        let summaryQuery = supabase.from('orders').select('total, status, payment_method');
+        let itemsQuery = supabase.from('orders').select('items, status').neq('status', OrderStatus.CANCELLED);
 
         if (vendorId) {
-            query = query.eq('vendor_id', vendorId);
+            summaryQuery = summaryQuery.eq('vendor_id', vendorId);
+            itemsQuery = itemsQuery.eq('vendor_id', vendorId);
         }
         if (eventId) {
-            query = query.eq('event_id', eventId);
+            summaryQuery = summaryQuery.eq('event_id', eventId);
+            itemsQuery = itemsQuery.eq('event_id', eventId);
         }
 
-        const { data, error } = await query;
+        const [summaryResult, itemsResult] = await Promise.all([summaryQuery, itemsQuery]);
 
-        if (error) {
-            throw new Error(`Failed to fetch order stats: ${error.message}`);
+        if (summaryResult.error) {
+            throw new Error(`Failed to fetch order stats: ${summaryResult.error.message}`);
         }
 
-        const orders = data || [];
+        const orders = (summaryResult.data || []) as any[];
+        const nonCancelledWithItems = (itemsResult.data || []) as any[];
 
-        const nonCancelled = orders.filter(o => o.status !== OrderStatus.CANCELLED);
-        const cancelled = orders.filter(o => o.status === OrderStatus.CANCELLED);
-        const collected = orders.filter(o => o.status === OrderStatus.COLLECTED);
+        const nonCancelled = orders.filter((o: any) => o.status !== OrderStatus.CANCELLED);
+        const cancelled = orders.filter((o: any) => o.status === OrderStatus.CANCELLED);
+        const collected = orders.filter((o: any) => o.status === OrderStatus.COLLECTED);
 
-        const totalRevenue = orders.reduce((sum, o) => sum + Number(o.total), 0);
-        const grossSales = nonCancelled.reduce((sum, o) => sum + Number(o.total), 0);
-        const collectedRevenue = collected.reduce((sum, o) => sum + Number(o.total), 0);
-        const cancelledValue = cancelled.reduce((sum, o) => sum + Number(o.total), 0);
+        const totalRevenue = orders.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+        const grossSales = nonCancelled.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+        const collectedRevenue = collected.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+        const cancelledValue = cancelled.reduce((sum: number, o: any) => sum + Number(o.total), 0);
 
         // Top item by quantity across non-cancelled orders
         const itemCounts: Record<string, number> = {};
-        nonCancelled.forEach(o => {
+        nonCancelledWithItems.forEach((o: any) => {
             const items = Array.isArray(o.items) ? o.items : [];
             items.forEach((i: any) => {
                 const name = i.name || 'Unknown';
@@ -726,16 +751,16 @@ export class OrderService {
 
         // Payment method breakdown (non-cancelled)
         const paymentBreakdown: Record<string, number> = {};
-        nonCancelled.forEach(o => {
+        nonCancelled.forEach((o: any) => {
             const method = o.payment_method ?? 'Unknown';
             paymentBreakdown[method] = (paymentBreakdown[method] || 0) + Number(o.total);
         });
 
-        return {
+        const stats: OrderStats = {
             totalOrders: orders.length,
             totalRevenue,
             averageOrderValue: orders.length > 0 ? totalRevenue / orders.length : 0,
-            ordersByStatus: orders.reduce((acc, o) => {
+            ordersByStatus: orders.reduce((acc: Record<string, number>, o: any) => {
                 acc[o.status] = (acc[o.status] || 0) + 1;
                 return acc;
             }, {} as Record<string, number>),
@@ -746,6 +771,9 @@ export class OrderService {
             topItem: topEntry ? { name: topEntry[0], qty: topEntry[1] } : null,
             paymentBreakdown,
         };
+
+        await cache.set(cacheKey, stats, CACHE_TTL.ITEM_AVAILABILITY); // 10s TTL
+        return stats;
     }
 
     async getOrdersByEvent(eventId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {

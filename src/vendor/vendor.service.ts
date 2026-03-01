@@ -27,11 +27,10 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<Vendor[]>(cacheKey);
             if (cached) {
-                console.log('Cache HIT: getAllVendors');
+
                 return cached;
             }
 
-            console.log('Cache MISS: getAllVendors');
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -61,11 +60,9 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<Vendor>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorById(${id})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorById(${id})`);
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -192,11 +189,9 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<Vendor[]>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorsByCategory(${category})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorsByCategory(${category})`);
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -228,11 +223,9 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<Vendor[]>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorsByCuisine(${cuisineType})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorsByCuisine(${cuisineType})`);
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -286,11 +279,9 @@ export class VendorService {
         try {
             const cached = await cache.get<Vendor[]>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorsWithItemsInCategory(${categoryId}, ${eventId})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorsWithItemsInCategory(${categoryId}, ${eventId})`);
 
             // Find vendor IDs with at least one available item in the category
             let itemQuery = supabase
@@ -385,11 +376,9 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<{ id: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorsByEvent(${eventId}, ${page}, ${pageSize})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorsByEvent(${eventId}, ${page}, ${pageSize})`);
 
             // Get vendor IDs from the event_vendors junction table
             const { data: eventVendors, error: junctionError } = await supabase
@@ -468,11 +457,9 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<Vendor[]>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: searchVendors(${searchTerm}, ${eventIdOrCode})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: searchVendors(${searchTerm}, ${eventIdOrCode})`);
 
             let vendorIds: string[] | undefined = undefined;
 
@@ -530,7 +517,14 @@ export class VendorService {
     }
 
     async getNearbyVendors(lat: number, lng: number, radiusKm: number = 5): Promise<Vendor[]> {
-        // This is a simplified version - for production, use PostGIS or proper geospatial queries
+        // Round coordinates to ~100m precision for cache key
+        const rlat = Math.round(lat * 1000) / 1000;
+        const rlng = Math.round(lng * 1000) / 1000;
+        const cacheKey = `vendors:nearby:${rlat}:${rlng}:${radiusKm}`;
+
+        const cached = await cache.get<Vendor[]>(cacheKey);
+        if (cached) return cached;
+
         const { data, error } = await supabase
             .from('vendors')
             .select('*')
@@ -550,6 +544,7 @@ export class VendorService {
             return distance <= radiusKm;
         });
 
+        await cache.set(cacheKey, nearbyVendors, CACHE_TTL.MENU_ITEMS); // 5-minute TTL
         return nearbyVendors;
     }
 
@@ -574,11 +569,9 @@ export class VendorService {
             // Try cache first
             const cached = await cache.get<VendorMenuGroup[]>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getVendorMenu(${vendorId})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorMenu(${vendorId})`);
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -777,35 +770,41 @@ export class VendorService {
             }>(cacheKey);
 
             if (cached) {
-                console.log(`Cache HIT: getVendorStats(${vendorId})`);
                 return cached;
             }
 
-            console.log(`Cache MISS: getVendorStats(${vendorId})`);
+            // 3 parallel targeted queries instead of fetching all orders
+            const todayISO = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
 
-            // Get orders for this vendor (only needed columns for stats)
-            const { data: orders, error: ordersError } = await supabase
-                .from('orders')
-                .select('total, status, created_at')
-                .eq('vendor_id', vendorId);
+            const [revenueResult, todayResult, activeResult] = await Promise.all([
+                supabase
+                    .from('orders')
+                    .select('total, status')
+                    .eq('vendor_id', vendorId),
+                supabase
+                    .from('orders')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('vendor_id', vendorId)
+                    .gte('created_at', todayISO),
+                supabase
+                    .from('orders')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('vendor_id', vendorId)
+                    .in('status', ['PENDING', 'PREPARING', 'READY']),
+            ]);
 
-            if (ordersError) {
-                throw new Error(`Failed to fetch vendor stats: ${ordersError.message}`);
+            if (revenueResult.error) {
+                throw new Error(`Failed to fetch vendor stats: ${revenueResult.error.message}`);
             }
 
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
+            const orders = revenueResult.data || [];
 
             const stats = {
-                totalOrders: orders?.length || 0,
-                totalRevenue: orders?.reduce((sum, order) => sum + order.total, 0) || 0,
+                totalOrders: orders.length,
+                totalRevenue: orders.reduce((sum, order) => sum + order.total, 0),
                 averageRating: 0, // Would come from reviews table
-                todayOrders: orders?.filter(order =>
-                    new Date(order.created_at) >= today
-                ).length || 0,
-                activeOrders: orders?.filter(order =>
-                    ['PENDING', 'PREPARING', 'READY'].includes(order.status)
-                ).length || 0
+                todayOrders: todayResult.count || 0,
+                activeOrders: activeResult.count || 0,
             };
 
             // Cache stats for 5 seconds (very dynamic data)
@@ -839,7 +838,6 @@ export class VendorService {
 
         try {
             await cache.del(...keysToDelete);
-            console.log(`Invalidated caches for vendor: ${vendorId || 'all'}`);
 
             // Also clear pattern-based caches (category, cuisine, event, search)
             // Note: Upstash doesn't support SCAN, so we'd need to track these keys separately

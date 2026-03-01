@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
+import { redisMock, cacheMock, CACHE_TTL_MOCK } from '../mocks/redis.js';
 import { makeCategory } from '../fixtures/index.js';
 import { buildApp } from '../helpers/app.js';
 import type { FastifyInstance } from 'fastify';
@@ -8,6 +9,17 @@ import type { FastifyInstance } from 'fastify';
 
 vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
 vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock }));
+
+vi.mock('../../lib/redis.js', () => ({
+  cache: cacheMock,
+  default: redisMock,
+  CACHE_TTL: CACHE_TTL_MOCK,
+}));
+vi.mock('../../lib/redis', () => ({
+  cache: cacheMock,
+  default: redisMock,
+  CACHE_TTL: CACHE_TTL_MOCK,
+}));
 
 // Import after mocks
 import { CategoryService } from '../../category/category.service.js';
@@ -22,6 +34,9 @@ describe('CategoryService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    cacheMock.get.mockResolvedValue(null);
+    cacheMock.set.mockResolvedValue(undefined);
+    cacheMock.del.mockResolvedValue(undefined);
     service = new CategoryService();
   });
 
@@ -269,6 +284,9 @@ describe('Category Controller (integration)', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    cacheMock.get.mockResolvedValue(null);
+    cacheMock.set.mockResolvedValue(undefined);
+    cacheMock.del.mockResolvedValue(undefined);
     app = await buildApp(async (fastify) => {
       fastify.register(categoryController, { prefix: '/category' });
     });

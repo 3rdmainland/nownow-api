@@ -16,6 +16,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@fastify/compress": "^8.3.1",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^13.0.1",

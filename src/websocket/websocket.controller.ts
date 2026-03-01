@@ -12,6 +12,8 @@ import type {
   ClientSubscription,
 } from './websocket.types';
 
+const MAX_CONNECTIONS = 1000;
+
 // Store connected clients with their subscriptions
 interface ConnectedClient {
   socket: WebSocket;
@@ -183,6 +185,12 @@ async function websocketController(
 
   // WebSocket connection endpoint
   fastify.get('/ws', { websocket: true }, (socket, req) => {
+    // Reject if at capacity
+    if (clients.size >= MAX_CONNECTIONS) {
+      socket.close(1013, 'Server at capacity');
+      return;
+    }
+
     fastify.log.info('New WebSocket connection');
 
     // Initialize client with empty subscriptions

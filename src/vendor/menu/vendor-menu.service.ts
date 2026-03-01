@@ -95,7 +95,6 @@ export class VendorMenuService {
         try {
             const cached = await cache.get<GetDefaultMenuResponse>(cacheKey);
             if (cached) {
-                console.log(`Cache HIT: getDefaultMenu(${vendorId})`);
                 return cached;
             }
 
@@ -436,8 +435,6 @@ export class VendorMenuService {
      * Get a single event menu item by ID with full details
      */
     async getEventMenuItem(vendorId: string, eventId: string, eventMenuItemId: string): Promise<ResolvedEventMenuItem> {
-        console.log('[GET EVENT MENU ITEM] Fetching:', { vendorId, eventId, eventMenuItemId });
-
         // Fetch the event menu item with its default item details
         const { data, error } = await supabase
             .from('event_menu_items')
@@ -464,8 +461,6 @@ export class VendorMenuService {
         const defaultItem = fromDbDefaultMenuItem(data.default_menu_items);
 
         const resolved = resolveEventMenuItem(defaultItem, eventItem);
-
-        console.log('[GET EVENT MENU ITEM] Found:', { itemName: resolved.name, effectivePrice: resolved.effectivePrice });
 
         return resolved;
     }
@@ -626,9 +621,7 @@ export class VendorMenuService {
         const { data: items } = await query;
         if (!items?.length) return { updatedCount: 0 };
 
-        const priceUpdates: { menuItemId: string; oldPrice: number; newPrice: number; name?: string }[] = [];
-
-        // Build all upsert rows and execute in parallel
+        // Build all upsert rows and execute as a single batch
         const upsertRows = items.map(item => ({
             event_id: input.eventId,
             vendor_id: vendorId,
@@ -637,27 +630,22 @@ export class VendorMenuService {
             is_included: true,
         }));
 
-        const upsertResults = await Promise.all(
-            upsertRows.map((row, i) =>
-                supabase
-                    .from('event_menu_items')
-                    .upsert(row, { onConflict: 'event_id,vendor_id,default_menu_item_id' })
-                    .then(({ error }) => {
-                        if (!error) {
-                            priceUpdates.push({
-                                menuItemId: items[i].id,
-                                oldPrice: items[i].base_price,
-                                newPrice: row.price_override,
-                                name: items[i].name,
-                            });
-                            return true;
-                        }
-                        return false;
-                    })
-            )
-        );
+        const { error: upsertError } = await supabase
+            .from('event_menu_items')
+            .upsert(upsertRows, { onConflict: 'event_id,vendor_id,default_menu_item_id' });
 
-        const updatedCount = upsertResults.filter(Boolean).length;
+        if (upsertError) {
+            throw new Error(`Failed to bulk adjust prices: ${upsertError.message}`);
+        }
+
+        const updatedCount = upsertRows.length;
+
+        const priceUpdates = items.map((item, i) => ({
+            menuItemId: item.id,
+            oldPrice: item.base_price,
+            newPrice: upsertRows[i].price_override,
+            name: item.name,
+        }));
 
         // Broadcast all price updates
         if (priceUpdates.length > 0) {
@@ -678,8 +666,6 @@ export class VendorMenuService {
      * so items use their original default menu prices with no modifications
      */
     async resetEventMenuPrices(vendorId: string, eventId: string): Promise<{ resetCount: number }> {
-        console.log('[RESET PRICES] Starting reset for event:', { vendorId, eventId });
-
         // Get current event items with their prices before reset
         const { data: currentItems } = await supabase
             .from('event_menu_items')
@@ -700,7 +686,6 @@ export class VendorMenuService {
         }
 
         const resetCount = data?.length || 0;
-        console.log('[RESET PRICES] Individual item overrides reset:', { resetCount });
 
         // Step 2: Remove global price adjustment from event config
         const { error: configError } = await supabase
@@ -712,9 +697,6 @@ export class VendorMenuService {
         if (configError) {
             handleDatabaseError('reset global price adjustment', configError, { vendorId, eventId });
         }
-
-        console.log('[RESET PRICES] Global price adjustment removed');
-        console.log('[RESET PRICES] Reset complete:', { totalItemsReset: resetCount });
 
         // Broadcast price updates for all affected items
         if (currentItems && currentItems.length > 0) {
@@ -1318,6 +1300,11 @@ export class VendorMenuService {
     // ==================== ANALYTICS ====================
 
     async getMenuAnalytics(vendorId: string, eventId?: string, startDate?: string, endDate?: string): Promise<MenuAnalyticsResponse> {
+        const period = `${startDate || 'start'}_${endDate || 'now'}`;
+        const cacheKey = menuCacheKeys.analytics(vendorId, `${eventId || 'all'}:${period}`);
+        const cached = await cache.get<MenuAnalyticsResponse>(cacheKey);
+        if (cached) return cached;
+
         let query = supabase.from('orders').select('items').eq('vendor_id', vendorId);
 
         if (eventId) query = query.eq('event_id', eventId);
@@ -1362,7 +1349,7 @@ export class VendorMenuService {
         const totalRevenue = itemAnalytics.reduce((sum, i) => sum + i.totalRevenue, 0);
         const totalOrders = orders?.length || 0;
 
-        return {
+        const result: MenuAnalyticsResponse = {
             summary: {
                 totalRevenue,
                 totalOrders,
@@ -1374,6 +1361,9 @@ export class VendorMenuService {
             periodStart: startDate || '',
             periodEnd: endDate || new Date().toISOString(),
         };
+
+        await cache.set(cacheKey, result, CACHE_TTL.MENU_ITEMS); // 5-minute TTL
+        return result;
     }
 
     // ==================== CACHE INVALIDATION ====================
