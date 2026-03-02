@@ -37,6 +37,7 @@ export interface Order {
     notes?: string;
     estimatedPrepTime?: number;
     paymentMethod?: string;
+    service_fee?: number;
     qr_code: string;
     created_at: string;
     collected_at?: string;

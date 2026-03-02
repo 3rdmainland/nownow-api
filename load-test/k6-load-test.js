@@ -250,6 +250,8 @@ function customerOrderJourney() {
     sleep(0.5);
 
     // 2. Place order
+    const itemPrice = randomIntBetween(60, 120);
+    const itemQty = randomIntBetween(1, 3);
     const orderPayload = {
       vendor_id: vendorId,
       event_id: EVENT_ID_1,
@@ -258,16 +260,16 @@ function customerOrderJourney() {
         {
           id: crypto.randomUUID ? crypto.randomUUID() : `item-${Date.now()}`,
           name: randomItem(['Burger', 'Pizza', 'Fries', 'Drink']),
-          price: randomIntBetween(30, 120),
-          quantity: randomIntBetween(1, 3),
+          price: itemPrice,
+          quantity: itemQty,
           vendorId: vendorId,
           vendorName: 'Test Vendor',
           prepTime: 10,
         },
       ],
-      total: randomIntBetween(30, 200),
+      total: itemPrice * itemQty,
       notes: 'Load test order',
-      paymentMethod: randomItem(['CASH', 'CARD']),
+      payment_method: randomItem(['CASH', 'CARD']),
     };
 
     const createRes = http.post(`${BASE_URL}/orders`, JSON.stringify(orderPayload), { headers });
@@ -308,8 +310,8 @@ function customerOrderJourney() {
 
     sleep(0.3);
 
-    // 5. Get orders by phone (customer checking their orders)
-    const phoneRes = http.get(`${BASE_URL}/orders?page=1&pageSize=10`, { headers });
+    // 5. Get orders by vendor (customer checking their orders)
+    const phoneRes = http.get(`${BASE_URL}/orders?vendorId=${vendorId}&page=1&pageSize=10`, { headers });
     check(phoneRes, {
       'list orders: 200': (r) => r.status === 200,
     }) ? errorRate.add(0) : errorRate.add(1);

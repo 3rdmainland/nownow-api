@@ -132,3 +132,20 @@ dist
 
 # Claude Code
 .claude/
+
+# Load test results (regenerate locally)
+load-test/RESULTS.md
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

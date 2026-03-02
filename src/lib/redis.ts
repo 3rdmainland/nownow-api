@@ -1,15 +1,30 @@
 import { Redis } from '@upstash/redis'
 
-// Validate environment variables
-if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+const hasRedisCredentials = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+
+if (!hasRedisCredentials && process.env.NODE_ENV === 'production') {
     throw new Error('Missing Upstash Redis credentials in environment variables')
 }
 
-// Create Redis client singleton
-export const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-})
+// No-op Redis client for when Redis is unavailable (local dev, load testing)
+const noopRedis = {
+    get: async () => null,
+    set: async () => 'OK',
+    setex: async () => 'OK',
+    del: async () => 0,
+    exists: async () => 0,
+    ping: async () => 'PONG',
+    incr: async () => 1,
+    expire: async () => 1,
+} as unknown as Redis
+
+// Create Redis client singleton (real or no-op)
+export const redis = hasRedisCredentials
+    ? new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL!,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    })
+    : noopRedis
 
 // Cache TTL constants (in seconds)
 export const CACHE_TTL = {

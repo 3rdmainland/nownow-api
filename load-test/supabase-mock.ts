@@ -55,7 +55,7 @@ const SEED_EVENTS = [
     start_date: new Date(Date.now() - 2 * 3600_000).toISOString(),
     end_date: new Date(Date.now() + 24 * 3600_000).toISOString(),
     location: { latitude: -33.9, longitude: 18.4, address: '1 Fest St', city: 'Cape Town', state: 'WC', zipCode: '8001' },
-    is_public: true, status: 'ONGOING', branding: null,
+    is_public: true, status: 'ACTIVE', branding: null,
     created_at: now(), updated_at: now(),
   },
   {
@@ -64,7 +64,7 @@ const SEED_EVENTS = [
     start_date: new Date(Date.now() - 1 * 3600_000).toISOString(),
     end_date: new Date(Date.now() + 12 * 3600_000).toISOString(),
     location: { latitude: -33.92, longitude: 18.42, address: '2 Market Rd', city: 'Cape Town', state: 'WC', zipCode: '8002' },
-    is_public: true, status: 'ONGOING', branding: null,
+    is_public: true, status: 'ACTIVE', branding: null,
     created_at: now(), updated_at: now(),
   },
 ];

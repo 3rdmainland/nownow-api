@@ -23,7 +23,7 @@ const orderItemSchema = {
             description: "Human-readable summary of selected modifiers (e.g., 'Family Size, Extra Cheese')"
         }
     },
-    required: ["id", "name", "price", "quantity", "vendorId", "vendorName"]
+    required: ["id", "name", "price", "quantity"]
 };
 
 // Order schema
@@ -46,6 +46,7 @@ const orderSchema = {
         notes: { type: "string" },
         estimatedPrepTime: { type: "number" },
         paymentMethod: { type: "string" },
+        service_fee: { type: "number" },
         qr_code: { type: "string" },
         qr_image: { type: "string" },
         created_at: { type: "string" },

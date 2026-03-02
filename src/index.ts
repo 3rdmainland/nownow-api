@@ -54,7 +54,7 @@ await fastify.register(fastifyHelmet, {
 
 // Rate limiting (local store — Upstash REST client is not ioredis-compatible)
 await fastify.register(fastifyRateLimit, {
-    max: 100,
+    max: process.env.NODE_ENV === 'test' ? 10_000 : 100,
     timeWindow: '1 minute',
 });
 

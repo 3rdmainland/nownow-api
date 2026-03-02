@@ -319,12 +319,15 @@ export class OrderService {
             validatedTotal = Math.round((validatedTotal + serviceFee) * 100) / 100;
         }
 
-        // Strip internal fields before inserting into DB
-        const { _minimumOrderValue, _serviceFeePercent, ...cleanOrder } = order as any;
+        // Strip internal fields and map camelCase to snake_case before inserting into DB
+        const { _minimumOrderValue, _serviceFeePercent, paymentMethod, ...cleanOrder } = order as any;
 
         // Set defaults including estimated prep time and scheduling data
         const orderWithDefaults = {
             ...cleanOrder,
+            ...(paymentMethod || cleanOrder.payment_method
+                ? { payment_method: paymentMethod || cleanOrder.payment_method }
+                : {}),
             items: validatedItems,
             total: Math.round(validatedTotal * 100) / 100,
             ...(serviceFee > 0 ? { service_fee: serviceFee } : {}),
@@ -369,7 +372,7 @@ export class OrderService {
         // Fire-and-forget WhatsApp notification
         try {
             const token = process.env.WA_ACCESS_TOKEN;
-            if (token && updatedOrder?.phone) {
+            if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && updatedOrder?.phone) {
                 const whatsapp = new WhatsappService();
 
                 void whatsapp
@@ -452,7 +455,7 @@ export class OrderService {
         // Send collection confirmation via WhatsApp
         try {
             const token = process.env.WA_ACCESS_TOKEN;
-            if (token && order.phone) {
+            if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order.phone) {
                 const whatsapp = new WhatsappService();
 
                 void whatsapp
@@ -537,7 +540,7 @@ export class OrderService {
         if (status === OrderStatus.READY) {
             try {
                 const token = process.env.WA_ACCESS_TOKEN;
-                if (token && data.phone) {
+                if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && data.phone) {
                     // Fetch vendor name for the message
                     const { data: vendor } = await supabase
                         .from('vendors')
