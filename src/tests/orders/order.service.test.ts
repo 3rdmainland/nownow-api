@@ -591,26 +591,37 @@ describe('OrderService', () => {
         });
 
         it('sends WhatsApp sendOrderReadyTemplate when status becomes READY', async () => {
-            const vendor = makeVendor({ name: 'Burger Palace' });
-            const currentOrder = makeOrder({ status: OrderStatus.PREPARING, phone: '0812345678', vendor_id: vendor.id, prepared_at: new Date().toISOString() });
-            const updatedOrder = { ...currentOrder, status: OrderStatus.READY, ready_at: new Date().toISOString() };
+            // The service guards WhatsApp calls with NODE_ENV !== 'test' and WA_ACCESS_TOKEN
+            const originalNodeEnv = process.env.NODE_ENV;
+            const originalToken = process.env.WA_ACCESS_TOKEN;
+            process.env.NODE_ENV = 'development';
+            process.env.WA_ACCESS_TOKEN = 'test-token';
 
-            mockFromSequence(
-                { data: currentOrder, error: null },   // fetch current order
-                { data: updatedOrder, error: null },   // update call
-                { data: [], error: null },             // updateQueuePositions - pending orders
-                { data: vendor, error: null },         // fetch vendor for WhatsApp
-            );
+            try {
+                const vendor = makeVendor({ name: 'Burger Palace' });
+                const currentOrder = makeOrder({ status: OrderStatus.PREPARING, phone: '0812345678', vendor_id: vendor.id, prepared_at: new Date().toISOString() });
+                const updatedOrder = { ...currentOrder, status: OrderStatus.READY, ready_at: new Date().toISOString() };
 
-            await service.updateOrderStatus(currentOrder.id, OrderStatus.READY);
+                mockFromSequence(
+                    { data: currentOrder, error: null },   // fetch current order
+                    { data: updatedOrder, error: null },   // update call
+                    { data: [], error: null },             // updateQueuePositions - pending orders
+                    { data: vendor, error: null },         // fetch vendor for WhatsApp
+                );
 
-            // WhatsApp is fire-and-forget, so we need to flush the microtask queue
-            await new Promise((r) => setTimeout(r, 0));
+                await service.updateOrderStatus(currentOrder.id, OrderStatus.READY);
 
-            expect(mockSendOrderReadyTemplate).toHaveBeenCalledWith(
-                currentOrder.phone,
-                expect.objectContaining({ orderId: String(updatedOrder.id) })
-            );
+                // WhatsApp is fire-and-forget, so we need to flush the microtask queue
+                await new Promise((r) => setTimeout(r, 0));
+
+                expect(mockSendOrderReadyTemplate).toHaveBeenCalledWith(
+                    currentOrder.phone,
+                    expect.objectContaining({ orderId: String(updatedOrder.id) })
+                );
+            } finally {
+                process.env.NODE_ENV = originalNodeEnv;
+                process.env.WA_ACCESS_TOKEN = originalToken;
+            }
         });
 
         it('broadcasts via broadcastOrderStatusUpdate after a status update', async () => {

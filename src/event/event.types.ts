@@ -8,12 +8,14 @@ export interface EventBranding {
         background?: string;
         foreground?: string;
         landingBackground?: string;
+        landingTextColor?: 'light' | 'dark';
     };
     assets?: {
         logoLight?: string;
         logoDark?: string;
         favicon?: string;
         backgroundImage?: string;
+        appBackgroundImage?: string;
     };
     copy?: {
         tagline?: string;
