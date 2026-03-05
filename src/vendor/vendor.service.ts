@@ -271,6 +271,12 @@ export class VendorService {
                 if (allowedVendorIds.length === 0) {
                     return [];
                 }
+
+                // Filter out vendors not currently accepting orders
+                allowedVendorIds = await this.filterAvailableVendors(allowedVendorIds, eventId);
+                if (allowedVendorIds.length === 0) {
+                    return [];
+                }
             }
         }
 
@@ -311,7 +317,8 @@ export class VendorService {
                 .from('vendors')
                 .select('*')
                 .in('id', vendorIds)
-                .eq('is_active', true);
+                .eq('is_active', true)
+                .eq('is_paused', false);
 
             if (vendorsError) {
                 throw new Error(`Failed to fetch vendors for category items: ${vendorsError.message}`);
@@ -396,12 +403,20 @@ export class VendorService {
                 return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
             }
 
+            // Filter out vendors not currently accepting orders
+            const availableVendorIds = await this.filterAvailableVendors(vendorIds, eventId);
+
+            if (availableVendorIds.length === 0) {
+                return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+            }
+
             // Get the actual vendor data with pagination and total count
             const { data: vendorRows, error: vendorError, count } = await supabase
                 .from('vendors')
                 .select('*', { count: 'exact' })
-                .in('id', vendorIds)
+                .in('id', availableVendorIds)
                 .eq('is_active', true)
+                .eq('is_paused', false)
                 .range(from, to);
 
             if (vendorError) {
@@ -815,6 +830,56 @@ export class VendorService {
             console.error('Error in getVendorStats:', error);
             throw error;
         }
+    }
+
+    // ==================== AVAILABILITY FILTERING ====================
+
+    private async filterAvailableVendors(vendorIds: string[], eventId: string): Promise<string[]> {
+        const { data: configs } = await supabase
+            .from('event_menu_configurations')
+            .select('vendor_id, is_accepting_orders, status, event_open_time, event_close_time, operating_schedule')
+            .eq('event_id', eventId)
+            .in('vendor_id', vendorIds);
+
+        if (!configs || configs.length === 0) return vendorIds;
+
+        const unavailable = new Set<string>();
+        const now = new Date();
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        const currentHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        const todayDate = now.toISOString().split('T')[0];
+
+        for (const config of configs) {
+            if (!config.is_accepting_orders) {
+                unavailable.add(config.vendor_id);
+                continue;
+            }
+            if (config.status === 'PAUSED' || config.status === 'CLOSED') {
+                unavailable.add(config.vendor_id);
+                continue;
+            }
+            const schedule = config.operating_schedule as any[] | null;
+            const todaySchedule = schedule?.find((s: any) => s.date === todayDate);
+            if (todaySchedule) {
+                if (todaySchedule.isClosed) {
+                    unavailable.add(config.vendor_id);
+                    continue;
+                }
+                if (todaySchedule.openTime && todaySchedule.closeTime) {
+                    if (currentHHMM < todaySchedule.openTime || currentHHMM >= todaySchedule.closeTime) {
+                        unavailable.add(config.vendor_id);
+                        continue;
+                    }
+                }
+            } else if (config.event_open_time && config.event_close_time) {
+                if (currentHHMM < config.event_open_time || currentHHMM >= config.event_close_time) {
+                    unavailable.add(config.vendor_id);
+                    continue;
+                }
+            }
+        }
+
+        return vendorIds.filter(id => !unavailable.has(id));
     }
 
     // ==================== CACHE INVALIDATION ====================
