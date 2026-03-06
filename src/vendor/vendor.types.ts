@@ -32,6 +32,11 @@ export interface VendorHours {
     isClosed: boolean;
 }
 
+export interface VendorCategory {
+    id: string;
+    name: string;
+}
+
 export interface Vendor {
     id: string;
     name: string;
@@ -40,7 +45,9 @@ export interface Vendor {
     email: string;
     imageUrl?: string;
     logoUrl?: string;
-    categoryId: string;
+    categoryId?: string; // DEPRECATED: use categoryIds
+    categoryIds: string[];
+    categories?: VendorCategory[];
     cuisineType?: string[];
     rating?: number;
     totalReviews?: number;

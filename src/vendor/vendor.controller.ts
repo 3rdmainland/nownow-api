@@ -51,8 +51,8 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
     fastify.get("/event/:eventId", { schema: getVendorsByEventSchema }, async (request, reply) => {
         try {
             const { eventId } = request.params as { eventId: string };
-            const { page, pageSize } = request.query as { page?: number; pageSize?: number };
-            const result = await vendorService.getVendorsByEvent(eventId, { page, pageSize });
+            const { page, pageSize, categoryId } = request.query as { page?: number; pageSize?: number; categoryId?: string };
+            const result = await vendorService.getVendorsByEvent(eventId, { page, pageSize, categoryId });
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -63,8 +63,8 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
     // Get vendors by category
     fastify.get("/category", { schema: getVendorsByCategorySchema }, async (request, reply) => {
         try {
-            const { category } = request.query as { category: string };
-            const vendors = await vendorService.getVendorsByCategory(category);
+            const { categoryId } = request.query as { categoryId: string };
+            const vendors = await vendorService.getVendorsByCategory(categoryId);
             return { vendors };
         } catch (err) {
             fastify.log.error(err);

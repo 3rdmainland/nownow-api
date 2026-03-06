@@ -60,9 +60,11 @@ describe('VendorController (integration)', () => {
       const dbVendors = [makeVendor({ name: 'Vendor A' }), makeVendor({ name: 'Vendor B' })];
 
       cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendors, error: null })
-      );
+      // 1st: vendors, 2nd: enrichWithCategories
+      mockFromSequence([
+        createSupabaseMock({ data: dbVendors, error: null }),
+        createSupabaseMock({ data: [], error: null }),
+      ]);
 
       const res = await app.inject({ method: 'GET', url: '/vendor' });
 
@@ -140,9 +142,10 @@ describe('VendorController (integration)', () => {
       vendorsMock.then = vi.fn((resolve) =>
         Promise.resolve(resolve({ data: dbVendors, error: null, count: 1 }))
       );
+      const enrichMock = createSupabaseMock({ data: [], error: null });
       const menuMock = createSupabaseMock({ data: dbMenuItems, error: null });
 
-      mockFromSequence([eventMock, junctionMock, vendorsMock, menuMock]);
+      mockFromSequence([eventMock, junctionMock, vendorsMock, enrichMock, menuMock]);
 
       const res = await app.inject({
         method: 'GET',
@@ -179,9 +182,11 @@ describe('VendorController (integration)', () => {
       const dbVendor = makeVendor({ id: 'vendor-found', name: 'Found Vendor' });
 
       cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendor, error: null })
-      );
+      // 1st: vendor, 2nd: enrichWithCategories
+      mockFromSequence([
+        createSupabaseMock({ data: dbVendor, error: null }),
+        createSupabaseMock({ data: [], error: null }),
+      ]);
 
       const res = await app.inject({
         method: 'GET',
@@ -319,10 +324,19 @@ describe('VendorController (integration)', () => {
   describe('POST /vendor', () => {
     it('returns 201 with { vendor } on successful creation', async () => {
       const dbVendor = makeVendor({ id: 'new-vendor', name: 'Brand New Vendor' });
+      const dbVendorWithCats = makeVendor({
+        id: 'new-vendor',
+        name: 'Brand New Vendor',
+        vendor_categories: [{ category_id: 'cat-1', categories: { id: 'cat-1', name: 'Food' } }],
+      });
 
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendor, error: null })
-      );
+      // 1. insert vendor, 2. delete old cats, 3. insert cats, 4. fetch with cats
+      mockFromSequence([
+        createSupabaseMock({ data: dbVendor, error: null }),
+        createSupabaseMock({ data: null, error: null }),
+        createSupabaseMock({ data: null, error: null }),
+        createSupabaseMock({ data: dbVendorWithCats, error: null }),
+      ]);
 
       const res = await app.inject({
         method: 'POST',
@@ -334,7 +348,7 @@ describe('VendorController (integration)', () => {
           isActive: true,
           isPaused: false,
           paymentMethods: ['CASH'],
-          categoryId: 'cat-1',
+          categoryIds: ['cat-1'],
         },
       });
 
@@ -357,7 +371,7 @@ describe('VendorController (integration)', () => {
           name: 'Fail Vendor',
           phone: '0812345678',
           email: 'fail@vendor.com',
-          categoryId: 'cat-1',
+          categoryIds: ['cat-1'],
           paymentMethods: ['CASH'],
         },
       });
@@ -372,9 +386,11 @@ describe('VendorController (integration)', () => {
     it('returns 200 with { vendor } on successful update', async () => {
       const dbVendor = makeVendor({ id: 'vendor-update', name: 'Updated Vendor' });
 
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendor, error: null })
-      );
+      // 1. update vendor row, 2. fetch with categories
+      mockFromSequence([
+        createSupabaseMock({ data: dbVendor, error: null }),
+        createSupabaseMock({ data: dbVendor, error: null }),
+      ]);
 
       const res = await app.inject({
         method: 'PUT',

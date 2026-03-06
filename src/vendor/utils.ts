@@ -1,6 +1,6 @@
 // vendor.utils.ts
 
-import {Vendor, VendorMenuItem} from './vendor.types';
+import {Vendor, VendorCategory, VendorMenuItem} from './vendor.types';
 
 export function toDbVendor(vendor: Partial<Vendor>) {
     const dbVendor: any = {};
@@ -11,7 +11,7 @@ export function toDbVendor(vendor: Partial<Vendor>) {
     if (vendor.email !== undefined) dbVendor.email = vendor.email;
     if (vendor.imageUrl !== undefined) dbVendor.image_url = vendor.imageUrl;
     if (vendor.logoUrl !== undefined) dbVendor.logo_url = vendor.logoUrl;
-    if (vendor.categoryId !== undefined) dbVendor.category_id = vendor.categoryId;
+    // categoryId no longer mapped — handled via vendor_categories junction table
     if (vendor.cuisineType !== undefined) dbVendor.cuisine_type = vendor.cuisineType;
     if (vendor.rating !== undefined) dbVendor.rating = vendor.rating;
     if (vendor.totalReviews !== undefined) dbVendor.total_reviews = vendor.totalReviews;
@@ -29,6 +29,25 @@ export function toDbVendor(vendor: Partial<Vendor>) {
 }
 
 export function fromDbVendor(dbVendor: any): Vendor {
+    // Build categoryIds and categories from joined vendor_categories data
+    let categoryIds: string[] = [];
+    let categories: VendorCategory[] | undefined;
+
+    if (Array.isArray(dbVendor.vendor_categories) && dbVendor.vendor_categories.length > 0) {
+        categoryIds = dbVendor.vendor_categories.map((vc: any) => vc.category_id);
+        // If categories were joined (nested), extract them
+        const withNames = dbVendor.vendor_categories.filter((vc: any) => vc.categories);
+        if (withNames.length > 0) {
+            categories = withNames.map((vc: any) => ({
+                id: vc.categories.id,
+                name: vc.categories.name,
+            }));
+        }
+    } else if (dbVendor.category_id) {
+        // Fallback to legacy column
+        categoryIds = [dbVendor.category_id];
+    }
+
     return {
         id: dbVendor.id,
         name: dbVendor.name,
@@ -37,7 +56,9 @@ export function fromDbVendor(dbVendor: any): Vendor {
         email: dbVendor.email,
         imageUrl: dbVendor.image_url,
         logoUrl: dbVendor.logo_url,
-        categoryId: dbVendor.category_id,
+        categoryId: categoryIds[0] || dbVendor.category_id,
+        categoryIds,
+        categories,
         cuisineType: dbVendor.cuisine_type,
         rating: dbVendor.rating,
         totalReviews: dbVendor.total_reviews,

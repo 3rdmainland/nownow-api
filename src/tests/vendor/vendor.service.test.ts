@@ -63,6 +63,8 @@ describe('VendorService', () => {
         imageUrl: v.image_url,
         logoUrl: v.logo_url,
         categoryId: v.category_id,
+        categoryIds: [],
+        categories: undefined,
         cuisineType: v.cuisine_type,
         rating: v.rating,
         totalReviews: v.total_reviews,
@@ -93,9 +95,10 @@ describe('VendorService', () => {
 
       cacheMock.get.mockResolvedValueOnce(null); // cache miss
 
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendors, error: null })
-      );
+      // 1st call: vendors, 2nd call: vendor_categories enrichment
+      const vendorsMock = createSupabaseMock({ data: dbVendors, error: null });
+      const enrichMock = createSupabaseMock({ data: [], error: null });
+      mockFromSequence([vendorsMock, enrichMock]);
 
       const result = await service.getAllVendors();
 
@@ -138,9 +141,10 @@ describe('VendorService', () => {
       const dbVendor = makeVendor({ id: 'vendor-2' });
 
       cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendor, error: null })
-      );
+      // 1st call: vendor, 2nd call: vendor_categories enrichment
+      const vendorMock = createSupabaseMock({ data: dbVendor, error: null });
+      const enrichMock = createSupabaseMock({ data: [], error: null });
+      mockFromSequence([vendorMock, enrichMock]);
 
       const result = await service.getVendorById('vendor-2');
 
@@ -179,7 +183,7 @@ describe('VendorService', () => {
   // ── createVendor ─────────────────────────────────────────────────────────────
 
   describe('createVendor', () => {
-    it('inserts vendor and returns the created vendor with cache invalidation', async () => {
+    it('inserts vendor, syncs categories, and returns with cache invalidation', async () => {
       const newVendorData = {
         name: 'New Vendor',
         phone: '0811111111',
@@ -187,19 +191,31 @@ describe('VendorService', () => {
         isActive: true,
         isPaused: false,
         paymentMethods: ['CASH'],
-        categoryId: 'cat-1',
+        categoryIds: ['cat-1'],
       } as any;
 
       const dbVendor = makeVendor({ id: 'created-id', name: 'New Vendor' });
+      const dbVendorWithCats = makeVendor({
+        id: 'created-id',
+        name: 'New Vendor',
+        vendor_categories: [{ category_id: 'cat-1', categories: { id: 'cat-1', name: 'Food' } }],
+      });
 
-      // insert returns the new vendor; invalidateVendorCaches calls del on 'vendors:all'
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendor, error: null })
-      );
+      // 1. insert vendor
+      const insertMock = createSupabaseMock({ data: dbVendor, error: null });
+      // 2. delete old vendor_categories
+      const deleteCatsMock = createSupabaseMock({ data: null, error: null });
+      // 3. insert vendor_categories
+      const insertCatsMock = createSupabaseMock({ data: null, error: null });
+      // 4. fetch vendor with categories
+      const fetchMock = createSupabaseMock({ data: dbVendorWithCats, error: null });
+
+      mockFromSequence([insertMock, deleteCatsMock, insertCatsMock, fetchMock]);
 
       const result = await service.createVendor(newVendorData);
 
       expect(result.name).toBe('New Vendor');
+      expect(result.categoryIds).toEqual(['cat-1']);
       expect(cacheMock.del).toHaveBeenCalledWith('vendors:all');
     });
 
@@ -208,7 +224,7 @@ describe('VendorService', () => {
         createSupabaseMock({ data: null, error: { message: 'Duplicate email' } })
       );
 
-      await expect(service.createVendor({} as any)).rejects.toThrow(
+      await expect(service.createVendor({ categoryIds: ['cat-1'] } as any)).rejects.toThrow(
         'Failed to create vendor: Duplicate email'
       );
     });
@@ -220,9 +236,12 @@ describe('VendorService', () => {
     it('updates vendor and returns the updated vendor', async () => {
       const dbVendor = makeVendor({ id: 'vendor-to-update', name: 'Updated Name' });
 
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendor, error: null })
-      );
+      // 1. update vendor row
+      const updateMock = createSupabaseMock({ data: dbVendor, error: null });
+      // 2. fetch vendor with categories
+      const fetchMock = createSupabaseMock({ data: dbVendor, error: null });
+
+      mockFromSequence([updateMock, fetchMock]);
 
       const result = await service.updateVendor('vendor-to-update', { name: 'Updated Name' });
 
@@ -359,29 +378,46 @@ describe('VendorService', () => {
       const cachedVendors = [{ id: 'v1', name: 'Pizza Place', isActive: true } as any];
       cacheMock.get.mockResolvedValueOnce(cachedVendors);
 
-      const result = await service.getVendorsByCategory('pizza');
+      const result = await service.getVendorsByCategory('cat-pizza');
 
       expect(result).toEqual(cachedVendors);
       expect(supabaseMock.from).not.toHaveBeenCalled();
     });
 
-    it('fetches from Supabase on cache miss and caches result', async () => {
+    it('fetches via junction table on cache miss and caches result', async () => {
       const dbVendors = [makeVendor({ name: 'Pizza Palace' })];
       cacheMock.get.mockResolvedValueOnce(null);
 
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbVendors, error: null })
-      );
+      // 1st call: vendor_categories junction
+      const junctionMock = createSupabaseMock({ data: [{ vendor_id: dbVendors[0].id }], error: null });
+      // 2nd call: vendors
+      const vendorsMock = createSupabaseMock({ data: dbVendors, error: null });
+      // 3rd call: enrichWithCategories
+      const enrichMock = createSupabaseMock({ data: [], error: null });
 
-      const result = await service.getVendorsByCategory('pizza');
+      mockFromSequence([junctionMock, vendorsMock, enrichMock]);
+
+      const result = await service.getVendorsByCategory('cat-pizza');
 
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('Pizza Palace');
       expect(cacheMock.set).toHaveBeenCalledWith(
-        'vendors:category:pizza',
+        'vendors:category:cat-pizza',
         expect.any(Array),
         3600
       );
+    });
+
+    it('returns empty array when no vendors in category', async () => {
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      supabaseMock.from.mockReturnValue(
+        createSupabaseMock({ data: [], error: null })
+      );
+
+      const result = await service.getVendorsByCategory('cat-empty');
+
+      expect(result).toEqual([]);
     });
 
     it('throws when Supabase returns an error', async () => {
@@ -418,10 +454,12 @@ describe('VendorService', () => {
       vendorsMock.then = vi.fn((resolve) =>
         Promise.resolve(resolve({ data: dbVendors, error: null, count: 1 }))
       );
+      // enrichWithCategories
+      const enrichMock = createSupabaseMock({ data: [], error: null });
       // menu items
       const menuMock = createSupabaseMock({ data: dbMenuItems, error: null });
 
-      mockFromSequence([eventMock, junctionMock, vendorsMock, menuMock]);
+      mockFromSequence([eventMock, junctionMock, vendorsMock, enrichMock, menuMock]);
 
       const result = await service.getVendorsByEvent(eventId, { page: 1, pageSize: 20 });
 
@@ -976,18 +1014,23 @@ describe('VendorService', () => {
         data: [{ vendor_id: 'v1' }],
         error: null,
       });
-      // 3rd call: vendor_menu_items (filtered by allowed vendor IDs)
+      // 3rd call: filterAvailableVendors → event_menu_configurations
+      const configsMock = createSupabaseMock({
+        data: [{ vendor_id: 'v1', is_accepting_orders: true, status: 'ACTIVE' }],
+        error: null,
+      });
+      // 4th call: vendor_menu_items (filtered by allowed vendor IDs)
       const itemsMock = createSupabaseMock({
         data: [{ vendor_id: 'v1' }],
         error: null,
       });
-      // 4th call: fetch vendors
+      // 5th call: fetch vendors
       const vendorsMock = createSupabaseMock({
         data: [makeVendor({ id: 'v1' })],
         error: null,
       });
 
-      mockFromSequence([eventMock, eventVendorsMock, itemsMock, vendorsMock]);
+      mockFromSequence([eventMock, eventVendorsMock, configsMock, itemsMock, vendorsMock]);
 
       const result = await service.getVendorsWithItemsInCategory('cat-1', 'event-1');
 

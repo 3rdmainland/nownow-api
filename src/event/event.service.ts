@@ -28,6 +28,7 @@ export class EventService {
         }
 
         const events = (data || []).map(dbEvent => fromDbEvent(dbEvent));
+        await this.populateVendorIds(events);
         await cache.set(cacheKey, events, EVENT_CACHE_TTL);
         return events;
     }
@@ -48,7 +49,10 @@ export class EventService {
         }
 
         const event = data ? fromDbEvent(data) : null;
-        if (event) await cache.set(cacheKey, event, EVENT_CACHE_TTL);
+        if (event) {
+            await this.populateVendorIds([event]);
+            await cache.set(cacheKey, event, EVENT_CACHE_TTL);
+        }
         return event;
     }
 
@@ -65,7 +69,10 @@ export class EventService {
 
         if (error) return null;
         const event = data ? fromDbEvent(data) : null;
-        if (event) await cache.set(cacheKey, event, EVENT_CACHE_TTL);
+        if (event) {
+            await this.populateVendorIds([event]);
+            await cache.set(cacheKey, event, EVENT_CACHE_TTL);
+        }
         return event;
     }
 
@@ -153,6 +160,7 @@ export class EventService {
             .upsert(rows, { onConflict: "event_id,vendor_id" });
         if (error) throw new Error(`Failed to add vendors to event: ${error.message}`);
         await this.invalidateEventVendorCache(eventId);
+        await this.invalidateEventCachesById(eventId);
     }
 
     async removeVendorFromEvent(eventId: string, vendorId: string): Promise<void> {
@@ -163,6 +171,47 @@ export class EventService {
             .eq("vendor_id", vendorId);
         if (error) throw new Error(`Failed to remove vendor from event: ${error.message}`);
         await this.invalidateEventVendorCache(eventId);
+        await this.invalidateEventCachesById(eventId);
+    }
+
+    /**
+     * Fetches vendor IDs from event_vendors junction table and populates the vendorIds field on each event.
+     */
+    private async populateVendorIds(events: Event[]): Promise<void> {
+        if (events.length === 0) return;
+
+        const eventIds = events.map(e => e.id);
+        const { data, error } = await supabase
+            .from('event_vendors')
+            .select('event_id, vendor_id')
+            .in('event_id', eventIds);
+
+        if (error || !data || !Array.isArray(data)) return;
+
+        const vendorMap = new Map<string, string[]>();
+        for (const row of data) {
+            const existing = vendorMap.get(row.event_id) || [];
+            existing.push(row.vendor_id);
+            vendorMap.set(row.event_id, existing);
+        }
+
+        for (const event of events) {
+            event.vendorIds = vendorMap.get(event.id) || [];
+        }
+    }
+
+    /**
+     * Invalidates event caches by event ID (used when vendor associations change).
+     */
+    private async invalidateEventCachesById(eventId: string): Promise<void> {
+        // Fetch the event to get the code for cache invalidation
+        const { data } = await supabase
+            .from('events')
+            .select('code')
+            .eq('id', eventId)
+            .single();
+
+        await this.invalidateEventCaches(eventId, data?.code);
     }
 
     // Upstash doesn't support SCAN so we delete the most common paginated keys

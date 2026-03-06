@@ -322,7 +322,9 @@ describe('EventService', () => {
       mockFromSequence([
         // 1st call: getEventById → select from events
         createSupabaseMock({ data: existingEvent, error: null }),
-        // 2nd call: delete from events
+        // 2nd call: getEventById → populateVendorIds from event_vendors
+        createSupabaseMock({ data: [], error: null }),
+        // 3rd call: delete from events
         createSupabaseMock({ data: null, error: null }),
       ]);
 
@@ -335,7 +337,9 @@ describe('EventService', () => {
       mockFromSequence([
         // 1st call: getEventById → select from events (succeeds)
         createSupabaseMock({ data: existingEvent, error: null }),
-        // 2nd call: delete from events (fails)
+        // 2nd call: getEventById → populateVendorIds from event_vendors
+        createSupabaseMock({ data: [], error: null }),
+        // 3rd call: delete from events (fails)
         createSupabaseMock({ data: null, error: { message: 'foreign key violation' } }),
       ]);
 

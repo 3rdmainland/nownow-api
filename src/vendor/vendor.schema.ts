@@ -7,7 +7,18 @@ const vendorProperties = {
     email: { type: 'string', format: 'email' },
     imageUrl: { type: 'string' },
     logoUrl: { type: 'string' },
-    categoryId: { type: 'string' }, // Now references categories table
+    categoryId: { type: 'string' }, // DEPRECATED: first category for backwards compat
+    categoryIds: { type: 'array', items: { type: 'string' } },
+    categories: {
+        type: 'array',
+        items: {
+            type: 'object',
+            properties: {
+                id: { type: 'string' },
+                name: { type: 'string' }
+            }
+        }
+    },
     cuisineType: { type: 'array', items: { type: 'string' } },
     rating: { type: 'number' },
     totalReviews: { type: 'number' },
@@ -131,7 +142,7 @@ export const createVendorSchema = {
     tags: ['vendors'],
     body: {
         type: 'object',
-        required: ['name', 'phone', 'email', 'categoryId', 'paymentMethods'], // location and hours are optional
+        required: ['name', 'phone', 'email', 'categoryIds', 'paymentMethods'], // location and hours are optional
         properties: {
             name: { type: 'string' },
             description: { type: 'string' },
@@ -139,7 +150,7 @@ export const createVendorSchema = {
             email: { type: 'string', format: 'email' },
             imageUrl: { type: 'string' },
             logoUrl: { type: 'string' },
-            categoryId: { type: 'string' },
+            categoryIds: { type: 'array', items: { type: 'string' }, minItems: 1 },
             cuisineType: { type: 'array', items: { type: 'string' } },
             location: {
                 type: 'object',
@@ -204,7 +215,7 @@ export const updateVendorSchema = {
             email: { type: 'string', format: 'email' },
             imageUrl: { type: 'string' },
             logoUrl: { type: 'string' },
-            categoryId: { type: 'string' },
+            categoryIds: { type: 'array', items: { type: 'string' }, minItems: 1 },
             cuisineType: { type: 'array', items: { type: 'string' } },
             location: { type: 'object', additionalProperties: true },
             hours: {
@@ -342,12 +353,11 @@ export const pauseVendorSchema = {
 export const getVendorsByCategorySchema = {
     description: 'Get vendors by category ID',
     tags: ['vendors'],
-    // Keeping legacy shape: controller currently reads from query
     querystring: {
         type: 'object',
-        required: ['category'],
+        required: ['categoryId'],
         properties: {
-            category: { type: 'string' }
+            categoryId: { type: 'string' }
         }
     },
     response: {
@@ -450,7 +460,8 @@ export const getVendorsByEventSchema = {
         type: 'object',
         properties: {
             page: { type: 'integer', minimum: 1, default: 1 },
-            pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 }
+            pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            categoryId: { type: 'string' }
         }
     },
     response: {

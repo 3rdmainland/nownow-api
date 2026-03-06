@@ -8,6 +8,7 @@ export const makeVendor = (overrides: Record<string, any> = {}) => ({
   image_url: null,
   logo_url: null,
   category_id: null,
+  vendor_categories: [],
   cuisine_type: ['Fast Food'],
   rating: 4.5,
   total_reviews: 10,

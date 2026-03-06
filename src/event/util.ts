@@ -30,7 +30,7 @@ export function fromDbEvent(dbEvent: any): Event {
         code: dbEvent.code,
         created_at: dbEvent.created_at,
         updated_at: dbEvent.updated_at,
-        vendorIds: [],
+        vendorIds: dbEvent.vendorIds ?? [],
         branding: dbEvent.branding ?? undefined,
     };
 }

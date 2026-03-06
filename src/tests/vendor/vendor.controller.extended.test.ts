@@ -60,13 +60,16 @@ describe('VendorController — Extended Coverage', () => {
       const vendors = [makeVendor({ name: 'Pizza Place' })];
 
       cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: vendors, error: null }),
-      );
+
+      // 1st: vendor_categories junction, 2nd: vendors, 3rd: enrichWithCategories
+      const junctionMock = createSupabaseMock({ data: [{ vendor_id: vendors[0].id }], error: null });
+      const vendorsMock = createSupabaseMock({ data: vendors, error: null });
+      const enrichMock = createSupabaseMock({ data: [], error: null });
+      mockFromSequence([junctionMock, vendorsMock, enrichMock]);
 
       const res = await app.inject({
         method: 'GET',
-        url: '/vendor/category?category=Pizza',
+        url: '/vendor/category?categoryId=cat-pizza',
       });
 
       expect(res.statusCode).toBe(200);
@@ -83,7 +86,7 @@ describe('VendorController — Extended Coverage', () => {
 
       const res = await app.inject({
         method: 'GET',
-        url: '/vendor/category?category=NonExistentCategory',
+        url: '/vendor/category?categoryId=non-existent',
       });
 
       expect(res.statusCode).toBe(200);
@@ -92,13 +95,17 @@ describe('VendorController — Extended Coverage', () => {
 
     it('returns 500 when the service throws', async () => {
       cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'DB error' } }),
-      );
+
+      // 1st call: junction table returns vendor IDs
+      const junctionMock = createSupabaseMock({ data: [{ vendor_id: 'v1' }], error: null });
+      // 2nd call: vendors fetch fails
+      const vendorsMock = createSupabaseMock({ data: null, error: { message: 'DB error' } });
+
+      mockFromSequence([junctionMock, vendorsMock]);
 
       const res = await app.inject({
         method: 'GET',
-        url: '/vendor/category?category=Any',
+        url: '/vendor/category?categoryId=any',
       });
 
       expect(res.statusCode).toBe(500);
@@ -183,7 +190,7 @@ describe('VendorController — Extended Coverage', () => {
         payload: {
           phone: '0812345678',
           email: 'test@vendor.com',
-          categoryId: 'cat-1',
+          categoryIds: ['cat-1'],
           paymentMethods: ['CASH'],
         },
       });
@@ -208,10 +215,19 @@ describe('VendorController — Extended Coverage', () => {
         description: 'A fully described vendor',
         image_url: 'https://example.com/image.png',
       });
+      const dbVendorWithCats = makeVendor({
+        id: 'new-v',
+        name: 'Full Vendor',
+        vendor_categories: [{ category_id: 'cat-1', categories: { id: 'cat-1', name: 'Food' } }],
+      });
 
-      supabaseMock.from.mockReturnValue(
+      // 1. insert vendor, 2. delete old cats, 3. insert cats, 4. fetch with cats
+      mockFromSequence([
         createSupabaseMock({ data: dbVendor, error: null }),
-      );
+        createSupabaseMock({ data: null, error: null }),
+        createSupabaseMock({ data: null, error: null }),
+        createSupabaseMock({ data: dbVendorWithCats, error: null }),
+      ]);
 
       const res = await app.inject({
         method: 'POST',
@@ -220,7 +236,7 @@ describe('VendorController — Extended Coverage', () => {
           name: 'Full Vendor',
           phone: '0812345678',
           email: 'full@vendor.com',
-          categoryId: 'cat-1',
+          categoryIds: ['cat-1'],
           paymentMethods: ['CASH'],
           description: 'A fully described vendor',
           imageUrl: 'https://example.com/image.png',
@@ -482,9 +498,10 @@ describe('VendorController — Extended Coverage', () => {
       vendorsMock.then = vi.fn((resolve) =>
         Promise.resolve(resolve({ data: dbVendors, error: null, count: 1 })),
       );
+      const enrichMock = createSupabaseMock({ data: [], error: null });
       const menuMock = createSupabaseMock({ data: [], error: null });
 
-      mockFromSequence([eventMock, junctionMock, vendorsMock, menuMock]);
+      mockFromSequence([eventMock, junctionMock, vendorsMock, enrichMock, menuMock]);
 
       const res = await app.inject({
         method: 'GET',
