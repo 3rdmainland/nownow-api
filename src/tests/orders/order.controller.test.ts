@@ -546,8 +546,8 @@ describe('Order Controller (integration via inject)', () => {
             expect(res.statusCode).toBe(400);
         });
 
-        it('returns 500 when the service throws unexpectedly', async () => {
-            // The vendor lookup fails → service throws → controller returns 500
+        it('returns 404 when the vendor lookup fails', async () => {
+            // The vendor lookup fails → service throws NotFoundError → global handler returns 404
             mockFrom({ data: null, error: { message: 'vendor not found' } });
 
             const res = await app.inject({
@@ -556,7 +556,7 @@ describe('Order Controller (integration via inject)', () => {
                 payload: validOrderBody(),
             });
 
-            expect(res.statusCode).toBe(500);
+            expect(res.statusCode).toBe(404);
         });
     });
 

@@ -209,20 +209,15 @@ const orderController: FastifyPluginAsync = async (fastify) => {
 
     // Create new order
     fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer] }, async (request, reply) => {
-        try {
-            const orderData = request.body as any;
-            // Attach customer_id from JWT if authenticated
-            const user = request.user as { customerId?: string; role?: string } | undefined;
-            if (user?.customerId && user?.role === 'customer') {
-                orderData.customer_id = user.customerId;
-            }
-            const result = await orderService.createOrder(orderData);
-            const { paymentUrl, ...order } = result;
-            return reply.status(201).send({ order, paymentUrl });
-        } catch (err) {
-            fastify.log.error(err);
-            return reply.status(500).send({ error: "Internal server error" });
+        const orderData = request.body as any;
+        // Attach customer_id from JWT if authenticated
+        const user = request.user as { customerId?: string; role?: string } | undefined;
+        if (user?.customerId && user?.role === 'customer') {
+            orderData.customer_id = user.customerId;
         }
+        const result = await orderService.createOrder(orderData);
+        const { paymentUrl, ...order } = result;
+        return reply.status(201).send({ order, paymentUrl });
     });
 
     // Update order status

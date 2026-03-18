@@ -340,7 +340,7 @@ describe('Order Controller — Extended Coverage', () => {
 
       // The schema requires items to be an array but does not enforce minItems,
       // so the service may accept it or reject it. Check that we get a response.
-      expect([201, 400, 500]).toContain(res.statusCode);
+      expect([201, 400, 404, 500]).toContain(res.statusCode);
     });
 
     it('returns 400 when total is a string instead of a number', async () => {

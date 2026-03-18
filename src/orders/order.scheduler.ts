@@ -374,6 +374,17 @@ export class OrderScheduler {
         const eventEnd = new Date(event.end_date);
         const now = new Date();
 
+        // Fetch vendor prep time so we don't show slots that are too soon to prepare
+        const { data: vendor } = await supabase
+            .from('vendors')
+            .select('estimated_prep_time')
+            .eq('id', vendorId)
+            .single();
+        const prepTimeMinutes = vendor?.estimated_prep_time || 12;
+
+        // Earliest possible pickup = now + prep time
+        const earliest = new Date(now.getTime() + prepTimeMinutes * 60000);
+
         // Calculate end of tomorrow (limit slots to today and tomorrow only)
         const endOfTomorrow = new Date(Date.UTC(
             now.getUTCFullYear(),
@@ -384,9 +395,9 @@ export class OrderScheduler {
         // Use the earlier of event end or end of tomorrow as the cutoff
         const slotsCutoff = eventEnd < endOfTomorrow ? eventEnd : endOfTomorrow;
 
-        // Build allowed intervals using per-day hours
-        const intervals = await this.buildAllowedIntervals(event, vendorId, now);
-        const firstStart = intervals[0]?.start || this.roundUpToNearest5Minutes(eventStart > now ? eventStart : now);
+        // Build allowed intervals using per-day hours, offset by prep time
+        const intervals = await this.buildAllowedIntervals(event, vendorId, earliest);
+        const firstStart = intervals[0]?.start || this.roundUpToNearest5Minutes(eventStart > earliest ? eventStart : earliest);
 
         // 2) Fetch all orders for the vendor within the window in ONE query
         const { data: orders, error: ordersError } = await supabase

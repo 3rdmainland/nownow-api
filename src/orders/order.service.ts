@@ -6,7 +6,7 @@ import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 import { PaymentService } from "../payment/payment.service.js";
-import { ValidationError, NotFoundError } from "../lib/errors.js";
+import { ValidationError, NotFoundError, TooManyRequestsError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
 interface EventMenuConfig {
@@ -102,7 +102,7 @@ export class OrderService {
 
         const { data: vendor, error: vendorError } = vendorResult;
         if (vendorError || !vendor) {
-            throw new Error(`Failed to fetch vendor info: ${vendorError?.message || 'Vendor not found'}`);
+            throw new NotFoundError('Vendor not found');
         }
 
         let estimatedPrepTime = vendor.estimated_prep_time || 12;
@@ -118,10 +118,10 @@ export class OrderService {
                 endDate.setHours(23, 59, 59, 999); // inclusive of the end day
 
                 if (now < startDate) {
-                    throw new Error('This event has not started yet.');
+                    throw new ValidationError('This event has not started yet.');
                 }
                 if (now > endDate) {
-                    throw new Error('This event has ended. Orders are no longer accepted.');
+                    throw new ValidationError('This event has ended. Orders are no longer accepted.');
                 }
             }
 
@@ -130,15 +130,15 @@ export class OrderService {
             if (menuConfig) {
                 // 1. Check if vendor is accepting orders
                 if (!menuConfig.is_accepting_orders) {
-                    throw new Error('This vendor is not currently accepting orders.');
+                    throw new ValidationError('This vendor is not currently accepting orders.');
                 }
 
                 // 2. Check menu status (PAUSED or CLOSED blocks orders)
                 if (menuConfig.status === 'PAUSED') {
-                    throw new Error('This vendor has temporarily paused orders. Please try again shortly.');
+                    throw new ValidationError('This vendor has temporarily paused orders. Please try again shortly.');
                 }
                 if (menuConfig.status === 'CLOSED') {
-                    throw new Error('This vendor has closed for this event.');
+                    throw new ValidationError('This vendor has closed for this event.');
                 }
 
                 // 3. Check max concurrent orders
@@ -147,7 +147,7 @@ export class OrderService {
                     menuConfig.max_concurrent_orders !== undefined &&
                     menuConfig.current_active_orders >= menuConfig.max_concurrent_orders
                 ) {
-                    throw new Error(
+                    throw new ValidationError(
                         `This vendor is at capacity (${menuConfig.max_concurrent_orders} concurrent orders). ` +
                         'Please wait a few minutes and try again.'
                     );
@@ -183,7 +183,7 @@ export class OrderService {
                         const lastOrderTime = new Date(recentOrders[0].created_at);
                         const nextAvailable = new Date(lastOrderTime.getTime() + cooldownMs);
                         const waitSecs = Math.ceil((nextAvailable.getTime() - Date.now()) / 1000);
-                        throw new Error(
+                        throw new TooManyRequestsError(
                             `This vendor is managing order flow. ` +
                             `Please try again in ${waitSecs < 60 ? `${waitSecs}s` : `${Math.ceil(waitSecs / 60)}m`}.`
                         );
@@ -193,7 +193,7 @@ export class OrderService {
                     if (menuConfig.max_orders_per_customer_event && order.phone) {
                         const count = (maxOrdersResult as any).count;
                         if (count !== null && count >= menuConfig.max_orders_per_customer_event) {
-                            throw new Error(
+                            throw new ValidationError(
                                 `You have reached the maximum of ${menuConfig.max_orders_per_customer_event} ` +
                                 `order(s) allowed per customer at this event.`
                             );
@@ -214,11 +214,11 @@ export class OrderService {
                     if (todaySchedule) {
                         // Per-day entry exists — use it
                         if (todaySchedule.isClosed) {
-                            throw new Error('This vendor is not operating today.');
+                            throw new ValidationError('This vendor is not operating today.');
                         }
                         if (todaySchedule.openTime && todaySchedule.closeTime) {
                             if (currentHHMM < todaySchedule.openTime || currentHHMM >= todaySchedule.closeTime) {
-                                throw new Error(
+                                throw new ValidationError(
                                     `This vendor operates ${todaySchedule.openTime} – ${todaySchedule.closeTime} today.`
                                 );
                             }
@@ -226,7 +226,7 @@ export class OrderService {
                     } else if (menuConfig.event_open_time && menuConfig.event_close_time) {
                         // Fall back to daily default
                         if (currentHHMM < menuConfig.event_open_time || currentHHMM >= menuConfig.event_close_time) {
-                            throw new Error(
+                            throw new ValidationError(
                                 `This vendor is only accepting orders between ${menuConfig.event_open_time} and ${menuConfig.event_close_time}.`
                             );
                         }
@@ -256,7 +256,7 @@ export class OrderService {
             );
 
             if (!validationResult.isValid) {
-                throw new Error(`Invalid scheduled order: ${validationResult.error}`);
+                throw new ValidationError(`Invalid scheduled order: ${validationResult.error}`);
             }
         } else {
             // Validate immediate order
@@ -267,7 +267,7 @@ export class OrderService {
             );
 
             if (!validationResult.isValid) {
-                throw new Error(`Cannot place order: ${validationResult.error}`);
+                throw new ValidationError(`Cannot place order: ${validationResult.error}`);
             }
         }
 
@@ -309,7 +309,7 @@ export class OrderService {
         // 7. Check minimum order value
         const minimumOrderValue = (order as any)._minimumOrderValue;
         if (minimumOrderValue && validatedTotal < minimumOrderValue) {
-            throw new Error(
+            throw new ValidationError(
                 `Minimum order value is R${minimumOrderValue.toFixed(2)}. ` +
                 `Your order total is R${validatedTotal.toFixed(2)}.`
             );
@@ -332,7 +332,7 @@ export class OrderService {
 
         // Validate cash orders are allowed
         if (isCashOrder && (!menuConfig || !menuConfig.allow_pay_at_stall)) {
-            throw new Error('Pay at stall is not available for this vendor at this event.');
+            throw new ValidationError('Pay at stall is not available for this vendor at this event.');
         }
 
         // Set defaults including estimated prep time and scheduling data
