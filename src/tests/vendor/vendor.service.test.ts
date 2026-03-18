@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { cacheMock, redisMock } from '../mocks/redis.js';
-import { makeVendor, makeDefaultMenuItem, makeCategory, makeOrder } from '../fixtures/index.js';
+import { makeVendor, makeDefaultMenuItem, makeCategory, makeOrder, makeMenuCategory } from '../fixtures/index.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
 
@@ -1074,6 +1074,202 @@ describe('VendorService', () => {
       await expect(
         service.getNearbyVendors(-33.9249, 18.4241),
       ).rejects.toThrow('Failed to fetch nearby vendors');
+    });
+  });
+
+  // ── getAggregatedMenuCategoriesByEvent ──────────────────────────────────────
+
+  describe('getAggregatedMenuCategoriesByEvent', () => {
+    it('returns cached result when cache hits', async () => {
+      const cached = [{ slug: 'burgers', name: 'Burgers', vendorCount: 3 }];
+      // First cache.get is for the event lookup cache (returns null), then for the method's own cache
+      // Actually, this method calls getEventByIdOrCode first, which does supabase queries,
+      // then checks its own cache. Let's mock the full flow.
+      // Actually getEventByIdOrCode doesn't use cache, it always hits supabase.
+      // So we need: supabase for event lookup, then cache hit for the method's own key.
+
+      // event lookup
+      const eventMock = createSupabaseMock({ data: { id: 'event-1' }, error: null });
+      mockFromSequence([eventMock]);
+
+      // cache hit on the eventMenuCategories key
+      cacheMock.get.mockResolvedValueOnce(cached);
+
+      const result = await service.getAggregatedMenuCategoriesByEvent('event-1');
+
+      expect(result).toEqual(cached);
+    });
+
+    it('groups menu categories by slug and counts distinct vendors', async () => {
+      const menuCats = [
+        makeMenuCategory({ vendor_id: 'v1', slug: 'burgers', name: 'Burgers' }),
+        makeMenuCategory({ vendor_id: 'v2', slug: 'burgers', name: 'Burgers' }),
+        makeMenuCategory({ vendor_id: 'v1', slug: 'drinks', name: 'Drinks' }),
+        makeMenuCategory({ vendor_id: 'v2', slug: 'drinks', name: 'Beverages' }),
+        makeMenuCategory({ vendor_id: 'v3', slug: 'drinks', name: 'Drinks' }),
+      ];
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        // event lookup
+        createSupabaseMock({ data: { id: 'event-1' }, error: null }),
+        // event_vendors junction
+        createSupabaseMock({ data: [{ vendor_id: 'v1' }, { vendor_id: 'v2' }, { vendor_id: 'v3' }], error: null }),
+        // menu_categories query
+        createSupabaseMock({ data: menuCats, error: null }),
+      ]);
+
+      const result = await service.getAggregatedMenuCategoriesByEvent('event-1');
+
+      expect(result).toHaveLength(2);
+      // drinks has 3 vendors, burgers has 2 — drinks first (sorted by vendorCount desc)
+      expect(result[0].slug).toBe('drinks');
+      expect(result[0].vendorCount).toBe(3);
+      // "Drinks" appears twice, "Beverages" once — most common name is "Drinks"
+      expect(result[0].name).toBe('Drinks');
+      expect(result[1].slug).toBe('burgers');
+      expect(result[1].vendorCount).toBe(2);
+    });
+
+    it('returns empty array when event has no vendors', async () => {
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: 'event-1' }, error: null }),
+        createSupabaseMock({ data: [], error: null }), // no event_vendors
+      ]);
+
+      const result = await service.getAggregatedMenuCategoriesByEvent('event-1');
+
+      expect(result).toEqual([]);
+      expect(cacheMock.set).toHaveBeenCalledWith(
+        expect.stringContaining('menuCategories'),
+        [],
+        300 // CACHE_TTL.MENU_ITEMS
+      );
+    });
+
+    it('returns empty array when no menu categories found', async () => {
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: 'event-1' }, error: null }),
+        createSupabaseMock({ data: [{ vendor_id: 'v1' }], error: null }),
+        createSupabaseMock({ data: [], error: null }), // no menu_categories
+      ]);
+
+      const result = await service.getAggregatedMenuCategoriesByEvent('event-1');
+
+      expect(result).toEqual([]);
+    });
+
+    it('throws when event not found', async () => {
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      const notFoundMock = createSupabaseMock({ data: null, error: { message: 'Not found' } });
+      mockFromSequence([notFoundMock, notFoundMock]);
+
+      await expect(service.getAggregatedMenuCategoriesByEvent('bad-event')).rejects.toThrow('Event not found');
+    });
+  });
+
+  // ── getVendorsByEvent + menuCategorySlug ──────────────────────────────────
+
+  describe('getVendorsByEvent with menuCategorySlug', () => {
+    it('filters vendors by menu category slug', async () => {
+      const eventId = 'event-menu-filter';
+      const v1 = makeVendor({ id: 'v-has-burgers', name: 'Burger Joint' });
+      const v2 = makeVendor({ id: 'v-no-burgers', name: 'Pizza Place' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        // event lookup
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        // event_vendors
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-has-burgers', display_order: null },
+          { vendor_id: 'v-no-burgers', display_order: null },
+        ], error: null }),
+        // menu_categories filter (only v-has-burgers has 'burgers' slug)
+        createSupabaseMock({ data: [{ vendor_id: 'v-has-burgers' }], error: null }),
+        // vendors query
+        createSupabaseMock({ data: [v1], error: null }),
+        // enrichWithCategories
+        createSupabaseMock({ data: [], error: null }),
+        // menu items
+        createSupabaseMock({ data: [makeDefaultMenuItem({ vendor_id: 'v-has-burgers' })], error: null }),
+        // event statuses
+        createSupabaseMock({ data: [], error: null }),
+        // order counts
+        createSupabaseMock({ data: [], error: null }),
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId, { menuCategorySlug: 'burgers' });
+
+      expect(result.vendors).toHaveLength(1);
+      expect(result.vendors[0].id).toBe('v-has-burgers');
+    });
+
+    it('returns empty when no vendors match menu category slug', async () => {
+      const eventId = 'event-no-match';
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        createSupabaseMock({ data: [
+          { vendor_id: 'v1', display_order: null },
+        ], error: null }),
+        // menu_categories returns no matches
+        createSupabaseMock({ data: [], error: null }),
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId, { menuCategorySlug: 'sushi' });
+
+      expect(result.vendors).toHaveLength(0);
+      expect(result.total).toBe(0);
+    });
+
+    it('composes categoryId and menuCategorySlug filters', async () => {
+      const eventId = 'event-compose';
+      const v1 = makeVendor({ id: 'v-both', name: 'Both Filters' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        // event lookup
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        // event_vendors
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-both', display_order: null },
+          { vendor_id: 'v-cat-only', display_order: null },
+          { vendor_id: 'v-menu-only', display_order: null },
+        ], error: null }),
+        // vendor_categories filter (categoryId) — v-both and v-cat-only match
+        createSupabaseMock({ data: [{ vendor_id: 'v-both' }, { vendor_id: 'v-cat-only' }], error: null }),
+        // menu_categories filter (menuCategorySlug) — only v-both matches
+        createSupabaseMock({ data: [{ vendor_id: 'v-both' }], error: null }),
+        // vendors query
+        createSupabaseMock({ data: [v1], error: null }),
+        // enrichWithCategories
+        createSupabaseMock({ data: [], error: null }),
+        // menu items
+        createSupabaseMock({ data: [makeDefaultMenuItem({ vendor_id: 'v-both' })], error: null }),
+        // event statuses
+        createSupabaseMock({ data: [], error: null }),
+        // order counts
+        createSupabaseMock({ data: [], error: null }),
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId, {
+        categoryId: 'cat-fastfood',
+        menuCategorySlug: 'burgers',
+      });
+
+      expect(result.vendors).toHaveLength(1);
+      expect(result.vendors[0].id).toBe('v-both');
     });
   });
 

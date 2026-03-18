@@ -104,24 +104,6 @@ export const makeOrder = (overrides: Record<string, any> = {}) => ({
   ...overrides,
 });
 
-// ── Menu Item (vendor_menu_items shape — used by menu module tests) ──
-export const makeMenuItem = (overrides: Record<string, any> = {}) => ({
-  id: crypto.randomUUID(),
-  vendor_id: crypto.randomUUID(),
-  category_id: null,
-  name: 'Burger',
-  description: 'Juicy beef burger',
-  price: 80,
-  image_url: null,
-  type: 'FOOD',
-  prep_time: 10,
-  available: true,
-  tags: [],
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-  ...overrides,
-});
-
 // ── Default Menu Item (default_menu_items table) ─────────────────────────────
 export const makeDefaultMenuItem = (overrides: Record<string, any> = {}) => ({
   id: crypto.randomUUID(),
@@ -141,6 +123,20 @@ export const makeDefaultMenuItem = (overrides: Record<string, any> = {}) => ({
   display_order: 0,
   is_featured: false,
   is_popular: false,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  ...overrides,
+});
+
+// ── Menu Category (per-vendor menu_categories table) ─────────────────────────
+export const makeMenuCategory = (overrides: Record<string, any> = {}) => ({
+  id: crypto.randomUUID(),
+  vendor_id: crypto.randomUUID(),
+  slug: 'burgers',
+  name: 'Burgers',
+  image_url: null,
+  is_active: true,
+  display_order: 0,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
   ...overrides,

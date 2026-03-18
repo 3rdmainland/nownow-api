@@ -44,11 +44,11 @@ describe('CategoryService', () => {
 
   describe('getAllCategories', () => {
     it('returns all categories when no type filter is applied', async () => {
-      const vendorCat = makeCategory({ name: 'Fast Food', type: 'VENDOR' });
-      const menuCat = makeCategory({ name: 'Starters', type: 'MENU_ITEM' });
+      const vendorCat1 = makeCategory({ name: 'Fast Food', type: 'VENDOR' });
+      const vendorCat2 = makeCategory({ name: 'Starters', type: 'VENDOR' });
 
       supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: [vendorCat, menuCat], error: null }),
+        createSupabaseMock({ data: [vendorCat1, vendorCat2], error: null }),
       );
 
       const categories = await service.getAllCategories();
@@ -57,7 +57,7 @@ describe('CategoryService', () => {
       expect(categories[0].name).toBe('Fast Food');
       expect(categories[0].type).toBe('VENDOR');
       expect(categories[1].name).toBe('Starters');
-      expect(categories[1].type).toBe('MENU_ITEM');
+      expect(categories[1].type).toBe('VENDOR');
     });
 
     it('applies the type eq filter when type is VENDOR', async () => {
@@ -70,18 +70,6 @@ describe('CategoryService', () => {
       expect(mockBuilder.eq).toHaveBeenCalledWith('type', 'VENDOR');
       expect(categories).toHaveLength(1);
       expect(categories[0].type).toBe('VENDOR');
-    });
-
-    it('applies the type eq filter when type is MENU_ITEM', async () => {
-      const menuCat = makeCategory({ name: 'Desserts', type: 'MENU_ITEM' });
-      const mockBuilder = createSupabaseMock({ data: [menuCat], error: null });
-      supabaseMock.from.mockReturnValue(mockBuilder);
-
-      const categories = await service.getAllCategories('MENU_ITEM');
-
-      expect(mockBuilder.eq).toHaveBeenCalledWith('type', 'MENU_ITEM');
-      expect(categories).toHaveLength(1);
-      expect(categories[0].type).toBe('MENU_ITEM');
     });
 
     it('returns an empty array when no categories exist', async () => {
@@ -139,7 +127,7 @@ describe('CategoryService', () => {
 
   describe('getCategoryById', () => {
     it('returns the mapped category when found', async () => {
-      const dbCat = makeCategory({ id: 'cat-uuid-001', name: 'Beverages', type: 'MENU_ITEM' });
+      const dbCat = makeCategory({ id: 'cat-uuid-001', name: 'Beverages', type: 'VENDOR' });
 
       supabaseMock.from.mockReturnValue(
         createSupabaseMock({ data: dbCat, error: null }),
@@ -150,7 +138,7 @@ describe('CategoryService', () => {
       expect(category).not.toBeNull();
       expect(category!.id).toBe('cat-uuid-001');
       expect(category!.name).toBe('Beverages');
-      expect(category!.type).toBe('MENU_ITEM');
+      expect(category!.type).toBe('VENDOR');
     });
 
     it('returns null when data is null and no error occurs', async () => {
@@ -221,7 +209,7 @@ describe('CategoryService', () => {
       const updatedDbCat = makeCategory({
         id: 'cat-to-update',
         name: 'Renamed Category',
-        type: 'MENU_ITEM',
+        type: 'VENDOR',
         description: 'Updated description',
       });
 
@@ -237,7 +225,7 @@ describe('CategoryService', () => {
       expect(category).toMatchObject({
         id: 'cat-to-update',
         name: 'Renamed Category',
-        type: 'MENU_ITEM',
+        type: 'VENDOR',
       });
     });
 
@@ -297,7 +285,7 @@ describe('Category Controller (integration)', () => {
   describe('GET /category', () => {
     it('returns 200 with all categories', async () => {
       const cat1 = makeCategory({ name: 'Fast Food', type: 'VENDOR' });
-      const cat2 = makeCategory({ name: 'Mains', type: 'MENU_ITEM' });
+      const cat2 = makeCategory({ name: 'Mains', type: 'VENDOR' });
 
       supabaseMock.from.mockReturnValue(
         createSupabaseMock({ data: [cat1, cat2], error: null }),
@@ -350,19 +338,6 @@ describe('Category Controller (integration)', () => {
       expect(body.categories[0].type).toBe('VENDOR');
       // Confirm the service applied the filter
       expect(mockBuilder.eq).toHaveBeenCalledWith('type', 'VENDOR');
-    });
-
-    it('returns 200 with only MENU_ITEM categories when type=MENU_ITEM', async () => {
-      const menuCat = makeCategory({ name: 'Desserts', type: 'MENU_ITEM' });
-      const mockBuilder = createSupabaseMock({ data: [menuCat], error: null });
-      supabaseMock.from.mockReturnValue(mockBuilder);
-
-      const res = await app.inject({ method: 'GET', url: '/category?type=MENU_ITEM' });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body.categories[0].type).toBe('MENU_ITEM');
-      expect(mockBuilder.eq).toHaveBeenCalledWith('type', 'MENU_ITEM');
     });
 
     it('returns 400 when an invalid type query param is passed', async () => {
@@ -480,7 +455,7 @@ describe('Category Controller (integration)', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/category',
-        payload: { name: 'Conflict Cat', type: 'MENU_ITEM' },
+        payload: { name: 'Conflict Cat', type: 'VENDOR' },
       });
 
       expect(res.statusCode).toBe(500);
@@ -494,7 +469,7 @@ describe('Category Controller (integration)', () => {
       const updatedDbCat = makeCategory({
         id: 'cat-put-id',
         name: 'Updated Name',
-        type: 'MENU_ITEM',
+        type: 'VENDOR',
         description: 'New description',
       });
 

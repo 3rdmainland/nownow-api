@@ -12,6 +12,7 @@ import {
     searchVendorsSchema,
     getVendorStatsSchema,
     getVendorsByEventSchema,
+    getEventMenuCategoriesSchema,
 } from "./vendor.schema";
 import { VendorService } from "./vendor.service";
 
@@ -41,12 +42,24 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
+    // Get aggregated menu categories for an event
+    fastify.get("/event/:eventId/menu-categories", { schema: getEventMenuCategoriesSchema }, async (request, reply) => {
+        try {
+            const { eventId } = request.params as { eventId: string };
+            const categories = await vendorService.getAggregatedMenuCategoriesByEvent(eventId);
+            return { categories };
+        } catch (err) {
+            fastify.log.error(err);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
     // List vendors assigned to an event (paginated, with menu)
     fastify.get("/event/:eventId", { schema: getVendorsByEventSchema }, async (request, reply) => {
         try {
             const { eventId } = request.params as { eventId: string };
-            const { page, pageSize, categoryId } = request.query as { page?: number; pageSize?: number; categoryId?: string };
-            const result = await vendorService.getVendorsByEvent(eventId, { page, pageSize, categoryId });
+            const { page, pageSize, categoryId, menuCategorySlug } = request.query as { page?: number; pageSize?: number; categoryId?: string; menuCategorySlug?: string };
+            const result = await vendorService.getVendorsByEvent(eventId, { page, pageSize, categoryId, menuCategorySlug });
             return result;
         } catch (err) {
             fastify.log.error(err);

@@ -438,6 +438,36 @@ export const searchVendorsSchema = {
     }
 };
 
+export const getEventMenuCategoriesSchema = {
+    description: 'Get aggregated menu categories for an event',
+    tags: ['vendors'],
+    params: {
+        type: 'object',
+        properties: { eventId: { type: 'string' } },
+        required: ['eventId']
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: {
+                categories: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            slug: { type: 'string' },
+                            name: { type: 'string' },
+                            vendorCount: { type: 'integer' },
+                            imageUrl: { type: 'string' }
+                        }
+                    }
+                }
+            }
+        },
+        500: { type: 'object', properties: { error: { type: 'string' } } }
+    }
+};
+
 export const getVendorsByEventSchema = {
     description: 'Get vendors assigned to an event (paginated)',
     tags: ['vendors'],
@@ -451,7 +481,8 @@ export const getVendorsByEventSchema = {
         properties: {
             page: { type: 'integer', minimum: 1, default: 1 },
             pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-            categoryId: { type: 'string' }
+            categoryId: { type: 'string' },
+            menuCategorySlug: { type: 'string' }
         }
     },
     response: {

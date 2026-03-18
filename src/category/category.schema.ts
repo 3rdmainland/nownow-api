@@ -6,7 +6,7 @@ const categoryProperties = {
     id: { type: 'string' },
     name: { type: 'string' },
     description: { type: 'string' },
-    type: { type: 'string', enum: ['VENDOR', 'MENU_ITEM'] },
+    type: { type: 'string', enum: ['VENDOR'] },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' }
 };
@@ -17,7 +17,7 @@ export const getCategoriesSchema = {
     querystring: {
         type: 'object',
         properties: {
-            type: { type: 'string', enum: ['VENDOR', 'MENU_ITEM'] }
+            type: { type: 'string', enum: ['VENDOR'] }
         }
     },
     response: {
@@ -80,7 +80,7 @@ export const createCategorySchema = {
         properties: {
             name: { type: 'string' },
             description: { type: 'string' },
-            type: { type: 'string', enum: ['VENDOR', 'MENU_ITEM'] }
+            type: { type: 'string', enum: ['VENDOR'] }
         }
     },
     response: {
@@ -115,7 +115,7 @@ export const updateCategorySchema = {
         properties: {
             name: { type: 'string' },
             description: { type: 'string' },
-            type: { type: 'string', enum: ['VENDOR', 'MENU_ITEM'] }
+            type: { type: 'string', enum: ['VENDOR'] }
         }
     },
     response: {

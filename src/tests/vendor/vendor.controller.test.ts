@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { cacheMock, redisMock } from '../mocks/redis.js';
-import { makeVendor, makeDefaultMenuItem, makeCategory, makeOrder } from '../fixtures/index.js';
+import { makeVendor, makeDefaultMenuItem, makeCategory, makeOrder, makeMenuCategory } from '../fixtures/index.js';
 import { buildApp } from '../helpers/app.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
@@ -169,6 +169,56 @@ describe('VendorController (integration)', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/vendor/event/bad-event',
+      });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
+
+  // ── GET /vendor/event/:eventId/menu-categories ──────────────────────────────
+
+  describe('GET /vendor/event/:eventId/menu-categories', () => {
+    it('returns 200 with { categories } array', async () => {
+      const eventId = 'event-mc';
+      const menuCats = [
+        makeMenuCategory({ vendor_id: 'v1', slug: 'burgers', name: 'Burgers' }),
+        makeMenuCategory({ vendor_id: 'v2', slug: 'burgers', name: 'Burgers' }),
+        makeMenuCategory({ vendor_id: 'v1', slug: 'drinks', name: 'Drinks' }),
+      ];
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        // event lookup
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        // event_vendors
+        createSupabaseMock({ data: [{ vendor_id: 'v1' }, { vendor_id: 'v2' }], error: null }),
+        // menu_categories
+        createSupabaseMock({ data: menuCats, error: null }),
+      ]);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/vendor/event/${eventId}/menu-categories`,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toHaveProperty('categories');
+      expect(body.categories).toHaveLength(2);
+      expect(body.categories[0]).toHaveProperty('slug');
+      expect(body.categories[0]).toHaveProperty('vendorCount');
+    });
+
+    it('returns 500 when event is not found', async () => {
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      const notFoundMock = createSupabaseMock({ data: null, error: { message: 'Not found' } });
+      mockFromSequence([notFoundMock, notFoundMock]);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/vendor/event/bad-event/menu-categories',
       });
 
       expect(res.statusCode).toBe(500);

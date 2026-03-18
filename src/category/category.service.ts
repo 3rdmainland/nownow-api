@@ -111,7 +111,7 @@ export class CategoryService {
         const keys = [categoryCacheKeys.all()];
         if (id) keys.push(categoryCacheKeys.byId(id));
         // Also invalidate typed variants
-        keys.push(categoryCacheKeys.all('VENDOR'), categoryCacheKeys.all('MENU'));
+        keys.push(categoryCacheKeys.all('VENDOR'));
         try {
             await cache.del(...keys);
         } catch {

@@ -154,7 +154,6 @@ function resolveTable(tableName: string): any[] {
     case 'vendors': return SEED_VENDORS;
     case 'events': return SEED_EVENTS;
     case 'categories': return SEED_CATEGORIES;
-    case 'vendor_menu_items': return SEED_MENU_ITEMS;
     case 'default_menu_items': return SEED_MENU_ITEMS;
     case 'event_vendors': return SEED_EVENT_VENDORS;
     case 'event_menu_configurations': return SEED_EVENT_MENU_CONFIGS;

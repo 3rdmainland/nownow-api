@@ -12,12 +12,13 @@ const cacheKeys = {
     vendorStats: (id: string) => `vendor:${id}:stats`,
     vendorsByCategory: (category: string) => `vendors:category:${category}`,
     vendorsByCuisine: (cuisine: string) => `vendors:cuisine:${cuisine}`,
-    vendorsByEvent: (eventId: string, page: number, pageSize: number, categoryId?: string) =>
-        `vendors:event:${eventId}:page:${page}:size:${pageSize}${categoryId ? `:cat:${categoryId}` : ''}`,
+    vendorsByEvent: (eventId: string, page: number, pageSize: number, categoryId?: string, menuCategorySlug?: string) =>
+        `vendors:event:${eventId}:page:${page}:size:${pageSize}${categoryId ? `:cat:${categoryId}` : ''}${menuCategorySlug ? `:menu:${menuCategorySlug}` : ''}`,
     vendorSearch: (term: string, eventId?: string) =>
         `vendors:search:${term}${eventId ? `:event:${eventId}` : ''}`,
     vendorsWithItemsByCategory: (categoryId: string, eventId?: string) =>
         `vendors:menuCategory:${categoryId}${eventId ? `:event:${eventId}` : ''}`,
+    eventMenuCategories: (eventId: string) => `vendors:event:${eventId}:menuCategories`,
 } as const;
 
 // Select string that joins vendor_categories with category names
@@ -399,6 +400,96 @@ export class VendorService {
         }
     }
 
+    async getAggregatedMenuCategoriesByEvent(
+        eventIdOrCode: string
+    ): Promise<{ slug: string; name: string; vendorCount: number; imageUrl?: string }[]> {
+        const eventId = await this.getEventByIdOrCode(eventIdOrCode);
+        if (!eventId) {
+            throw new Error('Event not found');
+        }
+
+        const cacheKey = cacheKeys.eventMenuCategories(eventId);
+
+        try {
+            const cached = await cache.get<{ slug: string; name: string; vendorCount: number; imageUrl?: string }[]>(cacheKey);
+            if (cached) return cached;
+
+            // Get vendor IDs for this event
+            const { data: eventVendors, error: junctionError } = await supabase
+                .from('event_vendors')
+                .select('vendor_id')
+                .eq('event_id', eventId);
+
+            if (junctionError) {
+                throw new Error(`Failed to fetch event vendors: ${junctionError.message}`);
+            }
+
+            const vendorIds = (eventVendors || []).map((ev: any) => ev.vendor_id);
+            if (vendorIds.length === 0) {
+                await cache.set(cacheKey, [], CACHE_TTL.MENU_ITEMS);
+                return [];
+            }
+
+            // Get all active menu categories for these vendors
+            const { data: menuCats, error: catError } = await supabase
+                .from('menu_categories')
+                .select('slug, name, vendor_id, image_url')
+                .eq('is_active', true)
+                .in('vendor_id', vendorIds);
+
+            if (catError) {
+                throw new Error(`Failed to fetch menu categories: ${catError.message}`);
+            }
+
+            if (!menuCats || menuCats.length === 0) {
+                await cache.set(cacheKey, [], CACHE_TTL.MENU_ITEMS);
+                return [];
+            }
+
+            // Group by slug — pick the most common name per slug, count distinct vendors
+            const slugMap = new Map<string, { names: Map<string, number>; vendors: Set<string>; imageUrl?: string }>();
+            for (const row of menuCats) {
+                const slug = row.slug as string;
+                if (!slugMap.has(slug)) {
+                    slugMap.set(slug, { names: new Map(), vendors: new Set(), imageUrl: row.image_url ?? undefined });
+                }
+                const entry = slugMap.get(slug)!;
+                entry.names.set(row.name, (entry.names.get(row.name) || 0) + 1);
+                entry.vendors.add(row.vendor_id);
+                if (!entry.imageUrl && row.image_url) {
+                    entry.imageUrl = row.image_url;
+                }
+            }
+
+            const result = Array.from(slugMap.entries()).map(([slug, entry]) => {
+                // Pick the most common name for this slug
+                let bestName = '';
+                let bestCount = 0;
+                for (const [name, count] of entry.names) {
+                    if (count > bestCount) {
+                        bestName = name;
+                        bestCount = count;
+                    }
+                }
+                return {
+                    slug,
+                    name: bestName,
+                    vendorCount: entry.vendors.size,
+                    imageUrl: entry.imageUrl,
+                };
+            });
+
+            // Sort by vendor count descending
+            result.sort((a, b) => b.vendorCount - a.vendorCount);
+
+            await cache.set(cacheKey, result, CACHE_TTL.MENU_ITEMS);
+            return result;
+        } catch (error) {
+            console.error('Error in getAggregatedMenuCategoriesByEvent:', error);
+            throw error;
+        }
+    }
+
     private async getEventByIdOrCode(eventIdOrCode: string): Promise<string | null> {
         // First try as UUID (ID)
         const { data: eventById, error: idError } = await supabase
@@ -427,12 +518,13 @@ export class VendorService {
 
     async getVendorsByEvent(
         eventIdOrCode: string,
-        opts?: { page?: number; pageSize?: number; categoryId?: string }
+        opts?: { page?: number; pageSize?: number; categoryId?: string; menuCategorySlug?: string }
     ): Promise<{ id: string, vendors: (Vendor & { menu: any[] })[]; page: number; pageSize: number; total: number; totalPages: number; }> {
         // Normalize pagination
         const page = Math.max(1, Number(opts?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize || 20)));
         const categoryId = opts?.categoryId;
+        const menuCategorySlug = opts?.menuCategorySlug;
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
@@ -442,7 +534,7 @@ export class VendorService {
             throw new Error('Event not found');
         }
 
-        const cacheKey = cacheKeys.vendorsByEvent(eventId, page, pageSize, categoryId);
+        const cacheKey = cacheKeys.vendorsByEvent(eventId, page, pageSize, categoryId, menuCategorySlug);
 
         try {
             // Try cache first
@@ -488,6 +580,22 @@ export class VendorService {
 
                 const categoryVendorIds = new Set((vcRows || []).map((r: any) => r.vendor_id));
                 vendorIds = vendorIds.filter(id => categoryVendorIds.has(id));
+
+                if (vendorIds.length === 0) {
+                    return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+                }
+            }
+
+            // Filter by menu category slug if provided
+            if (menuCategorySlug) {
+                const { data: menuCatRows } = await supabase
+                    .from('menu_categories')
+                    .select('vendor_id')
+                    .eq('slug', menuCategorySlug)
+                    .eq('is_active', true)
+                    .in('vendor_id', vendorIds);
+                const menuCatVendorIds = new Set((menuCatRows || []).map((r: any) => r.vendor_id));
+                vendorIds = vendorIds.filter(id => menuCatVendorIds.has(id));
 
                 if (vendorIds.length === 0) {
                     return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };

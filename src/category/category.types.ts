@@ -3,7 +3,7 @@
 // ============================================
 
 
-export type CategoryType = 'VENDOR' | 'MENU_ITEM';
+export type CategoryType = 'VENDOR';
 
 export interface Category {
     id: string;

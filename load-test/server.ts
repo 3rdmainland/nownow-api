@@ -308,7 +308,7 @@ async function startLoadTestServer() {
 
   fastify.get('/vendor/:id/menu', async (request) => {
     const { id } = request.params as any;
-    const { data } = await mockSupabaseClient.from('vendor_menu_items')
+    const { data } = await mockSupabaseClient.from('default_menu_items')
       .select('*').eq('vendor_id', id).eq('available', true);
     return { menuItems: data || [] };
   });

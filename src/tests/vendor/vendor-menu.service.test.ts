@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { cacheMock, redisMock } from '../mocks/redis.js';
-import { makeVendor, makeMenuItem, makeEventMenuConfig } from '../fixtures/index.js';
+import { makeVendor, makeEventMenuConfig } from '../fixtures/index.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
 
