@@ -143,6 +143,7 @@ export interface BaseMenuItem {
     displayOrder: number;
     isFeatured: boolean;
     isPopular: boolean;
+    isAlcohol: boolean;
 
     // Nutritional
     nutritionalInfo?: NutritionalInfo;

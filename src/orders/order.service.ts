@@ -350,6 +350,8 @@ export class OrderService {
             qr_image: '',
             queue_position: validationResult.queuePosition,
             estimated_ready_time: validationResult.estimatedReadyTime,
+            age_verified: cleanOrder.age_verified || false,
+            age_verified_at: cleanOrder.age_verified ? new Date().toISOString() : null,
         };
 
         const { data: createdOrder, error } = await supabase

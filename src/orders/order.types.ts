@@ -68,6 +68,8 @@ export interface Order {
     refund_reason?: string;
     refunded_at?: string;
     refunded_by?: string;
+    age_verified?: boolean;
+    age_verified_at?: string;
 }
 
 export interface PaginationParams {

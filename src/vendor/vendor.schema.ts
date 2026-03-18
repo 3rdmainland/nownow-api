@@ -62,6 +62,7 @@ const menuItemProperties = {
     type: { type: 'string', enum: ['FOOD', 'RETAIL'] },
     prepTime: { type: 'number' },
     available: { type: 'boolean' },
+    isAlcohol: { type: 'boolean' },
     tags: {
         type: 'array',
         items: {
@@ -475,6 +476,8 @@ export const getVendorsByEventSchema = {
                         type: 'object',
                         properties: {
                             ...vendorProperties,
+                            eventStatus: { type: 'string', enum: ['OPEN', 'CLOSED'] },
+                            orderCount: { type: 'integer' },
                             menu: {
                                 type: 'array',
                                 items: { type: 'object', properties: menuItemProperties }
@@ -593,6 +596,7 @@ export const addMenuItemSchema = {
             type: { type: 'string', enum: ['FOOD', 'RETAIL'] },
             prepTime: { type: 'number', minimum: 0 },
             available: { type: 'boolean', default: true },
+            isAlcohol: { type: 'boolean' },
             tagIds: { type: 'array', items: { type: 'string' } } // NEW
         }
     },
@@ -638,6 +642,7 @@ export const updateMenuItemSchema = {
             type: { type: 'string', enum: ['FOOD', 'RETAIL'] },
             prepTime: { type: 'number', minimum: 0 },
             available: { type: 'boolean' },
+            isAlcohol: { type: 'boolean' },
             tagIds: { type: 'array', items: { type: 'string' } } // NEW
         }
     },

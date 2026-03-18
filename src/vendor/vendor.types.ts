@@ -20,6 +20,7 @@ export interface VendorMenuItem {
     type: MenuItemType;
     prepTime?: number;
     available: boolean;
+    isAlcohol: boolean;
     tags?: Tag[]; // NEW
     createdAt: string;
     updatedAt?: string;
@@ -60,6 +61,7 @@ export interface Vendor {
     serviceFeePercent?: number;
     estimatedPrepTime?: number;
     paymentMethods: string[];
+    orderCount?: number;
     createdAt: string;
     updatedAt?: string;
 }

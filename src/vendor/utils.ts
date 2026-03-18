@@ -88,6 +88,7 @@ export function toDbMenuItem(item: Partial<VendorMenuItem>) {
     if (item.type !== undefined) dbItem.type = item.type;
     if (item.prepTime !== undefined) dbItem.prep_time = item.prepTime;
     if (item.available !== undefined) dbItem.available = item.available;
+    if (item.isAlcohol !== undefined) dbItem.is_alcohol = item.isAlcohol;
 
     return dbItem;
 }
@@ -104,6 +105,7 @@ export function fromDbMenuItem(dbItem: any): VendorMenuItem {
         type: dbItem.type,
         prepTime: dbItem.prep_time,
         available: dbItem.available,
+        isAlcohol: dbItem.is_alcohol ?? false,
         tags: dbItem.tags || [],
         createdAt: dbItem.created_at,
         updatedAt: dbItem.updated_at

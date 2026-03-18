@@ -445,21 +445,20 @@ describe('VendorService', () => {
 
       // getEventByIdOrCode (events table, found by ID)
       const eventMock = createSupabaseMock({ data: { id: eventId }, error: null });
-      // getVendorsByEvent cache miss - event_vendors junction
-      const junctionMock = createSupabaseMock({ data: [{ vendor_id: vendorId }], error: null });
-      // vendors query with count
+      // event_vendors junction (now includes display_order)
+      const junctionMock = createSupabaseMock({ data: [{ vendor_id: vendorId, display_order: null }], error: null });
+      // vendors query (no count, no range)
       const vendorsMock = createSupabaseMock({ data: dbVendors, error: null });
-      vendorsMock.single = vi.fn().mockResolvedValue({ data: dbVendors, error: null, count: 1 });
-      // Override then to include count
-      vendorsMock.then = vi.fn((resolve) =>
-        Promise.resolve(resolve({ data: dbVendors, error: null, count: 1 }))
-      );
       // enrichWithCategories
       const enrichMock = createSupabaseMock({ data: [], error: null });
-      // menu items
+      // menu items (all vendors, no limit)
       const menuMock = createSupabaseMock({ data: dbMenuItems, error: null });
+      // event_menu_configurations (getVendorEventStatuses)
+      const statusMock = createSupabaseMock({ data: [], error: null });
+      // orders (getVendorOrderCounts)
+      const ordersMock = createSupabaseMock({ data: [], error: null });
 
-      mockFromSequence([eventMock, junctionMock, vendorsMock, enrichMock, menuMock]);
+      mockFromSequence([eventMock, junctionMock, vendorsMock, enrichMock, menuMock, statusMock, ordersMock]);
 
       const result = await service.getVendorsByEvent(eventId, { page: 1, pageSize: 20 });
 
@@ -469,6 +468,8 @@ describe('VendorService', () => {
         pageSize: 20,
         vendors: expect.any(Array),
       });
+      expect(result.vendors[0]).toHaveProperty('orderCount');
+      expect(result.vendors[0]).toHaveProperty('eventStatus');
     });
 
     it('returns empty result when no vendors assigned to event', async () => {
@@ -495,6 +496,203 @@ describe('VendorService', () => {
       mockFromSequence([notFoundMock, notFoundMock]);
 
       await expect(service.getVendorsByEvent('nonexistent-event')).rejects.toThrow('Event not found');
+    });
+
+    it('sorts pinned vendors first by display_order', async () => {
+      const eventId = 'event-sort';
+      const v1 = makeVendor({ id: 'v-unpinned', name: 'Alpha' });
+      const v2 = makeVendor({ id: 'v-pinned-2', name: 'Beta' });
+      const v3 = makeVendor({ id: 'v-pinned-1', name: 'Gamma' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        // event lookup
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        // junction with display_order
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-unpinned', display_order: null },
+          { vendor_id: 'v-pinned-2', display_order: 2 },
+          { vendor_id: 'v-pinned-1', display_order: 1 },
+        ], error: null }),
+        // vendors
+        createSupabaseMock({ data: [v1, v2, v3], error: null }),
+        // enrichWithCategories
+        createSupabaseMock({ data: [], error: null }),
+        // menu items (all have menus)
+        createSupabaseMock({ data: [
+          makeMenuItem({ vendor_id: 'v-unpinned', available: true }),
+          makeMenuItem({ vendor_id: 'v-pinned-2', available: true }),
+          makeMenuItem({ vendor_id: 'v-pinned-1', available: true }),
+        ], error: null }),
+        // event statuses (all open)
+        createSupabaseMock({ data: [], error: null }),
+        // order counts
+        createSupabaseMock({ data: [], error: null }),
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId);
+
+      expect(result.vendors.map(v => v.id)).toEqual([
+        'v-pinned-1', // display_order=1
+        'v-pinned-2', // display_order=2
+        'v-unpinned', // no pin
+      ]);
+    });
+
+    it('sorts open vendors before closed vendors', async () => {
+      const eventId = 'event-status-sort';
+      const v1 = makeVendor({ id: 'v-closed', name: 'Alpha' });
+      const v2 = makeVendor({ id: 'v-open', name: 'Beta' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-closed', display_order: null },
+          { vendor_id: 'v-open', display_order: null },
+        ], error: null }),
+        createSupabaseMock({ data: [v1, v2], error: null }),
+        createSupabaseMock({ data: [], error: null }), // enrichWithCategories
+        createSupabaseMock({ data: [
+          makeMenuItem({ vendor_id: 'v-closed', available: true }),
+          makeMenuItem({ vendor_id: 'v-open', available: true }),
+        ], error: null }),
+        // event_menu_configurations: v-closed is CLOSED
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-closed', is_accepting_orders: false, status: 'ACTIVE' },
+        ], error: null }),
+        createSupabaseMock({ data: [], error: null }), // orders
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId);
+
+      expect(result.vendors[0].id).toBe('v-open');
+      expect(result.vendors[1].id).toBe('v-closed');
+    });
+
+    it('sorts vendors with menu above vendors without menu', async () => {
+      const eventId = 'event-menu-sort';
+      const v1 = makeVendor({ id: 'v-no-menu', name: 'Alpha' });
+      const v2 = makeVendor({ id: 'v-has-menu', name: 'Beta' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-no-menu', display_order: null },
+          { vendor_id: 'v-has-menu', display_order: null },
+        ], error: null }),
+        createSupabaseMock({ data: [v1, v2], error: null }),
+        createSupabaseMock({ data: [], error: null }), // enrichWithCategories
+        // Only v-has-menu has menu items
+        createSupabaseMock({ data: [
+          makeMenuItem({ vendor_id: 'v-has-menu', available: true }),
+        ], error: null }),
+        createSupabaseMock({ data: [], error: null }), // statuses
+        createSupabaseMock({ data: [], error: null }), // orders
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId);
+
+      expect(result.vendors[0].id).toBe('v-has-menu');
+      expect(result.vendors[1].id).toBe('v-no-menu');
+    });
+
+    it('sorts by popularity (order count) descending', async () => {
+      const eventId = 'event-pop-sort';
+      const v1 = makeVendor({ id: 'v-few-orders', name: 'Alpha' });
+      const v2 = makeVendor({ id: 'v-many-orders', name: 'Beta' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-few-orders', display_order: null },
+          { vendor_id: 'v-many-orders', display_order: null },
+        ], error: null }),
+        createSupabaseMock({ data: [v1, v2], error: null }),
+        createSupabaseMock({ data: [], error: null }), // enrichWithCategories
+        createSupabaseMock({ data: [
+          makeMenuItem({ vendor_id: 'v-few-orders', available: true }),
+          makeMenuItem({ vendor_id: 'v-many-orders', available: true }),
+        ], error: null }),
+        createSupabaseMock({ data: [], error: null }), // statuses
+        // orders: v-many-orders has 3 orders, v-few-orders has 1
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-many-orders' },
+          { vendor_id: 'v-many-orders' },
+          { vendor_id: 'v-many-orders' },
+          { vendor_id: 'v-few-orders' },
+        ], error: null }),
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId);
+
+      expect(result.vendors[0].id).toBe('v-many-orders');
+      expect(result.vendors[0].orderCount).toBe(3);
+      expect(result.vendors[1].id).toBe('v-few-orders');
+      expect(result.vendors[1].orderCount).toBe(1);
+    });
+
+    it('uses alphabetical name as final tiebreaker', async () => {
+      const eventId = 'event-alpha-sort';
+      const v1 = makeVendor({ id: 'v-zebra', name: 'Zebra Grill' });
+      const v2 = makeVendor({ id: 'v-alpha', name: 'Alpha Kitchen' });
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        createSupabaseMock({ data: [
+          { vendor_id: 'v-zebra', display_order: null },
+          { vendor_id: 'v-alpha', display_order: null },
+        ], error: null }),
+        createSupabaseMock({ data: [v1, v2], error: null }),
+        createSupabaseMock({ data: [], error: null }), // enrichWithCategories
+        createSupabaseMock({ data: [
+          makeMenuItem({ vendor_id: 'v-zebra', available: true }),
+          makeMenuItem({ vendor_id: 'v-alpha', available: true }),
+        ], error: null }),
+        createSupabaseMock({ data: [], error: null }), // statuses
+        createSupabaseMock({ data: [], error: null }), // orders
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId);
+
+      expect(result.vendors[0].name).toBe('Alpha Kitchen');
+      expect(result.vendors[1].name).toBe('Zebra Grill');
+    });
+
+    it('paginates the sorted result correctly', async () => {
+      const eventId = 'event-paginate';
+      const vendors = Array.from({ length: 5 }, (_, i) =>
+        makeVendor({ id: `v-${i}`, name: `Vendor ${String.fromCharCode(65 + i)}` })
+      );
+
+      cacheMock.get.mockResolvedValueOnce(null);
+
+      mockFromSequence([
+        createSupabaseMock({ data: { id: eventId }, error: null }),
+        createSupabaseMock({ data: vendors.map(v => ({ vendor_id: v.id, display_order: null })), error: null }),
+        createSupabaseMock({ data: vendors, error: null }),
+        createSupabaseMock({ data: [], error: null }), // enrichWithCategories
+        createSupabaseMock({ data: vendors.map(v =>
+          makeMenuItem({ vendor_id: v.id, available: true })
+        ), error: null }),
+        createSupabaseMock({ data: [], error: null }), // statuses
+        createSupabaseMock({ data: [], error: null }), // orders
+      ]);
+
+      const result = await service.getVendorsByEvent(eventId, { page: 2, pageSize: 2 });
+
+      expect(result.total).toBe(5);
+      expect(result.totalPages).toBe(3);
+      expect(result.vendors).toHaveLength(2);
+      expect(result.page).toBe(2);
     });
   });
 

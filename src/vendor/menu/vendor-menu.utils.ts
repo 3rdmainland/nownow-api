@@ -55,6 +55,7 @@ export function toDbDefaultMenuItem(item: Partial<DefaultMenuItem>): Record<stri
     if (item.displayOrder !== undefined) dbItem.display_order = item.displayOrder;
     if (item.isFeatured !== undefined) dbItem.is_featured = item.isFeatured;
     if (item.isPopular !== undefined) dbItem.is_popular = item.isPopular;
+    if (item.isAlcohol !== undefined) dbItem.is_alcohol = item.isAlcohol;
     if (item.nutritionalInfo !== undefined) dbItem.nutritional_info = item.nutritionalInfo;
     if (item.isActive !== undefined) dbItem.is_active = item.isActive;
 
@@ -91,6 +92,7 @@ export function fromDbDefaultMenuItem(dbItem: Record<string, any>): DefaultMenuI
         displayOrder: dbItem.display_order || 0,
         isFeatured: dbItem.is_featured || false,
         isPopular: dbItem.is_popular || false,
+        isAlcohol: dbItem.is_alcohol ?? false,
         nutritionalInfo: dbItem.nutritional_info,
         isActive: dbItem.is_active ?? true,
         scope: 'DEFAULT',
@@ -496,6 +498,7 @@ export function resolveEventMenuItem(
         displayOrder: effectiveDisplayOrder,
         isFeatured: defaultItem.isFeatured,
         isPopular: defaultItem.isPopular,
+        isAlcohol: defaultItem.isAlcohol,
         nutritionalInfo: defaultItem.nutritionalInfo,
         isActive: defaultItem.isActive,
         createdAt: defaultItem.createdAt,

@@ -68,7 +68,9 @@ const orderSchema = {
         refund_amount: { type: ["number", "null"] },
         refund_reason: { type: ["string", "null"] },
         refunded_at: { type: ["string", "null"] },
-        refunded_by: { type: ["string", "null"] }
+        refunded_by: { type: ["string", "null"] },
+        age_verified: { type: "boolean" },
+        age_verified_at: { type: "string" }
     },
     required: [
         "id",
@@ -167,7 +169,8 @@ export const createOrderSchema = {
                 type: "string",
                 format: "date-time",
                 description: "Optional: ISO 8601 datetime for future order pickup. If omitted, order is immediate."
-            }
+            },
+            age_verified: { type: "boolean" }
         },
         required: ["vendor_id", "event_id", "phone", "items", "total"]
     },

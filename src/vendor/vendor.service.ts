@@ -450,14 +450,20 @@ export class VendorService {
             }
 
 
-            // Get vendor IDs from the event_vendors junction table
+            // Get vendor IDs + display_order from the event_vendors junction table
             const { data: eventVendors, error: junctionError } = await supabase
                 .from('event_vendors')
-                .select('vendor_id')
+                .select('vendor_id, display_order')
                 .eq('event_id', eventId);
 
             if (junctionError) {
                 throw new Error(`Failed to fetch event vendors: ${junctionError.message}`);
+            }
+
+            // Build display_order lookup
+            const displayOrderMap = new Map<string, number | null>();
+            for (const ev of eventVendors || []) {
+                displayOrderMap.set(ev.vendor_id, ev.display_order ?? null);
             }
 
             let vendorIds = (eventVendors || []).map(ev => ev.vendor_id);
@@ -486,13 +492,12 @@ export class VendorService {
                 }
             }
 
-            // Get the actual vendor data with pagination and total count
-            const { data: vendorRows, error: vendorError, count } = await supabase
+            // Fetch ALL active vendors (no pagination — sort in JS)
+            const { data: vendorRows, error: vendorError } = await supabase
                 .from('vendors')
-                .select('*', { count: 'exact' })
+                .select('*')
                 .in('id', vendorIds)
-                .eq('is_active', true)
-                .range(from, to);
+                .eq('is_active', true);
 
             if (vendorError) {
                 throw new Error(`Failed to fetch vendors for event: ${vendorError.message}`);
@@ -500,16 +505,15 @@ export class VendorService {
 
             await enrichWithCategories(vendorRows || []);
             const vendors = (vendorRows || []).map(fromDbVendor);
-            const pagedVendorIds = vendors.map(v => v.id);
+            const allVendorIds = vendors.map(v => v.id);
 
-            // Fetch all available menu items for the vendors on this page
+            // Fetch all available menu items for ALL vendors (need menu presence for sorting)
             let menuByVendor = new Map<string, VendorMenuItem[]>();
-            if (pagedVendorIds.length > 0) {
+            if (allVendorIds.length > 0) {
                 const { data: menuRows, error: menuError } = await supabase
                     .from('vendor_menu_items')
                     .select('*')
-                    .in('vendor_id', pagedVendorIds)
-                    .limit(3)
+                    .in('vendor_id', allVendorIds)
                     .eq('available', true);
 
                 if (menuError) {
@@ -524,18 +528,65 @@ export class VendorService {
                 }
             }
 
-            // Attach event availability status to each vendor
-            const eventStatuses = await this.getVendorEventStatuses(pagedVendorIds, eventId);
+            // Fetch event statuses and order counts for all vendors
+            const [eventStatuses, orderCountMap] = await Promise.all([
+                this.getVendorEventStatuses(allVendorIds, eventId),
+                this.getVendorOrderCounts(allVendorIds, eventId),
+            ]);
+
+            // Enrich vendors with menu (sliced to 3), eventStatus, and orderCount
             const vendorsWithMenu = vendors.map(v => ({
                 ...v,
-                menu: menuByVendor.get(v.id) || [],
+                menu: (menuByVendor.get(v.id) || []).slice(0, 3),
                 eventStatus: eventStatuses.get(v.id) || 'OPEN',
+                orderCount: orderCountMap.get(v.id) || 0,
             }));
 
-            const total = count || 0;
-            const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+            // 5-tier smart sort — surfaces the most relevant vendors first.
+            //
+            // Priority (highest → lowest):
+            //   1. Pinned by organizer  — event_vendors.display_order (lower = higher)
+            //   2. Currently open       — OPEN vendors above CLOSED
+            //   3. Has menu items       — vendors with ≥1 available item above empty
+            //   4. Popularity           — non-cancelled order count for this event (desc)
+            //   5. Alphabetical name    — stable tiebreaker
+            //
+            // All data is fetched for every vendor in the event, then sorted and
+            // paginated in JS (events have <50 vendors, so this is efficient).
+            vendorsWithMenu.sort((a, b) => {
+                // 1. Organizer-pinned vendors first (lower display_order = higher priority)
+                const aPin = displayOrderMap.get(a.id);
+                const bPin = displayOrderMap.get(b.id);
+                const aPinned = aPin != null;
+                const bPinned = bPin != null;
+                if (aPinned !== bPinned) return aPinned ? -1 : 1;
+                if (aPinned && bPinned) {
+                    if (aPin! !== bPin!) return aPin! - bPin!;
+                }
 
-            const result = { id: eventId, vendors: vendorsWithMenu, page, pageSize, total, totalPages };
+                // 2. Open > Closed
+                const aOpen = a.eventStatus === 'OPEN' ? 0 : 1;
+                const bOpen = b.eventStatus === 'OPEN' ? 0 : 1;
+                if (aOpen !== bOpen) return aOpen - bOpen;
+
+                // 3. Has menu > Empty menu
+                const aHasMenu = (menuByVendor.get(a.id) || []).length > 0 ? 0 : 1;
+                const bHasMenu = (menuByVendor.get(b.id) || []).length > 0 ? 0 : 1;
+                if (aHasMenu !== bHasMenu) return aHasMenu - bHasMenu;
+
+                // 4. Popularity (higher order count first)
+                if (a.orderCount !== b.orderCount) return b.orderCount - a.orderCount;
+
+                // 5. Alphabetical tiebreaker
+                return a.name.localeCompare(b.name);
+            });
+
+            // Paginate the sorted array in JS
+            const total = vendorsWithMenu.length;
+            const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+            const pagedVendors = vendorsWithMenu.slice(from, from + pageSize);
+
+            const result = { id: eventId, vendors: pagedVendors, page, pageSize, total, totalPages };
 
             // Cache for 1 minute (event vendor lists change less frequently)
             await cache.set(cacheKey, result, CACHE_TTL.VENDOR_DETAILS);
@@ -912,6 +963,35 @@ export class VendorService {
             console.error('Error in getVendorStats:', error);
             throw error;
         }
+    }
+
+    // ==================== ORDER COUNTS ====================
+
+    /**
+     * Returns a map of vendorId → non-cancelled order count for the given event.
+     */
+    private async getVendorOrderCounts(vendorIds: string[], eventId: string): Promise<Map<string, number>> {
+        const countMap = new Map<string, number>();
+        if (vendorIds.length === 0) return countMap;
+
+        const { data: orderRows, error } = await supabase
+            .from('orders')
+            .select('vendor_id')
+            .eq('event_id', eventId)
+            .in('vendor_id', vendorIds)
+            .neq('status', 'CANCELLED');
+
+        if (error) {
+            // Non-fatal: degrade to zero counts rather than breaking the listing
+            console.error('Failed to fetch order counts for sorting:', error.message);
+            return countMap;
+        }
+
+        for (const row of orderRows || []) {
+            countMap.set(row.vendor_id, (countMap.get(row.vendor_id) || 0) + 1);
+        }
+
+        return countMap;
     }
 
     // ==================== AVAILABILITY FILTERING ====================

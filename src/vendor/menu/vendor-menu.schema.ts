@@ -29,6 +29,7 @@ const menuItemProperties = {
     displayOrder: { type: 'number' },
     isFeatured: { type: 'boolean' },
     isPopular: { type: 'boolean' },
+    isAlcohol: { type: 'boolean' },
     isActive: { type: 'boolean' },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
@@ -304,6 +305,7 @@ export const createDefaultMenuItemSchema = {
             modifierGroupIds: { type: 'array', items: { type: 'string' } },
             displayOrder: { type: 'number' },
             isFeatured: { type: 'boolean' },
+            isAlcohol: { type: 'boolean' },
             nutritionalInfo: {
                 type: 'object',
                 properties: {
@@ -363,6 +365,7 @@ export const updateDefaultMenuItemSchema = {
             modifierGroupIds: { type: 'array', items: { type: 'string' } },
             displayOrder: { type: 'number' },
             isFeatured: { type: 'boolean' },
+            isAlcohol: { type: 'boolean' },
             isActive: { type: 'boolean' },
         },
     },
