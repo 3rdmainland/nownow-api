@@ -16,6 +16,7 @@
 #   - Local Supabase running: supabase start
 #   - Seed data applied: supabase db reset
 #   - k6 installed: brew install grafana/k6/k6
+#   - SUPABASE_SERVICE_ROLE_KEY env var set (get it from: supabase status)
 #
 
 set -euo pipefail
