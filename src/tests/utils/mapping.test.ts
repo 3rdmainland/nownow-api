@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 // Pure functions - no mocks needed
-import { toDbVendor, fromDbVendor, toDbMenuItem, fromDbMenuItem } from '../../vendor/utils.js';
+import { toDbVendor, fromDbVendor } from '../../vendor/utils.js';
 import { toDbEvent, fromDbEvent } from '../../event/util.js';
 import { toDbCategory, fromDbCategory } from '../../category/utils.js';
 
@@ -162,113 +162,6 @@ describe('Vendor Utils', () => {
     });
   });
 
-  describe('toDbMenuItem', () => {
-    it('should map camelCase menu item to snake_case', () => {
-      const item = {
-        vendorId: 'vendor-1',
-        categoryId: 'cat-1',
-        name: 'Burger',
-        description: 'Juicy beef',
-        price: 80,
-        imageUrl: 'https://img.test/burger.jpg',
-        type: 'FOOD' as const,
-        prepTime: 10,
-        available: true,
-      };
-
-      const result = toDbMenuItem(item);
-
-      expect(result).toEqual({
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        name: 'Burger',
-        description: 'Juicy beef',
-        price: 80,
-        image_url: 'https://img.test/burger.jpg',
-        type: 'FOOD',
-        prep_time: 10,
-        available: true,
-      });
-    });
-
-    it('should only include defined fields (partial update)', () => {
-      const result = toDbMenuItem({ name: 'Updated', price: 90 });
-
-      expect(result).toEqual({ name: 'Updated', price: 90 });
-    });
-
-    it('should handle available=false', () => {
-      const result = toDbMenuItem({ available: false });
-
-      expect(result.available).toBe(false);
-    });
-  });
-
-  describe('fromDbMenuItem', () => {
-    it('should map snake_case DB row to camelCase menu item', () => {
-      const dbItem = {
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        name: 'Burger',
-        description: 'Juicy beef',
-        price: 80,
-        image_url: 'https://img.test/burger.jpg',
-        type: 'FOOD',
-        prep_time: 10,
-        available: true,
-        tags: ['popular', 'spicy'],
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-02T00:00:00Z',
-      };
-
-      const result = fromDbMenuItem(dbItem);
-
-      expect(result).toEqual({
-        id: 'item-1',
-        vendorId: 'vendor-1',
-        categoryId: 'cat-1',
-        name: 'Burger',
-        description: 'Juicy beef',
-        price: 80,
-        imageUrl: 'https://img.test/burger.jpg',
-        type: 'FOOD',
-        prepTime: 10,
-        available: true,
-        tags: ['popular', 'spicy'],
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-02T00:00:00Z',
-      });
-    });
-
-    it('should default tags to empty array when not present', () => {
-      const dbItem = {
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        name: 'Burger',
-        tags: undefined,
-      };
-
-      const result = fromDbMenuItem(dbItem);
-
-      expect(result.tags).toEqual([]);
-    });
-
-    it('should default tags to empty array when null', () => {
-      const dbItem = {
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        name: 'Burger',
-        tags: null,
-      };
-
-      const result = fromDbMenuItem(dbItem);
-
-      expect(result.tags).toEqual([]);
-    });
-  });
 });
 
 // ── Event Utils ───────────────────────────────────────────────────────────────

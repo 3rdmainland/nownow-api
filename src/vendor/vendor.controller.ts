@@ -10,14 +10,8 @@ import {
     getVendorsByCategorySchema,
     getVendorsWithItemsInCategorySchema,
     searchVendorsSchema,
-    getVendorMenuSchema,
-    getVendorMenuItemSchema,
-    addMenuItemSchema,
-    updateMenuItemSchema,
-    toggleMenuItemAvailabilitySchema,
     getVendorStatsSchema,
     getVendorsByEventSchema,
-    deleteMenuItemSchema
 } from "./vendor.schema";
 import { VendorService } from "./vendor.service";
 
@@ -109,36 +103,6 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get vendor menu
-    fastify.get<{ Params: { id: string } }>("/:id/menu", { schema: getVendorMenuSchema }, async (request, reply) => {
-        try {
-            const menuItems = await vendorService.getVendorMenu(request.params.id);
-            return { menuItems };
-        } catch (err) {
-            fastify.log.error(err);
-            return reply.status(500).send({ error: "Internal server error" });
-        }
-    });
-
-    // Get a single vendor menu item
-    fastify.get<{ Params: { id: string; itemId: string } }>(
-        "/:id/menu/:itemId",
-        { schema: getVendorMenuItemSchema },
-        async (request, reply) => {
-            try {
-                const { id, itemId } = request.params;
-                const menuItem = await vendorService.getMenuItemById(id, itemId);
-                if (!menuItem) {
-                    return reply.status(404).send({ error: "Menu item not found" });
-                }
-                return { menuItem };
-            } catch (err) {
-                fastify.log.error(err);
-                return reply.status(500).send({ error: "Internal server error" });
-            }
-        }
-    );
-
     // Create vendor
     fastify.post("/", { schema: createVendorSchema }, async (request, reply) => {
         try {
@@ -198,52 +162,6 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Add menu item
-    fastify.post<{ Params: { id: string } }>("/:id/menu", { schema: addMenuItemSchema }, async (request, reply) => {
-        try {
-            const itemData = request.body as any;
-            const menuItem = await vendorService.addMenuItem(request.params.id, itemData);
-            return reply.status(201).send({ menuItem });
-        } catch (err) {
-            fastify.log.error(err);
-            return reply.status(500).send({ error: "Internal server error" });
-        }
-    });
-
-    // Update menu item
-    fastify.put<{ Params: { id: string; itemId: string } }>("/:id/menu/:itemId", { schema: updateMenuItemSchema }, async (request, reply) => {
-        try {
-            const updates = request.body as any;
-            const menuItem = await vendorService.updateMenuItem(request.params.itemId, updates);
-            return { menuItem };
-        } catch (err) {
-            fastify.log.error(err);
-            return reply.status(500).send({ error: "Internal server error" });
-        }
-    });
-
-    // Toggle menu item availability
-    fastify.patch<{ Params: { id: string; itemId: string } }>("/:id/menu/:itemId/availability", { schema: toggleMenuItemAvailabilitySchema }, async (request, reply) => {
-        try {
-            const { available } = request.body as { available: boolean };
-            const menuItem = await vendorService.toggleMenuItemAvailability(request.params.itemId, available);
-            return { menuItem };
-        } catch (err) {
-            fastify.log.error(err);
-            return reply.status(500).send({ error: "Internal server error" });
-        }
-    });
-
-    // Delete menu item
-    fastify.delete<{ Params: { id: string; itemId: string } }>("/:id/menu/:itemId", {schema: deleteMenuItemSchema},async (request, reply) => {
-        try {
-            await vendorService.deleteMenuItem(request.params.itemId);
-            return reply.status(204).send();
-        } catch (err) {
-            fastify.log.error(err);
-            return reply.status(500).send({ error: "Internal server error" });
-        }
-    });
 };
 
 export default vendorController;

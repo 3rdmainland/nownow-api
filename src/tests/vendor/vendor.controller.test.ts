@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { cacheMock, redisMock } from '../mocks/redis.js';
-import { makeVendor, makeMenuItem, makeCategory, makeOrder } from '../fixtures/index.js';
+import { makeVendor, makeDefaultMenuItem, makeCategory, makeOrder } from '../fixtures/index.js';
 import { buildApp } from '../helpers/app.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
@@ -132,7 +132,7 @@ describe('VendorController (integration)', () => {
       const eventId = 'event-abc';
       const vendorId = 'vendor-1';
       const dbVendors = [makeVendor({ id: vendorId })];
-      const dbMenuItems = [makeMenuItem({ vendor_id: vendorId, available: true })];
+      const dbMenuItems = [makeDefaultMenuItem({ vendor_id: vendorId })];
 
       cacheMock.get.mockResolvedValueOnce(null);
 
@@ -243,79 +243,6 @@ describe('VendorController (integration)', () => {
       expect(body).toHaveProperty('activeOrders');
       expect(body.totalOrders).toBe(2);
       expect(body.totalRevenue).toBe(300);
-    });
-  });
-
-  // ── GET /vendor/:id/menu ──────────────────────────────────────────────────────
-
-  describe('GET /vendor/:id/menu', () => {
-    it('returns 200 with { menuItems } (grouped by category)', async () => {
-      const categoryId = 'cat-1';
-      const dbItems = [
-        makeMenuItem({ vendor_id: 'vendor-1', category_id: categoryId, available: true }),
-      ];
-      const dbCategories = [{ id: categoryId, name: 'Mains' }];
-
-      cacheMock.get.mockResolvedValueOnce(null);
-      const menuMock = createSupabaseMock({ data: dbItems, error: null });
-      const catMock = createSupabaseMock({ data: dbCategories, error: null });
-      mockFromSequence([menuMock, catMock]);
-
-      const res = await app.inject({
-        method: 'GET',
-        url: '/vendor/vendor-1/menu',
-      });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body).toHaveProperty('menuItems');
-      expect(Array.isArray(body.menuItems)).toBe(true);
-      expect(body.menuItems[0]).toHaveProperty('category');
-      expect(body.menuItems[0]).toHaveProperty('menuItems');
-    });
-  });
-
-  // ── GET /vendor/:id/menu/:itemId ──────────────────────────────────────────────
-
-  describe('GET /vendor/:id/menu/:itemId', () => {
-    it('returns 200 with { menuItem } when found', async () => {
-      // Route schema requires UUIDs for :id and :itemId
-      const vendorId = crypto.randomUUID();
-      const itemId = crypto.randomUUID();
-      const dbItem = makeMenuItem({ id: itemId, vendor_id: vendorId });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const res = await app.inject({
-        method: 'GET',
-        url: `/vendor/${vendorId}/menu/${itemId}`,
-      });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body).toHaveProperty('menuItem');
-      expect(body.menuItem.id).toBe(itemId);
-    });
-
-    it('returns 404 when menu item is not found', async () => {
-      // Route schema requires UUIDs for :id and :itemId
-      const vendorId = crypto.randomUUID();
-      const itemId = crypto.randomUUID();
-      const mock = createSupabaseMock({
-        data: null,
-        error: { code: 'PGRST116', message: 'No rows found' },
-      });
-      supabaseMock.from.mockReturnValue(mock);
-
-      const res = await app.inject({
-        method: 'GET',
-        url: `/vendor/${vendorId}/menu/${itemId}`,
-      });
-
-      expect(res.statusCode).toBe(404);
-      expect(res.json()).toMatchObject({ error: 'Menu item not found' });
     });
   });
 
@@ -524,169 +451,4 @@ describe('VendorController (integration)', () => {
     });
   });
 
-  // ── POST /vendor/:id/menu ─────────────────────────────────────────────────────
-
-  describe('POST /vendor/:id/menu', () => {
-    it('returns 201 with { menuItem } on successful creation', async () => {
-      const dbItem = makeMenuItem({
-        id: 'new-menu-item',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        name: 'Cheese Burger',
-      });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/vendor/vendor-1/menu',
-        payload: {
-          name: 'Cheese Burger',
-          price: 90,
-          type: 'FOOD',
-          available: true,
-          categoryId: 'cat-1',
-        },
-      });
-
-      expect(res.statusCode).toBe(201);
-      const body = res.json();
-      expect(body).toHaveProperty('menuItem');
-      expect(body.menuItem.name).toBe('Cheese Burger');
-    });
-
-    it('returns 500 when menu item creation fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Insert failed' } })
-      );
-
-      // Must send a valid body to pass schema validation
-      const res = await app.inject({
-        method: 'POST',
-        url: '/vendor/vendor-1/menu',
-        payload: { name: 'Bad Item', price: 50, categoryId: 'cat-1', type: 'FOOD' },
-      });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
-
-  // ── PUT /vendor/:id/menu/:itemId ──────────────────────────────────────────────
-
-  describe('PUT /vendor/:id/menu/:itemId', () => {
-    it('returns 200 with { menuItem } on successful update', async () => {
-      const dbItem = makeMenuItem({
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        name: 'Updated Item',
-      });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/vendor/vendor-1/menu/item-1',
-        payload: { name: 'Updated Item', price: 95 },
-      });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body).toHaveProperty('menuItem');
-      expect(body.menuItem.name).toBe('Updated Item');
-    });
-
-    it('returns 500 when menu item update fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Update failed' } })
-      );
-
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/vendor/vendor-1/menu/bad-item',
-        payload: { name: 'X' },
-      });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
-
-  // ── PATCH /vendor/:id/menu/:itemId/availability ───────────────────────────────
-
-  describe('PATCH /vendor/:id/menu/:itemId/availability', () => {
-    it('returns 200 with { menuItem } after toggling availability', async () => {
-      const dbItem = makeMenuItem({
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        available: false,
-      });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const res = await app.inject({
-        method: 'PATCH',
-        url: '/vendor/vendor-1/menu/item-1/availability',
-        payload: { available: false },
-      });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body).toHaveProperty('menuItem');
-    });
-
-    it('returns 500 when availability toggle fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Toggle failed' } })
-      );
-
-      const res = await app.inject({
-        method: 'PATCH',
-        url: '/vendor/vendor-1/menu/bad-item/availability',
-        payload: { available: true },
-      });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
-
-  // ── DELETE /vendor/:id/menu/:itemId ───────────────────────────────────────────
-
-  describe('DELETE /vendor/:id/menu/:itemId', () => {
-    it('returns 204 on successful menu item deletion', async () => {
-      const fetchMock = createSupabaseMock({
-        data: { vendor_id: 'vendor-1', category_id: 'cat-1' },
-        error: null,
-      });
-      const deleteMock = createSupabaseMock({ data: null, error: null });
-
-      mockFromSequence([fetchMock, deleteMock]);
-
-      const res = await app.inject({
-        method: 'DELETE',
-        url: '/vendor/vendor-1/menu/item-to-delete',
-      });
-
-      expect(res.statusCode).toBe(204);
-    });
-
-    it('returns 500 when menu item deletion fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Item not found' } })
-      );
-
-      const res = await app.inject({
-        method: 'DELETE',
-        url: '/vendor/vendor-1/menu/bad-item',
-      });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
 });

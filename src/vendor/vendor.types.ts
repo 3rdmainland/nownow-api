@@ -1,30 +1,6 @@
 // vendor.types.ts
-// vendor.types.ts
 
 export type MenuItemType = 'FOOD' | 'RETAIL';
-
-export interface Tag {
-    id: string;
-    name: string;
-    description?: string;
-}
-
-export interface VendorMenuItem {
-    id: string;
-    vendorId: string;
-    categoryId: string;
-    name: string;
-    description?: string;
-    price: number;
-    imageUrl?: string;
-    type: MenuItemType;
-    prepTime?: number;
-    available: boolean;
-    isAlcohol: boolean;
-    tags?: Tag[]; // NEW
-    createdAt: string;
-    updatedAt?: string;
-}
 
 export interface VendorHours {
     dayOfWeek: number; // 0-6 (Sunday-Saturday)
@@ -64,16 +40,4 @@ export interface Vendor {
     orderCount?: number;
     createdAt: string;
     updatedAt?: string;
-}
-
-export type VendorWithMenu = Vendor & { menu: VendorMenuItem[] };
-
-export interface VendorMenuCategory {
-    id: string;
-    name: string;
-}
-
-export interface VendorMenuGroup {
-    category: VendorMenuCategory;
-    menuItems: VendorMenuItem[];
 }

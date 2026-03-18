@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { cacheMock, redisMock } from '../mocks/redis.js';
-import { makeVendor, makeMenuItem, makeCategory, makeOrder } from '../fixtures/index.js';
+import { makeVendor, makeDefaultMenuItem, makeCategory, makeOrder } from '../fixtures/index.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
 
@@ -250,7 +250,6 @@ describe('VendorService', () => {
       expect(cacheMock.del).toHaveBeenCalledWith(
         'vendors:all',
         'vendor:vendor-to-update',
-        'vendor:vendor-to-update:menu',
         'vendor:vendor-to-update:stats'
       );
     });
@@ -279,7 +278,6 @@ describe('VendorService', () => {
       expect(cacheMock.del).toHaveBeenCalledWith(
         'vendors:all',
         'vendor:vendor-delete-id',
-        'vendor:vendor-delete-id:menu',
         'vendor:vendor-delete-id:stats'
       );
     });
@@ -439,7 +437,7 @@ describe('VendorService', () => {
       const eventId = 'event-abc';
       const vendorId = 'vendor-1';
       const dbVendors = [makeVendor({ id: vendorId })];
-      const dbMenuItems = [makeMenuItem({ vendor_id: vendorId, available: true })];
+      const dbMenuItems = [makeDefaultMenuItem({ vendor_id: vendorId })];
 
       cacheMock.get.mockResolvedValueOnce(null);
 
@@ -521,9 +519,9 @@ describe('VendorService', () => {
         createSupabaseMock({ data: [], error: null }),
         // menu items (all have menus)
         createSupabaseMock({ data: [
-          makeMenuItem({ vendor_id: 'v-unpinned', available: true }),
-          makeMenuItem({ vendor_id: 'v-pinned-2', available: true }),
-          makeMenuItem({ vendor_id: 'v-pinned-1', available: true }),
+          makeDefaultMenuItem({ vendor_id: 'v-unpinned' }),
+          makeDefaultMenuItem({ vendor_id: 'v-pinned-2' }),
+          makeDefaultMenuItem({ vendor_id: 'v-pinned-1' }),
         ], error: null }),
         // event statuses (all open)
         createSupabaseMock({ data: [], error: null }),
@@ -556,8 +554,8 @@ describe('VendorService', () => {
         createSupabaseMock({ data: [v1, v2], error: null }),
         createSupabaseMock({ data: [], error: null }), // enrichWithCategories
         createSupabaseMock({ data: [
-          makeMenuItem({ vendor_id: 'v-closed', available: true }),
-          makeMenuItem({ vendor_id: 'v-open', available: true }),
+          makeDefaultMenuItem({ vendor_id: 'v-closed' }),
+          makeDefaultMenuItem({ vendor_id: 'v-open' }),
         ], error: null }),
         // event_menu_configurations: v-closed is CLOSED
         createSupabaseMock({ data: [
@@ -589,7 +587,7 @@ describe('VendorService', () => {
         createSupabaseMock({ data: [], error: null }), // enrichWithCategories
         // Only v-has-menu has menu items
         createSupabaseMock({ data: [
-          makeMenuItem({ vendor_id: 'v-has-menu', available: true }),
+          makeDefaultMenuItem({ vendor_id: 'v-has-menu' }),
         ], error: null }),
         createSupabaseMock({ data: [], error: null }), // statuses
         createSupabaseMock({ data: [], error: null }), // orders
@@ -617,8 +615,8 @@ describe('VendorService', () => {
         createSupabaseMock({ data: [v1, v2], error: null }),
         createSupabaseMock({ data: [], error: null }), // enrichWithCategories
         createSupabaseMock({ data: [
-          makeMenuItem({ vendor_id: 'v-few-orders', available: true }),
-          makeMenuItem({ vendor_id: 'v-many-orders', available: true }),
+          makeDefaultMenuItem({ vendor_id: 'v-few-orders' }),
+          makeDefaultMenuItem({ vendor_id: 'v-many-orders' }),
         ], error: null }),
         createSupabaseMock({ data: [], error: null }), // statuses
         // orders: v-many-orders has 3 orders, v-few-orders has 1
@@ -654,8 +652,8 @@ describe('VendorService', () => {
         createSupabaseMock({ data: [v1, v2], error: null }),
         createSupabaseMock({ data: [], error: null }), // enrichWithCategories
         createSupabaseMock({ data: [
-          makeMenuItem({ vendor_id: 'v-zebra', available: true }),
-          makeMenuItem({ vendor_id: 'v-alpha', available: true }),
+          makeDefaultMenuItem({ vendor_id: 'v-zebra' }),
+          makeDefaultMenuItem({ vendor_id: 'v-alpha' }),
         ], error: null }),
         createSupabaseMock({ data: [], error: null }), // statuses
         createSupabaseMock({ data: [], error: null }), // orders
@@ -681,7 +679,7 @@ describe('VendorService', () => {
         createSupabaseMock({ data: vendors, error: null }),
         createSupabaseMock({ data: [], error: null }), // enrichWithCategories
         createSupabaseMock({ data: vendors.map(v =>
-          makeMenuItem({ vendor_id: v.id, available: true })
+          makeDefaultMenuItem({ vendor_id: v.id })
         ), error: null }),
         createSupabaseMock({ data: [], error: null }), // statuses
         createSupabaseMock({ data: [], error: null }), // orders
@@ -758,259 +756,6 @@ describe('VendorService', () => {
 
       await expect(service.searchVendors('broken')).rejects.toThrow(
         'Failed to search vendors: Search failed'
-      );
-    });
-  });
-
-  // ── getVendorMenu ────────────────────────────────────────────────────────────
-
-  describe('getVendorMenu', () => {
-    it('returns menu groups from cache when cache hits', async () => {
-      const cachedGroups = [{ category: { id: 'cat-1', name: 'Burgers' }, menuItems: [] }];
-      cacheMock.get.mockResolvedValueOnce(cachedGroups);
-
-      const result = await service.getVendorMenu('vendor-1');
-
-      expect(result).toEqual(cachedGroups);
-      expect(supabaseMock.from).not.toHaveBeenCalled();
-    });
-
-    it('fetches and groups menu items by category on cache miss', async () => {
-      const categoryId = 'cat-burgers';
-      const dbItems = [
-        makeMenuItem({ vendor_id: 'vendor-1', category_id: categoryId, available: true }),
-        makeMenuItem({ vendor_id: 'vendor-1', category_id: categoryId, available: true }),
-      ];
-      const dbCategories = [{ id: categoryId, name: 'Burgers' }];
-
-      cacheMock.get.mockResolvedValueOnce(null);
-
-      const menuItemsMock = createSupabaseMock({ data: dbItems, error: null });
-      const categoriesMock = createSupabaseMock({ data: dbCategories, error: null });
-
-      mockFromSequence([menuItemsMock, categoriesMock]);
-
-      const result = await service.getVendorMenu('vendor-1');
-
-      expect(result).toHaveLength(1);
-      expect(result[0].category.name).toBe('Burgers');
-      expect(result[0].menuItems).toHaveLength(2);
-      expect(cacheMock.set).toHaveBeenCalledWith(
-        'vendor:vendor-1:menu',
-        expect.any(Array),
-        300
-      );
-    });
-
-    it('returns empty array when vendor has no menu items', async () => {
-      cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: [], error: null })
-      );
-
-      const result = await service.getVendorMenu('empty-vendor');
-
-      expect(result).toEqual([]);
-    });
-  });
-
-  // ── getMenuItemById ──────────────────────────────────────────────────────────
-
-  describe('getMenuItemById', () => {
-    it('returns menu item when found', async () => {
-      const dbItem = makeMenuItem({ id: 'item-1', vendor_id: 'vendor-1' });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const result = await service.getMenuItemById('vendor-1', 'item-1');
-
-      expect(result).not.toBeNull();
-      expect(result!.id).toBe('item-1');
-    });
-
-    it('returns null when item not found (PGRST116 error code)', async () => {
-      const mock = createSupabaseMock({
-        data: null,
-        error: { code: 'PGRST116', message: 'No rows found' },
-      });
-      supabaseMock.from.mockReturnValue(mock);
-
-      const result = await service.getMenuItemById('vendor-1', 'nonexistent');
-
-      expect(result).toBeNull();
-    });
-
-    it('throws on unexpected Supabase error', async () => {
-      const mock = createSupabaseMock({
-        data: null,
-        error: { code: 'PGRST500', message: 'Database error' },
-      });
-      supabaseMock.from.mockReturnValue(mock);
-
-      await expect(service.getMenuItemById('vendor-1', 'item-1')).rejects.toThrow(
-        'Failed to fetch menu item: Database error'
-      );
-    });
-  });
-
-  // ── addMenuItem ───────────────────────────────────────────────────────────────
-
-  describe('addMenuItem', () => {
-    it('inserts menu item and returns the new item', async () => {
-      const dbItem = makeMenuItem({ id: 'new-item', vendor_id: 'vendor-1', category_id: 'cat-1' });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const result = await service.addMenuItem('vendor-1', {
-        name: 'Burger',
-        price: 80,
-        type: 'FOOD',
-        available: true,
-        categoryId: 'cat-1',
-        vendorId: 'vendor-1',
-      } as any);
-
-      expect(result.id).toBe('new-item');
-      // Cache del called for vendor menu and category items
-      expect(cacheMock.del).toHaveBeenCalledWith(
-        'vendor:vendor-1:menu',
-        expect.stringContaining('cat-1')
-      );
-    });
-
-    it('throws when insert fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Item insert failed' } })
-      );
-
-      await expect(service.addMenuItem('vendor-1', {} as any)).rejects.toThrow(
-        'Failed to add menu item: Item insert failed'
-      );
-    });
-  });
-
-  // ── updateMenuItem ───────────────────────────────────────────────────────────
-
-  describe('updateMenuItem', () => {
-    it('updates menu item and returns updated item', async () => {
-      const dbItem = makeMenuItem({ id: 'item-1', vendor_id: 'vendor-1', category_id: 'cat-1', name: 'Updated Burger' });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const result = await service.updateMenuItem('item-1', { name: 'Updated Burger' });
-
-      expect(result.name).toBe('Updated Burger');
-    });
-
-    it('throws when update fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Update failed' } })
-      );
-
-      await expect(service.updateMenuItem('bad-item', {})).rejects.toThrow(
-        'Failed to update menu item: Update failed'
-      );
-    });
-  });
-
-  // ── deleteMenuItem ───────────────────────────────────────────────────────────
-
-  describe('deleteMenuItem', () => {
-    it('deletes menu item and invalidates caches', async () => {
-      const fetchMock = createSupabaseMock({
-        data: { vendor_id: 'vendor-1', category_id: 'cat-1' },
-        error: null,
-      });
-      const deleteMock = createSupabaseMock({ data: null, error: null });
-
-      mockFromSequence([fetchMock, deleteMock]);
-
-      await expect(service.deleteMenuItem('item-to-delete')).resolves.toBeUndefined();
-
-      expect(cacheMock.del).toHaveBeenCalledWith(
-        'vendor:vendor-1:menu',
-        expect.stringContaining('cat-1')
-      );
-    });
-
-    it('throws when fetch before delete fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Item not found' } })
-      );
-
-      await expect(service.deleteMenuItem('bad-item')).rejects.toThrow(
-        'Failed to fetch menu item for deletion: Item not found'
-      );
-    });
-
-    it('throws when delete operation fails', async () => {
-      const fetchMock = createSupabaseMock({
-        data: { vendor_id: 'vendor-1', category_id: 'cat-1' },
-        error: null,
-      });
-      const deleteMock = createSupabaseMock({
-        data: null,
-        error: { message: 'Delete constraint violation' },
-      });
-
-      mockFromSequence([fetchMock, deleteMock]);
-
-      await expect(service.deleteMenuItem('locked-item')).rejects.toThrow(
-        'Failed to delete menu item: Delete constraint violation'
-      );
-    });
-  });
-
-  // ── toggleMenuItemAvailability ───────────────────────────────────────────────
-
-  describe('toggleMenuItemAvailability', () => {
-    it('marks item as available (available=true)', async () => {
-      const dbItem = makeMenuItem({
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        available: true,
-      });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const result = await service.toggleMenuItemAvailability('item-1', true);
-
-      expect(result.available).toBe(true);
-    });
-
-    it('marks item as unavailable (available=false)', async () => {
-      const dbItem = makeMenuItem({
-        id: 'item-1',
-        vendor_id: 'vendor-1',
-        category_id: 'cat-1',
-        available: false,
-      });
-
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbItem, error: null })
-      );
-
-      const result = await service.toggleMenuItemAvailability('item-1', false);
-
-      expect(result.available).toBe(false);
-    });
-
-    it('throws when toggle fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Toggle failed' } })
-      );
-
-      await expect(service.toggleMenuItemAvailability('bad-item', true)).rejects.toThrow(
-        'Failed to toggle item availability: Toggle failed'
       );
     });
   });
@@ -1165,7 +910,7 @@ describe('VendorService', () => {
     it('fetches vendors with items in category on cache miss', async () => {
       cacheMock.get.mockResolvedValueOnce(null);
 
-      // 1st call: query vendor_menu_items → vendor_ids
+      // 1st call: query default_menu_items → vendor_ids
       const itemsMock = createSupabaseMock({
         data: [{ vendor_id: 'v1' }, { vendor_id: 'v2' }, { vendor_id: 'v1' }],
         error: null,
@@ -1217,7 +962,7 @@ describe('VendorService', () => {
         data: [{ vendor_id: 'v1', is_accepting_orders: true, status: 'ACTIVE' }],
         error: null,
       });
-      // 4th call: vendor_menu_items (filtered by allowed vendor IDs)
+      // 4th call: default_menu_items (filtered by allowed vendor IDs)
       const itemsMock = createSupabaseMock({
         data: [{ vendor_id: 'v1' }],
         error: null,
@@ -1347,7 +1092,6 @@ describe('VendorService', () => {
       expect(cacheMock.del).toHaveBeenCalledWith(
         'vendors:all',
         'vendor:vendor-123',
-        'vendor:vendor-123:menu',
         'vendor:vendor-123:stats'
       );
     });

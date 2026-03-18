@@ -104,7 +104,7 @@ export const makeOrder = (overrides: Record<string, any> = {}) => ({
   ...overrides,
 });
 
-// ── Menu Item ────────────────────────────────────────────────────────────────
+// ── Menu Item (vendor_menu_items shape — used by menu module tests) ──
 export const makeMenuItem = (overrides: Record<string, any> = {}) => ({
   id: crypto.randomUUID(),
   vendor_id: crypto.randomUUID(),
@@ -117,6 +117,30 @@ export const makeMenuItem = (overrides: Record<string, any> = {}) => ({
   prep_time: 10,
   available: true,
   tags: [],
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  ...overrides,
+});
+
+// ── Default Menu Item (default_menu_items table) ─────────────────────────────
+export const makeDefaultMenuItem = (overrides: Record<string, any> = {}) => ({
+  id: crypto.randomUUID(),
+  vendor_id: crypto.randomUUID(),
+  category_id: null,
+  name: 'Burger',
+  description: 'Juicy beef burger',
+  base_price: 80,
+  image_url: null,
+  type: 'FOOD',
+  prep_time: 10,
+  is_active: true,
+  availability_status: 'AVAILABLE',
+  is_alcohol: false,
+  tag_ids: [],
+  modifier_group_ids: [],
+  display_order: 0,
+  is_featured: false,
+  is_popular: false,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
   ...overrides,

@@ -62,10 +62,10 @@ const webhookController: FastifyPluginAsync = async (fastify) => {
 
     /**
      * Webhook: Invalidate menu cache
-     * Trigger: When vendor_menu_items table changes
+     * Trigger: When default_menu_items table changes
      *
      * Supabase Webhook Config:
-     * - Table: vendor_menu_items
+     * - Table: default_menu_items
      * - Events: INSERT, UPDATE, DELETE
      * - URL: https://your-api.com/webhooks/menu-updated
      */

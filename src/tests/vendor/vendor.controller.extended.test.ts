@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { cacheMock, redisMock } from '../mocks/redis.js';
-import { makeVendor, makeMenuItem } from '../fixtures/index.js';
+import { makeVendor } from '../fixtures/index.js';
 import { buildApp } from '../helpers/app.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
@@ -388,97 +388,6 @@ describe('VendorController — Extended Coverage', () => {
       });
 
       expect(res.statusCode).toBe(500);
-    });
-  });
-
-  // ── GET /vendor/:id/menu — Edge Cases ─────────────────────────────────────
-
-  describe('GET /vendor/:id/menu — edge cases', () => {
-    it('returns 200 with empty menu when vendor has no menu items', async () => {
-      cacheMock.get.mockResolvedValueOnce(null);
-      const menuMock = createSupabaseMock({ data: [], error: null });
-      const catMock = createSupabaseMock({ data: [], error: null });
-      mockFromSequence([menuMock, catMock]);
-
-      const res = await app.inject({
-        method: 'GET',
-        url: '/vendor/vendor-empty/menu',
-      });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body).toHaveProperty('menuItems');
-      expect(body.menuItems).toHaveLength(0);
-    });
-
-    it('returns 500 when the service throws', async () => {
-      cacheMock.get.mockResolvedValueOnce(null);
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Menu error' } }),
-      );
-
-      const res = await app.inject({
-        method: 'GET',
-        url: '/vendor/vendor-bad/menu',
-      });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
-
-  // ── POST /vendor/:id/menu — Input Validation Edge Cases ───────────────────
-
-  describe('POST /vendor/:id/menu — input validation edge cases', () => {
-    it('returns 400 when name is missing from the menu item', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/vendor/vendor-1/menu',
-        payload: { price: 50, categoryId: 'cat-1', type: 'FOOD' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when price is missing', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/vendor/vendor-1/menu',
-        payload: { name: 'No Price', categoryId: 'cat-1', type: 'FOOD' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-  });
-
-  // ── PATCH /vendor/:id/menu/:itemId/availability — Edge Cases ──────────────
-
-  describe('PATCH /vendor/:id/menu/:itemId/availability — edge cases', () => {
-    it('returns 400 when available field is missing', async () => {
-      const res = await app.inject({
-        method: 'PATCH',
-        url: '/vendor/vendor-1/menu/item-1/availability',
-        payload: {},
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('coerces string "true" to boolean and processes the request', async () => {
-      // Fastify's Ajv coerces "true" to true for boolean schema fields,
-      // so the request passes validation and reaches the service
-      const item = makeMenuItem({ id: 'item-1', available: true });
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: item, error: null }),
-      );
-
-      const res = await app.inject({
-        method: 'PATCH',
-        url: '/vendor/vendor-1/menu/item-1/availability',
-        payload: { available: 'true' },
-      });
-
-      // Fastify coerces "true" -> true, so the request is processed
-      expect([200, 500]).toContain(res.statusCode);
     });
   });
 

@@ -50,8 +50,8 @@ const vendorProperties = {
     updatedAt: { type: 'string', format: 'date-time' }
 };
 
-// Updated menu item properties
-const menuItemProperties = {
+// Menu preview item properties (used in getVendorsByEvent response)
+const menuPreviewProperties = {
     id: { type: 'string' },
     vendorId: { type: 'string' },
     categoryId: { type: 'string' },
@@ -63,17 +63,6 @@ const menuItemProperties = {
     prepTime: { type: 'number' },
     available: { type: 'boolean' },
     isAlcohol: { type: 'boolean' },
-    tags: {
-        type: 'array',
-        items: {
-            type: 'object',
-            properties: {
-                id: { type: 'string' },
-                name: { type: 'string' },
-                description: { type: 'string' }
-            }
-        }
-    },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' }
 };
@@ -480,7 +469,7 @@ export const getVendorsByEventSchema = {
                             orderCount: { type: 'integer' },
                             menu: {
                                 type: 'array',
-                                items: { type: 'object', properties: menuItemProperties }
+                                items: { type: 'object', properties: menuPreviewProperties }
                             }
                         }
                     }
@@ -492,235 +481,6 @@ export const getVendorsByEventSchema = {
             }
         },
         500: { type: 'object', properties: { error: { type: 'string' } } }
-    }
-};
-
-export const getVendorMenuSchema = {
-    description: 'Get vendor menu items',
-    tags: ['vendors'],
-    params: {
-        type: 'object',
-        properties: {
-            id: { type: 'string' }
-        },
-        required: ['id']
-    },
-    querystring: {
-        type: 'object',
-        properties: {
-            type: { type: 'string', enum: ['FOOD', 'RETAIL'] }, // Optional filter by type
-            available: { type: 'boolean' } // Optional filter by availability
-        }
-    },
-    response: {
-        200: {
-            type: 'object',
-            properties: {
-                menuItems: {
-                    type: 'array',
-                    items: {
-                        type: 'object',
-                        properties: {
-                            category: {
-                                type: 'object',
-                                properties: {
-                                    id: { type: 'string' },
-                                    name: { type: 'string' }
-                                },
-                                required: ['id', 'name']
-                            },
-                            menuItems: {
-                                type: 'array',
-                                items: { type: 'object', properties: menuItemProperties }
-                            }
-                        },
-                        required: ['category', 'menuItems']
-                    }
-                }
-            }
-        },
-        500: {
-            type: 'object',
-            properties: {
-                error: { type: 'string' }
-            }
-        }
-    }
-};
-
-// Get a single vendor menu item by ID
-export const getVendorMenuItemSchema = {
-    description: 'Get a single vendor menu item by ID',
-    tags: ['vendors'],
-    params: {
-        type: 'object',
-        properties: {
-            id: { type: 'string', format: 'uuid' },
-            itemId: { type: 'string', format: 'uuid' },
-        },
-        required: ['id', 'itemId'],
-    },
-    response: {
-        200: {
-            type: 'object',
-            properties: {
-                menuItem: { type: 'object', properties: menuItemProperties }
-            }
-        },
-        404: { type: 'object', properties: { error: { type: 'string' } } },
-        500: { type: 'object', properties: { error: { type: 'string' } } }
-    }
-};
-
-
-// Update addMenuItemSchema to accept tagIds
-export const addMenuItemSchema = {
-    description: 'Add menu item to vendor',
-    tags: ['vendors'],
-    params: {
-        type: 'object',
-        properties: {
-            id: { type: 'string' }
-        },
-        required: ['id']
-    },
-    body: {
-        type: 'object',
-        required: ['name', 'price', 'categoryId', 'type'],
-        properties: {
-            name: { type: 'string' },
-            description: { type: 'string' },
-            price: { type: 'number', minimum: 0 },
-            categoryId: { type: 'string' },
-            imageUrl: { type: 'string' },
-            type: { type: 'string', enum: ['FOOD', 'RETAIL'] },
-            prepTime: { type: 'number', minimum: 0 },
-            available: { type: 'boolean', default: true },
-            isAlcohol: { type: 'boolean' },
-            tagIds: { type: 'array', items: { type: 'string' } } // NEW
-        }
-    },
-    response: {
-        201: {
-            type: 'object',
-            properties: {
-                menuItem: {
-                    type: 'object',
-                    properties: menuItemProperties
-                }
-            }
-        },
-        500: {
-            type: 'object',
-            properties: {
-                error: { type: 'string' }
-            }
-        }
-    }
-};
-
-// Update updateMenuItemSchema similarly
-export const updateMenuItemSchema = {
-    description: 'Update menu item',
-    tags: ['vendors'],
-    params: {
-        type: 'object',
-        properties: {
-            id: { type: 'string' },
-            itemId: { type: 'string' }
-        },
-        required: ['id', 'itemId']
-    },
-    body: {
-        type: 'object',
-        properties: {
-            name: { type: 'string' },
-            description: { type: 'string' },
-            price: { type: 'number', minimum: 0 },
-            categoryId: { type: 'string' },
-            imageUrl: { type: 'string' },
-            type: { type: 'string', enum: ['FOOD', 'RETAIL'] },
-            prepTime: { type: 'number', minimum: 0 },
-            available: { type: 'boolean' },
-            isAlcohol: { type: 'boolean' },
-            tagIds: { type: 'array', items: { type: 'string' } } // NEW
-        }
-    },
-    response: {
-        200: {
-            type: 'object',
-            properties: {
-                menuItem: {
-                    type: 'object',
-                    properties: menuItemProperties
-                }
-            }
-        },
-        500: {
-            type: 'object',
-            properties: {
-                error: { type: 'string' }
-            }
-        }
-    }
-};
-
-export const toggleMenuItemAvailabilitySchema = {
-    description: 'Toggle menu item availability',
-    tags: ['vendors'],
-    params: {
-        type: 'object',
-        properties: {
-            id: { type: 'string' },
-            itemId: { type: 'string' }
-        },
-        required: ['id', 'itemId']
-    },
-    body: {
-        type: 'object',
-        required: ['available'],
-        properties: {
-            available: { type: 'boolean' }
-        }
-    },
-    response: {
-        200: {
-            type: 'object',
-            properties: {
-                menuItem: {
-                    type: 'object',
-                    properties: menuItemProperties
-                }
-            }
-        },
-        500: {
-            type: 'object',
-            properties: {
-                error: { type: 'string' }
-            }
-        }
-    }
-};
-
-export const deleteMenuItemSchema = {
-    description: 'Delete a vendor menu item',
-    tags: ['vendors'],
-    params: {
-        type: 'object',
-        properties: {
-            id: { type: 'string' },
-            itemId: { type: 'string' }
-        },
-        required: ['id', 'itemId']
-    },
-    response: {
-        204: { type: 'null' },
-        500: {
-            type: 'object',
-            properties: {
-                error: { type: 'string' }
-            }
-        }
     }
 };
 
@@ -754,14 +514,3 @@ export const getVendorStatsSchema = {
     }
 };
 
-// in vendor.schema.ts
-// export const getVendorMenuItemSchema = {
-//     params: {
-//         type: 'object',
-//         properties: {
-//             id: { type: 'string', format: 'uuid' },
-//             itemId: { type: 'string', format: 'uuid' },
-//         },
-//         required: ['id', 'itemId'],
-//     },
-// };

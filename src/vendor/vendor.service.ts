@@ -1,13 +1,14 @@
-import { Vendor, VendorMenuItem, VendorMenuGroup } from "./vendor.types";
+import { Vendor } from "./vendor.types";
 import { supabase } from "../lib/supabase";
-import { fromDbMenuItem, fromDbVendor, toDbMenuItem, toDbVendor } from "./utils";
+import { fromDbVendor, toDbVendor } from "./utils";
+import { fromDbDefaultMenuItem } from "./menu/vendor-menu.utils";
 import { redis, cache, CACHE_TTL } from "../lib/redis";
 
 // Cache key generator for vendors
 const cacheKeys = {
     allVendors: () => 'vendors:all',
     vendor: (id: string) => `vendor:${id}`,
-    vendorMenu: (id: string) => `vendor:${id}:menu`,
+    // vendorMenu key removed — menu caching handled by vendor-menu module
     vendorStats: (id: string) => `vendor:${id}:stats`,
     vendorsByCategory: (category: string) => `vendors:category:${category}`,
     vendorsByCuisine: (cuisine: string) => `vendors:cuisine:${cuisine}`,
@@ -354,10 +355,11 @@ export class VendorService {
 
             // Find vendor IDs with at least one available item in the category
             let itemQuery = supabase
-                .from('vendor_menu_items')
+                .from('default_menu_items')
                 .select('vendor_id')
                 .eq('category_id', categoryId)
-                .eq('available', true);
+                .eq('is_active', true)
+                .eq('availability_status', 'AVAILABLE');
 
             if (allowedVendorIds) {
                 itemQuery = itemQuery.in('vendor_id', allowedVendorIds);
@@ -426,7 +428,7 @@ export class VendorService {
     async getVendorsByEvent(
         eventIdOrCode: string,
         opts?: { page?: number; pageSize?: number; categoryId?: string }
-    ): Promise<{ id: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }> {
+    ): Promise<{ id: string, vendors: (Vendor & { menu: any[] })[]; page: number; pageSize: number; total: number; totalPages: number; }> {
         // Normalize pagination
         const page = Math.max(1, Number(opts?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize || 20)));
@@ -444,7 +446,7 @@ export class VendorService {
 
         try {
             // Try cache first
-            const cached = await cache.get<{ id: string, vendors: (Vendor & { menu: VendorMenuItem[] })[]; page: number; pageSize: number; total: number; totalPages: number; }>(cacheKey);
+            const cached = await cache.get<{ id: string, vendors: (Vendor & { menu: any[] })[]; page: number; pageSize: number; total: number; totalPages: number; }>(cacheKey);
             if (cached) {
                 return cached;
             }
@@ -508,20 +510,37 @@ export class VendorService {
             const allVendorIds = vendors.map(v => v.id);
 
             // Fetch all available menu items for ALL vendors (need menu presence for sorting)
-            let menuByVendor = new Map<string, VendorMenuItem[]>();
+            let menuByVendor = new Map<string, any[]>();
             if (allVendorIds.length > 0) {
                 const { data: menuRows, error: menuError } = await supabase
-                    .from('vendor_menu_items')
+                    .from('default_menu_items')
                     .select('*')
                     .in('vendor_id', allVendorIds)
-                    .eq('available', true);
+                    .eq('is_active', true)
+                    .eq('availability_status', 'AVAILABLE');
 
                 if (menuError) {
                     throw new Error(`Failed to fetch vendor menus: ${menuError.message}`);
                 }
 
                 for (const row of menuRows || []) {
-                    const item = fromDbMenuItem(row);
+                    const defaultItem = fromDbDefaultMenuItem(row);
+                    // Map to preview shape compatible with frontend menu item
+                    const item = {
+                        id: defaultItem.id,
+                        vendorId: defaultItem.vendorId,
+                        categoryId: defaultItem.categoryId,
+                        name: defaultItem.name,
+                        description: defaultItem.description,
+                        price: defaultItem.basePrice,
+                        imageUrl: defaultItem.imageUrl,
+                        type: defaultItem.type,
+                        prepTime: defaultItem.prepTime,
+                        available: true,
+                        isAlcohol: defaultItem.isAlcohol,
+                        createdAt: defaultItem.createdAt,
+                        updatedAt: defaultItem.updatedAt,
+                    };
                     const list = menuByVendor.get(item.vendorId) || [];
                     list.push(item);
                     menuByVendor.set(item.vendorId, list);
@@ -706,194 +725,6 @@ export class VendorService {
             Math.sin(dLon / 2) * Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
-    }
-
-    // ==================== MENU ITEMS ====================
-
-    async getVendorMenu(vendorId: string): Promise<VendorMenuGroup[]> {
-        const cacheKey = cacheKeys.vendorMenu(vendorId);
-
-        try {
-            // Try cache first
-            const cached = await cache.get<VendorMenuGroup[]>(cacheKey);
-            if (cached) {
-                return cached;
-            }
-
-
-            // Fetch from Supabase
-            const { data, error } = await supabase
-                .from('vendor_menu_items')
-                .select('*')
-                .eq('vendor_id', vendorId)
-                .eq('available', true);
-
-            if (error) {
-                throw new Error(`Failed to fetch menu: ${error.message}`);
-            }
-
-            const items = (data || []).map(fromDbMenuItem);
-
-            // Group by categoryId
-            const byCategory: Record<string, VendorMenuItem[]> = {};
-            for (const item of items) {
-                const key = item.categoryId;
-                if (!byCategory[key]) byCategory[key] = [];
-                byCategory[key].push(item);
-            }
-
-            const categoryIds = Object.keys(byCategory);
-            if (categoryIds.length === 0) return [];
-
-            const { data: categories, error: catError } = await supabase
-                .from('categories')
-                .select('id, name')
-                .in('id', categoryIds);
-
-            if (catError) {
-                throw new Error(`Failed to fetch categories for menu: ${catError.message}`);
-            }
-
-            const nameById = new Map<string, string>((categories || []).map((c: any) => [c.id, c.name]));
-
-            const grouped: VendorMenuGroup[] = categoryIds.map((id) => ({
-                category: { id, name: nameById.get(id) || '' },
-                menuItems: byCategory[id]
-            }));
-
-            // Cache menu for 30 seconds (menu items change frequently)
-            await cache.set(cacheKey, grouped, CACHE_TTL.MENU_ITEMS);
-
-            return grouped;
-        } catch (error) {
-            console.error('Error in getVendorMenu:', error);
-            throw error;
-        }
-    }
-
-    async getMenuItemById(vendorId: string, itemId: string): Promise<VendorMenuItem | null> {
-        try {
-            const { data, error } = await supabase
-                .from('vendor_menu_items')
-                .select('*')
-                .eq('id', itemId)
-                .eq('vendor_id', vendorId)
-                .single();
-
-            if (error) {
-                if (error.code === 'PGRST116' /* No rows found */) {
-                    return null;
-                }
-                throw new Error(`Failed to fetch menu item: ${error.message}`);
-            }
-
-            return data ? fromDbMenuItem(data) : null;
-        } catch (error) {
-            console.error('Error in getMenuItemById:', error);
-            throw error;
-        }
-    }
-
-    async addMenuItem(vendorId: string, item: Omit<VendorMenuItem, 'id' | 'createdAt'>): Promise<VendorMenuItem> {
-        const dbMenuItem = toDbMenuItem({ ...item, vendorId });
-
-        const { data, error } = await supabase
-            .from('vendor_menu_items')
-            .insert([dbMenuItem])
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(`Failed to add menu item: ${error.message}`);
-        }
-
-        const newItem = fromDbMenuItem(data);
-
-        // Invalidate menu cache for this vendor
-        await cache.del(
-            cacheKeys.vendorMenu(vendorId),
-            cacheKeys.vendorsWithItemsByCategory(newItem.categoryId)
-        );
-
-        return newItem;
-    }
-
-    async updateMenuItem(itemId: string, updates: Partial<VendorMenuItem>): Promise<VendorMenuItem> {
-        const dbMenuItem = toDbMenuItem(updates);
-
-        const { data, error } = await supabase
-            .from('vendor_menu_items')
-            .update(dbMenuItem)
-            .eq('id', itemId)
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(`Failed to update menu item: ${error.message}`);
-        }
-
-        const updatedItem = fromDbMenuItem(data);
-
-        // Invalidate menu cache for this vendor and category-based vendor lists
-        await cache.del(
-            cacheKeys.vendorMenu(updatedItem.vendorId),
-            cacheKeys.vendorsWithItemsByCategory(updatedItem.categoryId)
-        );
-
-        return updatedItem;
-    }
-
-    async deleteMenuItem(itemId: string): Promise<void> {
-        // Get the item first to know which vendor/category caches to invalidate
-        const { data: item, error: fetchError } = await supabase
-            .from('vendor_menu_items')
-            .select('vendor_id, category_id')
-            .eq('id', itemId)
-            .single();
-
-        if (fetchError) {
-            throw new Error(`Failed to fetch menu item for deletion: ${fetchError.message}`);
-        }
-
-        const { error } = await supabase
-            .from('vendor_menu_items')
-            .delete()
-            .eq('id', itemId);
-
-        if (error) {
-            throw new Error(`Failed to delete menu item: ${error.message}`);
-        }
-
-        // Invalidate menu and category caches
-        if (item) {
-            await cache.del(
-                cacheKeys.vendorMenu(item.vendor_id),
-                cacheKeys.vendorsWithItemsByCategory(item.category_id)
-            );
-        }
-    }
-
-    async toggleMenuItemAvailability(itemId: string, available: boolean): Promise<VendorMenuItem> {
-        const { data, error } = await supabase
-            .from('vendor_menu_items')
-            .update({ available })
-            .eq('id', itemId)
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(`Failed to toggle item availability: ${error.message}`);
-        }
-
-        const updatedItem = fromDbMenuItem(data);
-
-        // Invalidate menu cache for this vendor and category-based vendor lists
-        await cache.del(
-            cacheKeys.vendorMenu(updatedItem.vendorId),
-            cacheKeys.vendorsWithItemsByCategory(updatedItem.categoryId)
-        );
-
-        return updatedItem;
     }
 
     // ==================== STATS ====================
@@ -1109,7 +940,6 @@ export class VendorService {
         if (vendorId) {
             keysToDelete.push(
                 cacheKeys.vendor(vendorId),
-                cacheKeys.vendorMenu(vendorId),
                 cacheKeys.vendorStats(vendorId)
             );
         }

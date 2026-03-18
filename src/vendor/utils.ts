@@ -1,6 +1,6 @@
 // vendor.utils.ts
 
-import {Vendor, VendorCategory, VendorMenuItem} from './vendor.types';
+import {Vendor, VendorCategory} from './vendor.types';
 
 export function toDbVendor(vendor: Partial<Vendor>) {
     const dbVendor: any = {};
@@ -76,38 +76,3 @@ export function fromDbVendor(dbVendor: any): Vendor {
     };
 }
 
-export function toDbMenuItem(item: Partial<VendorMenuItem>) {
-    const dbItem: any = {};
-
-    if (item.vendorId !== undefined) dbItem.vendor_id = item.vendorId;
-    if (item.categoryId !== undefined) dbItem.category_id = item.categoryId;
-    if (item.name !== undefined) dbItem.name = item.name;
-    if (item.description !== undefined) dbItem.description = item.description;
-    if (item.price !== undefined) dbItem.price = item.price;
-    if (item.imageUrl !== undefined) dbItem.image_url = item.imageUrl;
-    if (item.type !== undefined) dbItem.type = item.type;
-    if (item.prepTime !== undefined) dbItem.prep_time = item.prepTime;
-    if (item.available !== undefined) dbItem.available = item.available;
-    if (item.isAlcohol !== undefined) dbItem.is_alcohol = item.isAlcohol;
-
-    return dbItem;
-}
-
-export function fromDbMenuItem(dbItem: any): VendorMenuItem {
-    return {
-        id: dbItem.id,
-        vendorId: dbItem.vendor_id,
-        categoryId: dbItem.category_id,
-        name: dbItem.name,
-        description: dbItem.description,
-        price: dbItem.price,
-        imageUrl: dbItem.image_url,
-        type: dbItem.type,
-        prepTime: dbItem.prep_time,
-        available: dbItem.available,
-        isAlcohol: dbItem.is_alcohol ?? false,
-        tags: dbItem.tags || [],
-        createdAt: dbItem.created_at,
-        updatedAt: dbItem.updated_at
-    };
-}
