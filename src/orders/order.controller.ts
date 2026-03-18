@@ -11,6 +11,7 @@ import {
     deleteOrderSchema,
     getOrdersByDateRangeSchema,
     getOrderStatsSchema,
+    getTimeSeriesStatsSchema,
     searchOrdersSchema,
     getOrdersByEventSchema,
     confirmCollectionSchema,
@@ -25,13 +26,13 @@ import {supabase} from "../lib/supabase";
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
 
-    // Get all orders (supports ?vendorId=&eventId=&status=&page=&pageSize= filters)
+    // Get all orders (supports ?vendorId=&eventId=&status=&startDate=&endDate=&page=&pageSize= filters)
     fastify.get("/", { schema: getOrdersResponseSchema }, async (request, reply) => {
         try {
-            const { vendorId, eventId, status, page, pageSize } = request.query as {
-                vendorId?: string; eventId?: string; status?: string; page?: number; pageSize?: number;
+            const { vendorId, eventId, status, startDate, endDate, page, pageSize } = request.query as {
+                vendorId?: string; eventId?: string; status?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number;
             };
-            const result = await orderService.getAllOrders({ vendorId, eventId, status, pagination: { page, pageSize } });
+            const result = await orderService.getAllOrders({ vendorId, eventId, status, startDate, endDate, pagination: { page, pageSize } });
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -45,6 +46,20 @@ const orderController: FastifyPluginAsync = async (fastify) => {
             const { limit = 10 } = request.query as { limit?: number };
             const orders = await orderService.getRecentOrders(limit);
             return { orders };
+        } catch (err) {
+            fastify.log.error(err);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
+    // Get time-series order statistics
+    fastify.get("/stats/timeseries", { schema: getTimeSeriesStatsSchema }, async (request, reply) => {
+        try {
+            const { vendorId, eventId, startDate, endDate, granularity = 'day' } = request.query as {
+                vendorId?: string; eventId?: string; startDate: string; endDate: string; granularity?: 'day' | 'week' | 'month';
+            };
+            const stats = await orderService.getTimeSeriesStats({ vendorId, eventId, startDate, endDate, granularity });
+            return stats;
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

@@ -1,4 +1,4 @@
-import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats} from "./order.types";
+import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats, TimeSeriesGranularity, TimeSeriesStats, TimeSeriesBucket, TimeSeriesSummary, PreviousPeriodSummary} from "./order.types";
 import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
@@ -30,7 +30,7 @@ export class OrderService {
         this.scheduler = new OrderScheduler();
     }
 
-    async getAllOrders(params?: { vendorId?: string; eventId?: string; status?: string; pagination?: PaginationParams }): Promise<PaginatedResponse<Order>> {
+    async getAllOrders(params?: { vendorId?: string; eventId?: string; status?: string; startDate?: string; endDate?: string; pagination?: PaginationParams }): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(params?.pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(params?.pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
@@ -41,6 +41,8 @@ export class OrderService {
         if (params?.vendorId) query = query.eq('vendor_id', params.vendorId);
         if (params?.eventId)  query = query.eq('event_id', params.eventId);
         if (params?.status)   query = query.eq('status', params.status);
+        if (params?.startDate) query = query.gte('created_at', params.startDate);
+        if (params?.endDate) query = query.lte('created_at', params.endDate);
 
         query = query.order('created_at', { ascending: false }).range(from, to);
 
@@ -831,6 +833,11 @@ export class OrderService {
         });
         const topEntry = Object.entries(itemCounts).sort((a, b) => b[1] - a[1])[0];
 
+        const topItems = Object.entries(itemCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([name, qty]) => ({ name, qty }));
+
         // Payment method breakdown (non-cancelled)
         const paymentBreakdown: Record<string, number> = {};
         nonCancelled.forEach((o: any) => {
@@ -852,10 +859,154 @@ export class OrderService {
             cancelledValue,
             topItem: topEntry ? { name: topEntry[0], qty: topEntry[1] } : null,
             paymentBreakdown,
+            topItems,
         };
 
         await cache.set(cacheKey, stats, CACHE_TTL.ITEM_AVAILABILITY); // 10s TTL
         return stats;
+    }
+
+    async getTimeSeriesStats(params: {
+        vendorId?: string; eventId?: string;
+        startDate: string; endDate: string;
+        granularity: TimeSeriesGranularity;
+    }): Promise<TimeSeriesStats> {
+        const { vendorId, eventId, startDate, endDate, granularity } = params;
+        const cacheKey = `order:timeseries:${vendorId || 'all'}:${eventId || 'all'}:${startDate}:${endDate}:${granularity}`;
+        const cached = await cache.get<TimeSeriesStats>(cacheKey);
+        if (cached) return cached;
+
+        // Build primary period query
+        let primaryQuery = supabase.from('orders')
+            .select('total, status, payment_method, items, created_at, collected_at');
+        if (vendorId) primaryQuery = primaryQuery.eq('vendor_id', vendorId);
+        if (eventId) primaryQuery = primaryQuery.eq('event_id', eventId);
+        primaryQuery = primaryQuery.gte('created_at', startDate).lte('created_at', endDate);
+
+        // Compute previous period range (same duration before startDate)
+        const startMs = new Date(startDate).getTime();
+        const endMs = new Date(endDate).getTime();
+        const duration = endMs - startMs;
+        const prevStart = new Date(startMs - duration).toISOString();
+        const prevEnd = new Date(startMs - 1).toISOString();
+
+        // Build previous period query
+        let prevQuery = supabase.from('orders')
+            .select('total, status');
+        if (vendorId) prevQuery = prevQuery.eq('vendor_id', vendorId);
+        if (eventId) prevQuery = prevQuery.eq('event_id', eventId);
+        prevQuery = prevQuery.gte('created_at', prevStart).lte('created_at', prevEnd);
+
+        const [primaryResult, prevResult] = await Promise.all([primaryQuery, prevQuery]);
+
+        if (primaryResult.error) {
+            throw new Error(`Failed to fetch time series stats: ${primaryResult.error.message}`);
+        }
+
+        const orders = (primaryResult.data || []) as any[];
+        const prevOrders = (prevResult.data || []) as any[];
+
+        // Bucket primary orders by granularity
+        const bucketMap = new Map<string, { revenue: number; orderCount: number; collectedRevenue: number; cancelledCount: number }>();
+
+        for (const order of orders) {
+            const date = new Date(order.created_at);
+            let key: string;
+            if (granularity === 'day') {
+                key = date.toISOString().split('T')[0]; // YYYY-MM-DD
+            } else if (granularity === 'week') {
+                // ISO week Monday
+                const d = new Date(date);
+                const day = d.getDay();
+                const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                d.setDate(diff);
+                key = d.toISOString().split('T')[0];
+            } else {
+                key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            }
+
+            if (!bucketMap.has(key)) {
+                bucketMap.set(key, { revenue: 0, orderCount: 0, collectedRevenue: 0, cancelledCount: 0 });
+            }
+            const bucket = bucketMap.get(key)!;
+            bucket.orderCount++;
+            if (order.status !== OrderStatus.CANCELLED) {
+                bucket.revenue += Number(order.total);
+            }
+            if (order.status === OrderStatus.COLLECTED) {
+                bucket.collectedRevenue += Number(order.total);
+            }
+            if (order.status === OrderStatus.CANCELLED) {
+                bucket.cancelledCount++;
+            }
+        }
+
+        const buckets: TimeSeriesBucket[] = Array.from(bucketMap.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([date, data]) => ({ date, ...data }));
+
+        // Build summary from primary-period orders
+        const nonCancelled = orders.filter((o: any) => o.status !== OrderStatus.CANCELLED);
+        const cancelled = orders.filter((o: any) => o.status === OrderStatus.CANCELLED);
+        const collected = orders.filter((o: any) => o.status === OrderStatus.COLLECTED);
+
+        const grossSales = nonCancelled.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+        const collectedRevenue = collected.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+        const cancelledValue = cancelled.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+
+        const paymentBreakdown: Record<string, number> = {};
+        nonCancelled.forEach((o: any) => {
+            const method = o.payment_method ?? 'Unknown';
+            paymentBreakdown[method] = (paymentBreakdown[method] || 0) + Number(o.total);
+        });
+
+        const ordersByStatus: Record<string, number> = {};
+        orders.forEach((o: any) => {
+            ordersByStatus[o.status] = (ordersByStatus[o.status] || 0) + 1;
+        });
+
+        // Top items from non-cancelled orders
+        const itemCounts: Record<string, number> = {};
+        nonCancelled.forEach((o: any) => {
+            const items = Array.isArray(o.items) ? o.items : [];
+            items.forEach((i: any) => {
+                const name = i.name || 'Unknown';
+                itemCounts[name] = (itemCounts[name] || 0) + (Number(i.quantity) || 1);
+            });
+        });
+        const topItems = Object.entries(itemCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([name, qty]) => ({ name, qty }));
+
+        const summary: TimeSeriesSummary = {
+            grossSales,
+            collectedRevenue,
+            totalOrders: orders.length,
+            averageOrderValue: orders.length > 0 ? grossSales / nonCancelled.length || 0 : 0,
+            cancelledCount: cancelled.length,
+            cancelledValue,
+            paymentBreakdown,
+            ordersByStatus,
+            topItems,
+        };
+
+        // Build previous period summary
+        const prevNonCancelled = prevOrders.filter((o: any) => o.status !== OrderStatus.CANCELLED);
+        const prevCollected = prevOrders.filter((o: any) => o.status === OrderStatus.COLLECTED);
+        const prevGrossSales = prevNonCancelled.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+        const prevCollectedRevenue = prevCollected.reduce((sum: number, o: any) => sum + Number(o.total), 0);
+
+        const previousPeriod: PreviousPeriodSummary = {
+            grossSales: prevGrossSales,
+            collectedRevenue: prevCollectedRevenue,
+            totalOrders: prevOrders.length,
+            averageOrderValue: prevNonCancelled.length > 0 ? prevGrossSales / prevNonCancelled.length : 0,
+        };
+
+        const result: TimeSeriesStats = { buckets, summary, previousPeriod };
+        await cache.set(cacheKey, result, CACHE_TTL.ITEM_AVAILABILITY);
+        return result;
     }
 
     async getOrdersByEvent(eventId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {

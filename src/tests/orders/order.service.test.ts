@@ -210,6 +210,20 @@ describe('OrderService', () => {
             expect(builder.range).toHaveBeenCalledWith(5, 9);
         });
 
+        it('applies startDate and endDate filters when provided', async () => {
+            const orders = [makeOrder()];
+            const builder = createSupabaseMock({ data: orders, error: null });
+            supabaseMock.from.mockReturnValue(builder);
+
+            await service.getAllOrders({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T23:59:59.999Z',
+            });
+
+            expect(builder.gte).toHaveBeenCalledWith('created_at', '2026-03-15T00:00:00.000Z');
+            expect(builder.lte).toHaveBeenCalledWith('created_at', '2026-03-17T23:59:59.999Z');
+        });
+
         it('throws when supabase returns an error', async () => {
             mockFrom({ data: null, error: { message: 'DB failure' } });
 
@@ -547,10 +561,208 @@ describe('OrderService', () => {
             expect(builder.eq).toHaveBeenCalledWith('event_id', 'event-456');
         });
 
+        it('returns topItems array with up to 10 items sorted by quantity', async () => {
+            const items = Array.from({ length: 12 }, (_, i) => ({
+                name: `Item${i}`, quantity: 12 - i, price: 10, id: `id-${i}`, vendorId: 'v1', vendorName: 'V',
+            }));
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, items, payment_method: 'CASH' }),
+            ];
+            mockFrom({ data: orders, error: null });
+
+            const result = await service.getOrderStats();
+
+            expect(result.topItems).toHaveLength(10);
+            expect(result.topItems[0]).toEqual({ name: 'Item0', qty: 12 });
+            expect(result.topItems[9]).toEqual({ name: 'Item9', qty: 3 });
+        });
+
         it('throws when supabase returns an error', async () => {
             mockFrom({ data: null, error: { message: 'connection failed' } });
 
             await expect(service.getOrderStats()).rejects.toThrow('Failed to fetch order stats');
+        });
+    });
+
+    // ── getTimeSeriesStats ─────────────────────────────────────────────────────
+
+    describe('getTimeSeriesStats', () => {
+        const day1 = '2026-03-15T10:00:00.000Z';
+        const day2 = '2026-03-16T14:00:00.000Z';
+        const day3 = '2026-03-17T09:00:00.000Z';
+
+        it('returns correct daily buckets with orders across 3 days', async () => {
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, created_at: day1, payment_method: 'CASH', items: [{ name: 'Burger', quantity: 2, price: 50, id: '1', vendorId: 'v1', vendorName: 'V' }] }),
+                makeOrder({ total: 200, status: OrderStatus.PENDING, created_at: day2, payment_method: 'CARD', items: [{ name: 'Pizza', quantity: 1, price: 200, id: '2', vendorId: 'v1', vendorName: 'V' }] }),
+                makeOrder({ total: 50, status: OrderStatus.CANCELLED, created_at: day3, payment_method: 'CASH', items: [{ name: 'Fries', quantity: 3, price: 50, id: '3', vendorId: 'v1', vendorName: 'V' }] }),
+            ];
+
+            mockFromSequence(
+                { data: orders, error: null },  // primary query
+                { data: [], error: null },       // previous period query
+            );
+
+            const result = await service.getTimeSeriesStats({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T23:59:59.999Z',
+                granularity: 'day',
+            });
+
+            expect(result.buckets).toHaveLength(3);
+            expect(result.buckets[0].date).toBe('2026-03-15');
+            expect(result.buckets[0].revenue).toBe(100);
+            expect(result.buckets[0].orderCount).toBe(1);
+            expect(result.buckets[1].date).toBe('2026-03-16');
+            expect(result.buckets[1].revenue).toBe(200);
+            expect(result.buckets[2].date).toBe('2026-03-17');
+            expect(result.buckets[2].revenue).toBe(0); // cancelled
+            expect(result.buckets[2].cancelledCount).toBe(1);
+        });
+
+        it('returns correct monthly buckets', async () => {
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, created_at: '2026-01-15T10:00:00.000Z', payment_method: 'CASH', items: [] }),
+                makeOrder({ total: 200, status: OrderStatus.COLLECTED, created_at: '2026-02-10T10:00:00.000Z', payment_method: 'CASH', items: [] }),
+            ];
+
+            mockFromSequence(
+                { data: orders, error: null },
+                { data: [], error: null },
+            );
+
+            const result = await service.getTimeSeriesStats({
+                startDate: '2026-01-01T00:00:00.000Z',
+                endDate: '2026-03-01T00:00:00.000Z',
+                granularity: 'month',
+            });
+
+            expect(result.buckets).toHaveLength(2);
+            expect(result.buckets[0].date).toBe('2026-01');
+            expect(result.buckets[1].date).toBe('2026-02');
+        });
+
+        it('summary fields match expected aggregation', async () => {
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, created_at: day1, payment_method: 'CASH', items: [{ name: 'Burger', quantity: 2, price: 50, id: '1', vendorId: 'v1', vendorName: 'V' }] }),
+                makeOrder({ total: 200, status: OrderStatus.PENDING, created_at: day2, payment_method: 'CARD', items: [{ name: 'Pizza', quantity: 5, price: 40, id: '2', vendorId: 'v1', vendorName: 'V' }] }),
+            ];
+
+            mockFromSequence(
+                { data: orders, error: null },
+                { data: [], error: null },
+            );
+
+            const result = await service.getTimeSeriesStats({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T00:00:00.000Z',
+                granularity: 'day',
+            });
+
+            expect(result.summary.grossSales).toBe(300);
+            expect(result.summary.collectedRevenue).toBe(100);
+            expect(result.summary.totalOrders).toBe(2);
+            expect(result.summary.cancelledCount).toBe(0);
+            expect(result.summary.paymentBreakdown).toEqual({ CASH: 100, CARD: 200 });
+            expect(result.summary.topItems).toEqual([
+                { name: 'Pizza', qty: 5 },
+                { name: 'Burger', qty: 2 },
+            ]);
+        });
+
+        it('previousPeriod populated correctly', async () => {
+            const currentOrders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, created_at: day1, payment_method: 'CASH', items: [] }),
+            ];
+            const prevOrders = [
+                makeOrder({ total: 80, status: OrderStatus.COLLECTED }),
+                makeOrder({ total: 60, status: OrderStatus.PENDING }),
+            ];
+
+            mockFromSequence(
+                { data: currentOrders, error: null },
+                { data: prevOrders, error: null },
+            );
+
+            const result = await service.getTimeSeriesStats({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T00:00:00.000Z',
+                granularity: 'day',
+            });
+
+            expect(result.previousPeriod.totalOrders).toBe(2);
+            expect(result.previousPeriod.grossSales).toBe(140);
+            expect(result.previousPeriod.collectedRevenue).toBe(80);
+            expect(result.previousPeriod.averageOrderValue).toBe(70);
+        });
+
+        it('filters by vendorId and eventId', async () => {
+            const builder = createSupabaseMock({ data: [], error: null });
+            supabaseMock.from.mockReturnValue(builder);
+
+            await service.getTimeSeriesStats({
+                vendorId: 'v1',
+                eventId: 'e1',
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T00:00:00.000Z',
+                granularity: 'day',
+            });
+
+            expect(builder.eq).toHaveBeenCalledWith('vendor_id', 'v1');
+            expect(builder.eq).toHaveBeenCalledWith('event_id', 'e1');
+        });
+
+        it('returns empty buckets + zero summary for no orders in range', async () => {
+            mockFromSequence(
+                { data: [], error: null },
+                { data: [], error: null },
+            );
+
+            const result = await service.getTimeSeriesStats({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T00:00:00.000Z',
+                granularity: 'day',
+            });
+
+            expect(result.buckets).toHaveLength(0);
+            expect(result.summary.grossSales).toBe(0);
+            expect(result.summary.totalOrders).toBe(0);
+            expect(result.summary.topItems).toEqual([]);
+            expect(result.previousPeriod.totalOrders).toBe(0);
+        });
+
+        it('returns topItems (top 10) in summary', async () => {
+            const items = Array.from({ length: 12 }, (_, i) => ({
+                name: `Item${i}`, quantity: 12 - i, price: 10, id: `id-${i}`, vendorId: 'v1', vendorName: 'V',
+            }));
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, created_at: day1, payment_method: 'CASH', items }),
+            ];
+
+            mockFromSequence(
+                { data: orders, error: null },
+                { data: [], error: null },
+            );
+
+            const result = await service.getTimeSeriesStats({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T00:00:00.000Z',
+                granularity: 'day',
+            });
+
+            expect(result.summary.topItems).toHaveLength(10);
+            expect(result.summary.topItems[0].name).toBe('Item0');
+            expect(result.summary.topItems[0].qty).toBe(12);
+        });
+
+        it('throws when supabase returns an error', async () => {
+            mockFrom({ data: null, error: { message: 'DB failure' } });
+
+            await expect(service.getTimeSeriesStats({
+                startDate: '2026-03-15T00:00:00.000Z',
+                endDate: '2026-03-17T00:00:00.000Z',
+                granularity: 'day',
+            })).rejects.toThrow('Failed to fetch time series stats');
         });
     });
 

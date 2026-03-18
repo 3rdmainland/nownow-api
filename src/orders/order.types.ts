@@ -80,4 +80,40 @@ export interface OrderStats {
     cancelledValue: number;
     topItem: { name: string; qty: number } | null;
     paymentBreakdown: Record<string, number>;
+    topItems: Array<{ name: string; qty: number }>;
+}
+
+export type TimeSeriesGranularity = 'day' | 'week' | 'month';
+
+export interface TimeSeriesBucket {
+    date: string;
+    revenue: number;
+    orderCount: number;
+    collectedRevenue: number;
+    cancelledCount: number;
+}
+
+export interface TimeSeriesSummary {
+    grossSales: number;
+    collectedRevenue: number;
+    totalOrders: number;
+    averageOrderValue: number;
+    cancelledCount: number;
+    cancelledValue: number;
+    paymentBreakdown: Record<string, number>;
+    ordersByStatus: Record<string, number>;
+    topItems: Array<{ name: string; qty: number }>;
+}
+
+export interface PreviousPeriodSummary {
+    grossSales: number;
+    collectedRevenue: number;
+    totalOrders: number;
+    averageOrderValue: number;
+}
+
+export interface TimeSeriesStats {
+    buckets: TimeSeriesBucket[];
+    summary: TimeSeriesSummary;
+    previousPeriod: PreviousPeriodSummary;
 }

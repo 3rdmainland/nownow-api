@@ -104,6 +104,8 @@ export const getOrdersResponseSchema = {
             vendorId: { type: "string" },
             eventId: { type: "string" },
             status: { type: "string" },
+            startDate: { type: "string", format: "date-time" },
+            endDate: { type: "string", format: "date-time" },
             ...paginationQuerystringProperties
         }
     },
@@ -408,17 +410,104 @@ export const getOrderStatsSchema = {
                 paymentBreakdown: {
                     type: "object",
                     additionalProperties: { type: "number" }
+                },
+                topItems: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            name: { type: "string" },
+                            qty: { type: "number" }
+                        },
+                        required: ["name", "qty"]
+                    }
                 }
             },
             required: [
                 "totalOrders", "totalRevenue", "averageOrderValue", "ordersByStatus",
                 "grossSales", "collectedRevenue", "cancelledCount", "cancelledValue",
-                "topItem", "paymentBreakdown"
+                "topItem", "paymentBreakdown", "topItems"
             ]
         },
         500: {
             type: "object",
             properties: { error: { type: "string" } }
+        }
+    }
+};
+
+// GET time-series stats
+export const getTimeSeriesStatsSchema = {
+    description: "Get time-series order stats with bucketed data",
+    tags: ['orders'],
+    querystring: {
+        type: "object",
+        properties: {
+            vendorId: { type: "string" },
+            eventId: { type: "string" },
+            startDate: { type: "string", format: "date-time" },
+            endDate: { type: "string", format: "date-time" },
+            granularity: { type: "string", enum: ["day", "week", "month"], default: "day" }
+        },
+        required: ["startDate", "endDate"]
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: {
+                buckets: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            date: { type: "string" },
+                            revenue: { type: "number" },
+                            orderCount: { type: "number" },
+                            collectedRevenue: { type: "number" },
+                            cancelledCount: { type: "number" }
+                        },
+                        required: ["date", "revenue", "orderCount", "collectedRevenue", "cancelledCount"]
+                    }
+                },
+                summary: {
+                    type: "object",
+                    properties: {
+                        grossSales: { type: "number" },
+                        collectedRevenue: { type: "number" },
+                        totalOrders: { type: "number" },
+                        averageOrderValue: { type: "number" },
+                        cancelledCount: { type: "number" },
+                        cancelledValue: { type: "number" },
+                        paymentBreakdown: { type: "object", additionalProperties: { type: "number" } },
+                        ordersByStatus: { type: "object", additionalProperties: { type: "number" } },
+                        topItems: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: { name: { type: "string" }, qty: { type: "number" } },
+                                required: ["name", "qty"]
+                            }
+                        }
+                    },
+                    required: ["grossSales", "collectedRevenue", "totalOrders", "averageOrderValue", "cancelledCount", "cancelledValue", "paymentBreakdown", "ordersByStatus", "topItems"]
+                },
+                previousPeriod: {
+                    type: "object",
+                    properties: {
+                        grossSales: { type: "number" },
+                        collectedRevenue: { type: "number" },
+                        totalOrders: { type: "number" },
+                        averageOrderValue: { type: "number" }
+                    },
+                    required: ["grossSales", "collectedRevenue", "totalOrders", "averageOrderValue"]
+                }
+            },
+            required: ["buckets", "summary", "previousPeriod"]
+        },
+        500: {
+            type: "object",
+            properties: { error: { type: "string" } },
+            required: ["error"]
         }
     }
 };
