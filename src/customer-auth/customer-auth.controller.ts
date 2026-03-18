@@ -39,10 +39,8 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
       message: 'Verification code sent',
     };
 
-    // Expose OTP in non-production for preprod testing
-    if (process.env.NODE_ENV !== 'production') {
-      response.otp = code;
-    }
+    // TODO: Remove once real SMS/WhatsApp provider is integrated
+    response.otp = code;
 
     return response;
   });
