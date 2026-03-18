@@ -63,7 +63,12 @@ const orderSchema = {
             type: "object",
             properties: { name: { type: "string" } }
         },
-        stall_info: { type: ["string", "null"] }
+        stall_info: { type: ["string", "null"] },
+        refund_status: { type: "string", enum: ["none", "full", "partial"] },
+        refund_amount: { type: ["number", "null"] },
+        refund_reason: { type: ["string", "null"] },
+        refunded_at: { type: ["string", "null"] },
+        refunded_by: { type: ["string", "null"] }
     },
     required: [
         "id",
@@ -421,12 +426,14 @@ export const getOrderStatsSchema = {
                         },
                         required: ["name", "qty"]
                     }
-                }
+                },
+                refundedCount: { type: "number" },
+                refundedValue: { type: "number" }
             },
             required: [
                 "totalOrders", "totalRevenue", "averageOrderValue", "ordersByStatus",
                 "grossSales", "collectedRevenue", "cancelledCount", "cancelledValue",
-                "topItem", "paymentBreakdown", "topItems"
+                "topItem", "paymentBreakdown", "topItems", "refundedCount", "refundedValue"
             ]
         },
         500: {
@@ -464,9 +471,10 @@ export const getTimeSeriesStatsSchema = {
                             revenue: { type: "number" },
                             orderCount: { type: "number" },
                             collectedRevenue: { type: "number" },
-                            cancelledCount: { type: "number" }
+                            cancelledCount: { type: "number" },
+                            refundedCount: { type: "number" }
                         },
-                        required: ["date", "revenue", "orderCount", "collectedRevenue", "cancelledCount"]
+                        required: ["date", "revenue", "orderCount", "collectedRevenue", "cancelledCount", "refundedCount"]
                     }
                 },
                 summary: {
@@ -487,9 +495,11 @@ export const getTimeSeriesStatsSchema = {
                                 properties: { name: { type: "string" }, qty: { type: "number" } },
                                 required: ["name", "qty"]
                             }
-                        }
+                        },
+                        refundedCount: { type: "number" },
+                        refundedValue: { type: "number" }
                     },
-                    required: ["grossSales", "collectedRevenue", "totalOrders", "averageOrderValue", "cancelledCount", "cancelledValue", "paymentBreakdown", "ordersByStatus", "topItems"]
+                    required: ["grossSales", "collectedRevenue", "totalOrders", "averageOrderValue", "cancelledCount", "cancelledValue", "paymentBreakdown", "ordersByStatus", "topItems", "refundedCount", "refundedValue"]
                 },
                 previousPeriod: {
                     type: "object",
@@ -696,6 +706,41 @@ export const checkoutOptionsSchema = {
         500: {
             type: 'object',
             properties: { error: { type: 'string' } }
+        }
+    }
+};
+
+// REFUND order
+export const refundOrderSchema = {
+    description: "Refund an order (full or partial). Track-only — no payment reversal.",
+    tags: ['orders'],
+    params: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"]
+    },
+    body: {
+        type: "object",
+        properties: {
+            type: { type: "string", enum: ["full", "partial"] },
+            amount: { type: "number", minimum: 0.01 },
+            reason: { type: "string", minLength: 1 }
+        },
+        required: ["type", "reason"]
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: { order: orderSchema },
+            required: ["order"]
+        },
+        400: {
+            type: "object",
+            properties: { error: { type: "string" } }
+        },
+        404: {
+            type: "object",
+            properties: { error: { type: "string" } }
         }
     }
 };

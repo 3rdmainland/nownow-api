@@ -96,6 +96,11 @@ export const makeOrder = (overrides: Record<string, any> = {}) => ({
   actual_prep_time: null,
   queue_position: 1,
   estimated_ready_time: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+  refund_status: 'none',
+  refund_amount: null,
+  refund_reason: null,
+  refunded_at: null,
+  refunded_by: null,
   ...overrides,
 });
 

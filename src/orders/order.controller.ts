@@ -18,10 +18,12 @@ import {
     getAvailableTimeSlotsSchema,
     validateScheduledPickupSchema,
     checkoutOptionsSchema,
+    refundOrderSchema,
 } from "./order.schema";
 import { OrderService } from "./order.service";
 import {OrderStatus} from "./order.types";
 import {supabase} from "../lib/supabase";
+import { authenticate } from "../lib/auth.js";
 
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
@@ -213,6 +215,32 @@ const orderController: FastifyPluginAsync = async (fastify) => {
             return reply.status(500).send({ error: "Internal server error" });
         }
     });
+
+    // Refund order
+    fastify.post<{ Params: { id: string } }>(
+        "/:id/refund",
+        { schema: refundOrderSchema, preHandler: [authenticate] },
+        async (request, reply) => {
+            try {
+                const { id } = request.params;
+                const { type, amount, reason } = request.body as { type: 'full' | 'partial'; amount?: number; reason: string };
+                const user = request.user as { email?: string; sub?: string };
+                const refundedBy = user.email || user.sub || 'unknown';
+
+                const order = await orderService.refundOrder(id, { type, amount, reason, refundedBy });
+                return { order };
+            } catch (err: any) {
+                fastify.log.error(err);
+                if (err.statusCode === 404) {
+                    return reply.status(404).send({ error: err.message });
+                }
+                if (err.statusCode === 400) {
+                    return reply.status(400).send({ error: err.message });
+                }
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
 
     // Delete order
     fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteOrderSchema }, async (request, reply) => {

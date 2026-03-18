@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 import { makeOrder, makeVendor, makeEvent } from '../fixtures/index.js';
 import { OrderStatus, OrderType } from '../../orders/order.types.js';
-import { ValidationError } from '../../lib/errors.js';
+import { ValidationError, NotFoundError } from '../../lib/errors.js';
 
 import { redisMock, cacheMock, CACHE_TTL_MOCK } from '../mocks/redis.js';
 
@@ -763,6 +763,179 @@ describe('OrderService', () => {
                 endDate: '2026-03-17T00:00:00.000Z',
                 granularity: 'day',
             })).rejects.toThrow('Failed to fetch time series stats');
+        });
+    });
+
+    // ── refundOrder ──────────────────────────────────────────────────────────
+
+    describe('refundOrder', () => {
+        const paidOrder = () => makeOrder({
+            status: OrderStatus.COLLECTED,
+            payment_status: 'complete',
+            total: 100,
+            refund_status: 'none',
+        });
+
+        it('full refund sets correct fields', async () => {
+            const order = paidOrder();
+            const updatedOrder = { ...order, refund_status: 'full', refund_amount: 100, refund_reason: 'Customer requested', refunded_by: 'vendor@test.com' };
+
+            mockFromSequence(
+                { data: order, error: null },     // fetch
+                { data: updatedOrder, error: null }, // update
+            );
+
+            const result = await service.refundOrder(order.id, {
+                type: 'full',
+                reason: 'Customer requested',
+                refundedBy: 'vendor@test.com',
+            });
+
+            expect(result.refund_status).toBe('full');
+            expect(result.refund_amount).toBe(100);
+            expect(result.refund_reason).toBe('Customer requested');
+        });
+
+        it('partial refund with specified amount', async () => {
+            const order = paidOrder();
+            const updatedOrder = { ...order, refund_status: 'partial', refund_amount: 40, refund_reason: 'Wrong order' };
+
+            mockFromSequence(
+                { data: order, error: null },
+                { data: updatedOrder, error: null },
+            );
+
+            const result = await service.refundOrder(order.id, {
+                type: 'partial',
+                amount: 40,
+                reason: 'Wrong order',
+                refundedBy: 'vendor@test.com',
+            });
+
+            expect(result.refund_status).toBe('partial');
+            expect(result.refund_amount).toBe(40);
+        });
+
+        it('rejects when payment_status not complete/pay_at_stall', async () => {
+            const order = paidOrder();
+            order.payment_status = 'pending';
+            mockFrom({ data: order, error: null });
+
+            await expect(service.refundOrder(order.id, {
+                type: 'full',
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            })).rejects.toThrow('Only paid orders can be refunded');
+        });
+
+        it('rejects already-refunded orders', async () => {
+            const order = { ...paidOrder(), refund_status: 'full' };
+            mockFrom({ data: order, error: null });
+
+            await expect(service.refundOrder(order.id, {
+                type: 'full',
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            })).rejects.toThrow('Order has already been refunded');
+        });
+
+        it('rejects partial amount greater than order total', async () => {
+            const order = paidOrder();
+            mockFrom({ data: order, error: null });
+
+            await expect(service.refundOrder(order.id, {
+                type: 'partial',
+                amount: 150,
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            })).rejects.toThrow('Refund amount cannot exceed order total');
+        });
+
+        it('rejects partial without amount', async () => {
+            const order = paidOrder();
+            mockFrom({ data: order, error: null });
+
+            await expect(service.refundOrder(order.id, {
+                type: 'partial',
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            })).rejects.toThrow('Partial refund requires a positive amount');
+        });
+
+        it('allows refund for pay_at_stall orders', async () => {
+            const order = { ...paidOrder(), payment_status: 'pay_at_stall' };
+            const updatedOrder = { ...order, refund_status: 'full', refund_amount: 100 };
+
+            mockFromSequence(
+                { data: order, error: null },
+                { data: updatedOrder, error: null },
+            );
+
+            const result = await service.refundOrder(order.id, {
+                type: 'full',
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            });
+
+            expect(result.refund_status).toBe('full');
+        });
+
+        it('throws NotFoundError for missing order', async () => {
+            mockFrom({ data: null, error: { message: 'Row not found' } });
+
+            await expect(service.refundOrder('nonexistent', {
+                type: 'full',
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            })).rejects.toThrow('Order not found');
+        });
+
+        it('invalidates cache after success', async () => {
+            const order = paidOrder();
+            const updatedOrder = { ...order, refund_status: 'full', refund_amount: 100 };
+
+            mockFromSequence(
+                { data: order, error: null },
+                { data: updatedOrder, error: null },
+            );
+
+            await service.refundOrder(order.id, {
+                type: 'full',
+                reason: 'test',
+                refundedBy: 'vendor@test.com',
+            });
+
+            expect(cacheMock.del).toHaveBeenCalled();
+        });
+    });
+
+    // ── getOrderStats with refunds ──────────────────────────────────────────
+
+    describe('getOrderStats (refund fields)', () => {
+        it('includes refundedCount and refundedValue in stats', async () => {
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, payment_method: 'CASH', items: [{ name: 'Burger', quantity: 1, price: 100, id: '1', vendorId: 'v1', vendorName: 'V' }], refund_status: 'full', refund_amount: 100 }),
+                makeOrder({ total: 80, status: OrderStatus.COLLECTED, payment_method: 'CASH', items: [{ name: 'Pizza', quantity: 1, price: 80, id: '2', vendorId: 'v1', vendorName: 'V' }], refund_status: 'partial', refund_amount: 30 }),
+                makeOrder({ total: 50, status: OrderStatus.COLLECTED, payment_method: 'CASH', items: [{ name: 'Fries', quantity: 1, price: 50, id: '3', vendorId: 'v1', vendorName: 'V' }], refund_status: 'none' }),
+            ];
+            mockFrom({ data: orders, error: null });
+
+            const result = await service.getOrderStats();
+
+            expect(result.refundedCount).toBe(2);
+            expect(result.refundedValue).toBe(130);
+        });
+
+        it('returns zero refund fields when no refunds exist', async () => {
+            const orders = [
+                makeOrder({ total: 100, status: OrderStatus.COLLECTED, payment_method: 'CASH', items: [{ name: 'Burger', quantity: 1, price: 100, id: '1', vendorId: 'v1', vendorName: 'V' }] }),
+            ];
+            mockFrom({ data: orders, error: null });
+
+            const result = await service.getOrderStats();
+
+            expect(result.refundedCount).toBe(0);
+            expect(result.refundedValue).toBe(0);
         });
     });
 

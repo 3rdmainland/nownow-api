@@ -26,6 +26,15 @@ export enum OrderStatus {
     CANCELLED = 'CANCELLED',
 }
 
+export type RefundStatus = 'none' | 'full' | 'partial';
+
+export interface RefundOrderDto {
+    type: 'full' | 'partial';
+    amount?: number;
+    reason: string;
+    refundedBy: string;
+}
+
 export interface Order {
     id: string;
     vendor_id: string;
@@ -54,6 +63,11 @@ export interface Order {
     estimated_ready_time?: string;
     vendor?: { name: string };
     stall_info?: string | null;
+    refund_status?: RefundStatus;
+    refund_amount?: number;
+    refund_reason?: string;
+    refunded_at?: string;
+    refunded_by?: string;
 }
 
 export interface PaginationParams {
@@ -81,6 +95,8 @@ export interface OrderStats {
     topItem: { name: string; qty: number } | null;
     paymentBreakdown: Record<string, number>;
     topItems: Array<{ name: string; qty: number }>;
+    refundedCount: number;
+    refundedValue: number;
 }
 
 export type TimeSeriesGranularity = 'day' | 'week' | 'month';
@@ -91,6 +107,7 @@ export interface TimeSeriesBucket {
     orderCount: number;
     collectedRevenue: number;
     cancelledCount: number;
+    refundedCount: number;
 }
 
 export interface TimeSeriesSummary {
@@ -103,6 +120,8 @@ export interface TimeSeriesSummary {
     paymentBreakdown: Record<string, number>;
     ordersByStatus: Record<string, number>;
     topItems: Array<{ name: string; qty: number }>;
+    refundedCount: number;
+    refundedValue: number;
 }
 
 export interface PreviousPeriodSummary {

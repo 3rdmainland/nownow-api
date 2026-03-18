@@ -1,4 +1,4 @@
-import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats, TimeSeriesGranularity, TimeSeriesStats, TimeSeriesBucket, TimeSeriesSummary, PreviousPeriodSummary} from "./order.types";
+import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats, TimeSeriesGranularity, TimeSeriesStats, TimeSeriesBucket, TimeSeriesSummary, PreviousPeriodSummary, RefundOrderDto} from "./order.types";
 import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
@@ -6,7 +6,7 @@ import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 import { PaymentService } from "../payment/payment.service.js";
-import { ValidationError } from "../lib/errors.js";
+import { ValidationError, NotFoundError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
 interface EventMenuConfig {
@@ -786,13 +786,81 @@ export class OrderService {
         return { orders: data || [], page, pageSize, total, totalPages };
     }
 
+    async refundOrder(orderId: string, dto: RefundOrderDto): Promise<Order> {
+        const { data: order, error: fetchError } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', orderId)
+            .single();
+
+        if (fetchError || !order) {
+            throw new NotFoundError('Order not found');
+        }
+
+        if (order.payment_status !== 'complete' && order.payment_status !== 'pay_at_stall') {
+            throw new ValidationError('Only paid orders can be refunded', {
+                payment_status: order.payment_status,
+            });
+        }
+
+        if (order.refund_status && order.refund_status !== 'none') {
+            throw new ValidationError('Order has already been refunded');
+        }
+
+        let refundAmount: number;
+        if (dto.type === 'full') {
+            refundAmount = Number(order.total);
+        } else {
+            if (!dto.amount || dto.amount <= 0) {
+                throw new ValidationError('Partial refund requires a positive amount');
+            }
+            if (dto.amount > Number(order.total)) {
+                throw new ValidationError('Refund amount cannot exceed order total', {
+                    amount: dto.amount,
+                    orderTotal: order.total,
+                });
+            }
+            refundAmount = dto.amount;
+        }
+
+        const { data: updated, error: updateError } = await supabase
+            .from('orders')
+            .update({
+                refund_status: dto.type,
+                refund_amount: refundAmount,
+                refund_reason: dto.reason,
+                refunded_at: new Date().toISOString(),
+                refunded_by: dto.refundedBy,
+            })
+            .eq('id', orderId)
+            .select()
+            .single();
+
+        if (updateError) {
+            throw new Error(`Failed to refund order: ${updateError.message}`);
+        }
+
+        // Invalidate cached stats
+        const patterns = [
+            `order:stats:${order.vendor_id}:`,
+            `order:stats:all:`,
+            `order:timeseries:${order.vendor_id}:`,
+            `order:timeseries:all:`,
+        ];
+        for (const prefix of patterns) {
+            await cache.del(prefix + '*').catch(() => {});
+        }
+
+        return updated;
+    }
+
     async getOrderStats(vendorId?: string, eventId?: string): Promise<OrderStats> {
         const cacheKey = `order:stats:${vendorId || 'all'}:${eventId || 'all'}`;
         const cached = await cache.get<OrderStats>(cacheKey);
         if (cached) return cached;
 
         // Parallel queries: summary stats (no items) + items for top-item calc
-        let summaryQuery = supabase.from('orders').select('total, status, payment_method');
+        let summaryQuery = supabase.from('orders').select('total, status, payment_method, refund_status, refund_amount');
         let itemsQuery = supabase.from('orders').select('items, status').neq('status', OrderStatus.CANCELLED);
 
         if (vendorId) {
@@ -845,6 +913,9 @@ export class OrderService {
             paymentBreakdown[method] = (paymentBreakdown[method] || 0) + Number(o.total);
         });
 
+        const refunded = orders.filter((o: any) => o.refund_status && o.refund_status !== 'none');
+        const refundedValue = refunded.reduce((sum: number, o: any) => sum + Number(o.refund_amount || 0), 0);
+
         const stats: OrderStats = {
             totalOrders: orders.length,
             totalRevenue,
@@ -860,6 +931,8 @@ export class OrderService {
             topItem: topEntry ? { name: topEntry[0], qty: topEntry[1] } : null,
             paymentBreakdown,
             topItems,
+            refundedCount: refunded.length,
+            refundedValue,
         };
 
         await cache.set(cacheKey, stats, CACHE_TTL.ITEM_AVAILABILITY); // 10s TTL
@@ -878,7 +951,7 @@ export class OrderService {
 
         // Build primary period query
         let primaryQuery = supabase.from('orders')
-            .select('total, status, payment_method, items, created_at, collected_at');
+            .select('total, status, payment_method, items, created_at, collected_at, refund_status, refund_amount');
         if (vendorId) primaryQuery = primaryQuery.eq('vendor_id', vendorId);
         if (eventId) primaryQuery = primaryQuery.eq('event_id', eventId);
         primaryQuery = primaryQuery.gte('created_at', startDate).lte('created_at', endDate);
@@ -907,7 +980,7 @@ export class OrderService {
         const prevOrders = (prevResult.data || []) as any[];
 
         // Bucket primary orders by granularity
-        const bucketMap = new Map<string, { revenue: number; orderCount: number; collectedRevenue: number; cancelledCount: number }>();
+        const bucketMap = new Map<string, { revenue: number; orderCount: number; collectedRevenue: number; cancelledCount: number; refundedCount: number }>();
 
         for (const order of orders) {
             const date = new Date(order.created_at);
@@ -926,7 +999,7 @@ export class OrderService {
             }
 
             if (!bucketMap.has(key)) {
-                bucketMap.set(key, { revenue: 0, orderCount: 0, collectedRevenue: 0, cancelledCount: 0 });
+                bucketMap.set(key, { revenue: 0, orderCount: 0, collectedRevenue: 0, cancelledCount: 0, refundedCount: 0 });
             }
             const bucket = bucketMap.get(key)!;
             bucket.orderCount++;
@@ -938,6 +1011,9 @@ export class OrderService {
             }
             if (order.status === OrderStatus.CANCELLED) {
                 bucket.cancelledCount++;
+            }
+            if (order.refund_status && order.refund_status !== 'none') {
+                bucket.refundedCount++;
             }
         }
 
@@ -979,6 +1055,9 @@ export class OrderService {
             .slice(0, 10)
             .map(([name, qty]) => ({ name, qty }));
 
+        const tsRefunded = orders.filter((o: any) => o.refund_status && o.refund_status !== 'none');
+        const tsRefundedValue = tsRefunded.reduce((sum: number, o: any) => sum + Number(o.refund_amount || 0), 0);
+
         const summary: TimeSeriesSummary = {
             grossSales,
             collectedRevenue,
@@ -989,6 +1068,8 @@ export class OrderService {
             paymentBreakdown,
             ordersByStatus,
             topItems,
+            refundedCount: tsRefunded.length,
+            refundedValue: tsRefundedValue,
         };
 
         // Build previous period summary
