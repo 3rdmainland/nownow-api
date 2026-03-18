@@ -12,6 +12,12 @@ export const webhookSchema = {
                 received: { type: 'boolean' },
             },
         },
+        401: {
+            type: 'object',
+            properties: {
+                error: { type: 'string' },
+            },
+        },
     },
 };
 

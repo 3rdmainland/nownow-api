@@ -101,6 +101,8 @@ export const makeOrder = (overrides: Record<string, any> = {}) => ({
   refund_reason: null,
   refunded_at: null,
   refunded_by: null,
+  payment_status: 'complete',
+  paid_at: null,
   ...overrides,
 });
 

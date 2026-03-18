@@ -41,7 +41,7 @@ export class PaymentService {
       throw new ServiceUnavailableError(`Stitch token request failed: ${res.status} ${text}`);
     }
 
-    const data: StitchClientTokenResponse = await res.json();
+    const data = await res.json() as StitchClientTokenResponse;
     this.clientToken = data.access_token;
     this.tokenExpiresAt = Date.now() + data.expires_in * 1000;
 
@@ -127,8 +127,7 @@ export class PaymentService {
       throw new ServiceUnavailableError(`Stitch payment request failed: ${res.status} ${text}`);
     }
 
-    const json: { data: StitchPaymentRequestResponse; errors?: Array<{ message: string }> } =
-      await res.json();
+    const json = await res.json() as { data: StitchPaymentRequestResponse; errors?: Array<{ message: string }> };
 
     if (json.errors?.length) {
       throw new ServiceUnavailableError(
