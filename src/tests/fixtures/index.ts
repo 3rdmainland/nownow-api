@@ -180,6 +180,17 @@ export const makeOrganizerUser = (overrides: Record<string, any> = {}) => ({
   ...overrides,
 });
 
+// ── Customer ────────────────────────────────────────────────────────────────
+export const makeCustomer = (overrides: Record<string, any> = {}) => ({
+  id: crypto.randomUUID(),
+  phone: '27821234567',
+  name: null,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  last_login_at: null,
+  ...overrides,
+});
+
 // ── Event Menu Configuration ─────────────────────────────────────────────────
 export const makeEventMenuConfig = (overrides: Record<string, any> = {}) => ({
   id: crypto.randomUUID(),

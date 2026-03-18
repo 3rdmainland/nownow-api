@@ -718,6 +718,69 @@ export class OrderService {
         return { orders, page, pageSize, total, totalPages };
     }
 
+    async getOrdersByCustomerId(customerId: string, pagination?: PaginationParams, eventId?: string): Promise<PaginatedResponse<Order>> {
+        const page = Math.max(1, Number(pagination?.page || 1));
+        const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        let query = supabase
+            .from('orders')
+            .select('*', { count: 'exact' })
+            .eq('customer_id', customerId);
+
+        if (eventId) query = query.eq('event_id', eventId);
+
+        const { data, error, count } = await query
+            .order('created_at', { ascending: false })
+            .range(from, to);
+
+        if (error) {
+            throw new Error(`Failed to fetch orders by customer: ${error.message}`);
+        }
+
+        const orders: Order[] = data || [];
+
+        // Enrich orders with vendor name + stall info
+        if (orders.length > 0) {
+            const vendorIds = [...new Set(orders.map(o => o.vendor_id))];
+            const eventIds = [...new Set(orders.map(o => o.event_id).filter(Boolean))];
+
+            const [vendorResult, configResult] = await Promise.all([
+                supabase
+                    .from('vendors')
+                    .select('id, name')
+                    .in('id', vendorIds),
+                eventIds.length > 0
+                    ? supabase
+                        .from('event_menu_configurations')
+                        .select('vendor_id, event_id, booth_info')
+                        .in('vendor_id', vendorIds)
+                        .in('event_id', eventIds)
+                    : Promise.resolve({ data: [] }),
+            ]);
+
+            const vendorMap = new Map<string, string>();
+            (vendorResult.data || []).forEach((v: any) => vendorMap.set(v.id, v.name));
+
+            const stallMap = new Map<string, string>();
+            (configResult.data || []).forEach((c: any) => {
+                if (c.booth_info) stallMap.set(`${c.vendor_id}:${c.event_id}`, c.booth_info);
+            });
+
+            for (const order of orders) {
+                const vendorName = vendorMap.get(order.vendor_id);
+                if (vendorName) order.vendor = { name: vendorName };
+                const stallInfo = stallMap.get(`${order.vendor_id}:${order.event_id}`);
+                if (stallInfo) order.stall_info = stallInfo;
+            }
+        }
+
+        const total = count || 0;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+        return { orders, page, pageSize, total, totalPages };
+    }
+
     async getOrdersByStatus(status: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));

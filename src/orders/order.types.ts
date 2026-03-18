@@ -70,6 +70,7 @@ export interface Order {
     refunded_by?: string;
     age_verified?: boolean;
     age_verified_at?: string;
+    customer_id?: string;
 }
 
 export interface PaginationParams {

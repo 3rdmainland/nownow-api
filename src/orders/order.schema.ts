@@ -70,7 +70,8 @@ const orderSchema = {
         refunded_at: { type: ["string", "null"] },
         refunded_by: { type: ["string", "null"] },
         age_verified: { type: "boolean" },
-        age_verified_at: { type: "string" }
+        age_verified_at: { type: "string" },
+        customer_id: { type: "string" }
     },
     required: [
         "id",
@@ -709,6 +710,37 @@ export const checkoutOptionsSchema = {
         500: {
             type: 'object',
             properties: { error: { type: 'string' } }
+        }
+    }
+};
+
+// GET orders by customer (authenticated)
+export const getOrdersByCustomerSchema = {
+    description: "Get orders for the authenticated customer",
+    tags: ['orders'],
+    querystring: {
+        type: "object",
+        properties: {
+            eventId: { type: "string" },
+            ...paginationQuerystringProperties
+        }
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: {
+                orders: { type: "array", items: orderSchema },
+                ...paginationResponseProperties
+            },
+            required: ["orders", "page", "pageSize", "total", "totalPages"]
+        },
+        401: {
+            type: "object",
+            properties: { error: { type: "string" } }
+        },
+        500: {
+            type: "object",
+            properties: { error: { type: "string" } }
         }
     }
 };

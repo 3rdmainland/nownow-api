@@ -50,3 +50,16 @@ export function generateToken(
 ): string {
   return app.jwt.sign(payload, { expiresIn: '1h' });
 }
+
+/**
+ * Generate a signed JWT token for customer routes.
+ */
+export function generateCustomerToken(
+  app: FastifyInstance,
+  payload: {
+    customerId: string;
+    phone: string;
+  }
+): string {
+  return app.jwt.sign({ ...payload, role: 'customer' }, { expiresIn: '1h' });
+}

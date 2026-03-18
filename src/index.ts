@@ -20,6 +20,7 @@ import discountController from "./discount/discount.controller";
 import organizerAuthController from "./organizer/organizer-auth.controller";
 import uploadController from "./upload/upload.controller";
 import paymentController from "./payment/payment.controller.js";
+import customerAuthController from "./customer-auth/customer-auth.controller";
 import { AppError } from "./lib/errors";
 
 if (!process.env.JWT_SECRET) {
@@ -102,6 +103,7 @@ fastify.register(discountController, { prefix: "/discount" });
 fastify.register(organizerAuthController, { prefix: "/organizer/auth" });
 fastify.register(uploadController, { prefix: "/upload" });
 fastify.register(paymentController, { prefix: "/payment" });
+fastify.register(customerAuthController, { prefix: "/customer/auth" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {

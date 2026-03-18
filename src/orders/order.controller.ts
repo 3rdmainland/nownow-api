@@ -19,11 +19,12 @@ import {
     validateScheduledPickupSchema,
     checkoutOptionsSchema,
     refundOrderSchema,
+    getOrdersByCustomerSchema,
 } from "./order.schema";
 import { OrderService } from "./order.service";
 import {OrderStatus} from "./order.types";
 import {supabase} from "../lib/supabase";
-import { authenticate } from "../lib/auth.js";
+import { authenticate, authenticateCustomer, optionalAuthenticateCustomer } from "../lib/auth.js";
 
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
@@ -176,6 +177,22 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
+    // Get orders for authenticated customer
+    fastify.get("/customer", {
+        schema: getOrdersByCustomerSchema,
+        preHandler: [authenticateCustomer],
+    }, async (request, reply) => {
+        try {
+            const { customerId } = request.user as { customerId: string };
+            const { eventId, page, pageSize } = request.query as { eventId?: string; page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByCustomerId(customerId, { page, pageSize }, eventId);
+            return result;
+        } catch (err) {
+            fastify.log.error(err);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
     // Get order by ID
     fastify.get<{ Params: { id: string } }>("/:id", { schema: getOrderByIdResponseSchema }, async (request, reply) => {
         try {
@@ -191,9 +208,14 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     });
 
     // Create new order
-    fastify.post("/", { schema: createOrderSchema }, async (request, reply) => {
+    fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer] }, async (request, reply) => {
         try {
             const orderData = request.body as any;
+            // Attach customer_id from JWT if authenticated
+            const user = request.user as { customerId?: string; role?: string } | undefined;
+            if (user?.customerId && user?.role === 'customer') {
+                orderData.customer_id = user.customerId;
+            }
             const result = await orderService.createOrder(orderData);
             const { paymentUrl, ...order } = result;
             return reply.status(201).send({ order, paymentUrl });
