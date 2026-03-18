@@ -15,7 +15,8 @@ import {
     getOrdersByEventSchema,
     confirmCollectionSchema,
     getAvailableTimeSlotsSchema,
-    validateScheduledPickupSchema
+    validateScheduledPickupSchema,
+    checkoutOptionsSchema,
 } from "./order.schema";
 import { OrderService } from "./order.service";
 import {OrderStatus} from "./order.types";
@@ -77,8 +78,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Get orders by phone
     fastify.get("/phone", { schema: getOrdersByPhoneSchema }, async (request, reply) => {
         try {
-            const { phone, page, pageSize } = request.query as { phone: string; page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByPhone(phone, { page, pageSize });
+            const { phone, eventId, page, pageSize } = request.query as { phone: string; eventId?: string; page?: number; pageSize?: number };
+            const result = await orderService.getOrdersByPhone(phone, { page, pageSize }, eventId);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -123,6 +124,28 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
+    // Get checkout options (pay-at-stall availability)
+    fastify.get("/checkout-options", { schema: checkoutOptionsSchema }, async (request, reply) => {
+        try {
+            const { vendorId, eventId } = request.query as { vendorId: string; eventId: string };
+            const { data, error } = await supabase
+                .from('event_menu_configurations')
+                .select('allow_pay_at_stall')
+                .eq('vendor_id', vendorId)
+                .eq('event_id', eventId)
+                .single();
+
+            if (error || !data) {
+                return { allowPayAtStall: false };
+            }
+
+            return { allowPayAtStall: data.allow_pay_at_stall ?? false };
+        } catch (err) {
+            fastify.log.error(err);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
     // Get orders by event
     fastify.get("/event/:eventId", { schema: getOrdersByEventSchema }, async (request, reply) => {
         try {
@@ -154,8 +177,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     fastify.post("/", { schema: createOrderSchema }, async (request, reply) => {
         try {
             const orderData = request.body as any;
-            const order = await orderService.createOrder(orderData);
-            return reply.status(201).send({ order });
+            const result = await orderService.createOrder(orderData);
+            const { paymentUrl, ...order } = result;
+            return reply.status(201).send({ order, paymentUrl });
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

@@ -291,6 +291,9 @@ export interface EventMenuConfiguration {
     // Event-specific categories (can reorder/hide)
     categoryConfigurations: EventCategoryConfiguration[];
 
+    // Payment
+    allowPayAtStall: boolean;
+
     // Global event settings
     isAcceptingOrders: boolean;
 
@@ -501,6 +504,7 @@ export interface UpdateEventMenuConfigInput {
     templateId?: string | null;
     globalPriceAdjustment?: PriceAdjustment | null;
     isAcceptingOrders?: boolean;
+    allowPayAtStall?: boolean;
     maxConcurrentOrders?: number | null;
     orderCooldownMinutes?: number | null;
     maxOrdersPerCustomerEvent?: number | null;

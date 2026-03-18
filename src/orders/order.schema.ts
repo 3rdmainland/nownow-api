@@ -46,6 +46,8 @@ const orderSchema = {
         notes: { type: "string" },
         estimatedPrepTime: { type: "number" },
         paymentMethod: { type: "string" },
+        payment_method: { type: "string" },
+        payment_status: { type: "string" },
         service_fee: { type: "number" },
         qr_code: { type: "string" },
         qr_image: { type: "string" },
@@ -56,7 +58,12 @@ const orderSchema = {
         scheduled_pickup_time: { type: "string" },
         actual_prep_time: { type: "number" },
         queue_position: { type: "number" },
-        estimated_ready_time: { type: "string" }
+        estimated_ready_time: { type: "string" },
+        vendor: {
+            type: "object",
+            properties: { name: { type: "string" } }
+        },
+        stall_info: { type: ["string", "null"] }
     },
     required: [
         "id",
@@ -160,7 +167,10 @@ export const createOrderSchema = {
     response: {
         201: {
             type: "object",
-            properties: { order: orderSchema },
+            properties: {
+                order: orderSchema,
+                paymentUrl: { type: ["string", "null"] }
+            },
             required: ["order"]
         },
         400: {
@@ -243,6 +253,7 @@ export const getOrdersByPhoneSchema = {
         type: "object",
         properties: {
             phone: { type: "string" },
+            eventId: { type: "string" },
             ...paginationQuerystringProperties
         },
         required: ["phone"]
@@ -565,6 +576,33 @@ export const validateScheduledPickupSchema = {
                 queuePosition: { type: 'number' }
             },
             required: ['isValid']
+        },
+        500: {
+            type: 'object',
+            properties: { error: { type: 'string' } }
+        }
+    }
+};
+
+// GET checkout options
+export const checkoutOptionsSchema = {
+    description: "Get checkout options for a vendor at an event (e.g. pay-at-stall availability)",
+    tags: ['orders'],
+    querystring: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            eventId: { type: 'string' },
+        },
+        required: ['vendorId', 'eventId']
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: {
+                allowPayAtStall: { type: 'boolean' }
+            },
+            required: ['allowPayAtStall']
         },
         500: {
             type: 'object',

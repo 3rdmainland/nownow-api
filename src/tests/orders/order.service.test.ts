@@ -84,6 +84,17 @@ vi.mock('../../lib/qr.helper.js', () => ({
     }),
 }));
 
+vi.mock('../../payment/payment.service.js', () => ({
+    PaymentService: vi.fn(function() {
+        return {
+            createPaymentRequest: vi.fn().mockResolvedValue({
+                paymentId: 'pay_test_123',
+                paymentUrl: 'https://stitch.test/pay/pay_test_123',
+            }),
+        };
+    }),
+}));
+
 // ── Import OrderService AFTER mocks are registered ───────────────────────────
 import { OrderService } from '../../orders/order.service.js';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from '../../websocket/index.js';
@@ -336,18 +347,46 @@ describe('OrderService', () => {
     // ── getOrdersByPhone ──────────────────────────────────────────────────────
 
     describe('getOrdersByPhone', () => {
-        it('returns paginated orders for a given phone number', async () => {
+        it('returns paginated orders enriched with vendor name and stall info', async () => {
             const phone = '0812345678';
-            const orders = [makeOrder({ phone }), makeOrder({ phone })];
-            const builder = createSupabaseMock({ data: orders, error: null });
-            supabaseMock.from.mockReturnValue(builder);
+            const vendorId = 'vendor-1';
+            const eventId = 'event-1';
+            const orders = [
+                makeOrder({ phone, vendor_id: vendorId, event_id: eventId }),
+                makeOrder({ phone, vendor_id: vendorId, event_id: eventId }),
+            ];
+
+            mockFromSequence(
+                { data: orders, error: null },           // orders query
+                { data: [{ id: vendorId, name: 'Burger Shack' }], error: null }, // vendors query
+                { data: [{ vendor_id: vendorId, event_id: eventId, booth_info: 'Stall 4B' }], error: null }, // config query
+            );
 
             const result = await service.getOrdersByPhone(phone);
 
-            expect(result.orders).toEqual(orders);
+            expect(result.orders).toHaveLength(2);
+            expect(result.orders[0].vendor).toEqual({ name: 'Burger Shack' });
+            expect(result.orders[0].stall_info).toBe('Stall 4B');
             expect(result.page).toBe(1);
             expect(result.pageSize).toBe(20);
-            expect(builder.eq).toHaveBeenCalledWith('phone', phone);
+        });
+
+        it('returns orders without stall_info when config has no booth_info', async () => {
+            const phone = '0812345678';
+            const vendorId = 'vendor-1';
+            const eventId = 'event-1';
+            const orders = [makeOrder({ phone, vendor_id: vendorId, event_id: eventId })];
+
+            mockFromSequence(
+                { data: orders, error: null },
+                { data: [{ id: vendorId, name: 'Taco Stand' }], error: null },
+                { data: [{ vendor_id: vendorId, event_id: eventId, booth_info: null }], error: null },
+            );
+
+            const result = await service.getOrdersByPhone(phone);
+
+            expect(result.orders[0].vendor).toEqual({ name: 'Taco Stand' });
+            expect(result.orders[0].stall_info).toBeUndefined();
         });
 
         it('returns empty orders array when no orders found for phone', async () => {
@@ -363,6 +402,25 @@ describe('OrderService', () => {
             mockFrom({ data: null, error: { message: 'error' } });
 
             await expect(service.getOrdersByPhone('0812345678')).rejects.toThrow('Failed to fetch orders by phone');
+        });
+
+        it('filters by eventId when provided', async () => {
+            const phone = '0812345678';
+            const vendorId = 'vendor-1';
+            const eventId = 'event-1';
+            const orders = [makeOrder({ phone, vendor_id: vendorId, event_id: eventId })];
+
+            mockFromSequence(
+                { data: orders, error: null },
+                { data: [{ id: vendorId, name: 'Burger Shack' }], error: null },
+                { data: [{ vendor_id: vendorId, event_id: eventId, booth_info: 'Stall 2A' }], error: null },
+            );
+
+            const result = await service.getOrdersByPhone(phone, undefined, eventId);
+
+            expect(result.orders).toHaveLength(1);
+            expect(result.orders[0].vendor).toEqual({ name: 'Burger Shack' });
+            expect(result.orders[0].stall_info).toBe('Stall 2A');
         });
     });
 
@@ -717,6 +775,110 @@ describe('OrderService', () => {
             mockFrom({ data: null, error: { message: 'search failed' } });
 
             await expect(service.searchOrders('burger')).rejects.toThrow('Failed to search orders');
+        });
+    });
+
+    // ── createOrder (pay-at-stall) ──────────────────────────────────────────
+
+    describe('createOrder – pay at stall', () => {
+        const baseOrderInput = {
+            vendor_id: 'vendor-1',
+            event_id: 'event-1',
+            phone: '0811234567',
+            items: [
+                { id: 'item-1', name: 'Burger', price: 80, basePrice: 80, quantity: 1, vendorId: 'vendor-1', vendorName: 'Test Vendor', prepTime: 10 },
+            ],
+            total: 80,
+        };
+
+        const vendorData = { estimated_prep_time: 10, name: 'Test Vendor', minimum_order: null, service_fee_percent: null };
+        const eventData = {
+            start_date: new Date(Date.now() - 86400000).toISOString(),
+            end_date: new Date(Date.now() + 86400000).toISOString(),
+        };
+        const menuConfigWithCash = {
+            is_accepting_orders: true,
+            status: 'PUBLISHED',
+            max_concurrent_orders: null,
+            current_active_orders: 0,
+            order_cooldown_minutes: null,
+            max_orders_per_customer_event: null,
+            prep_time_buffer_minutes: null,
+            event_open_time: null,
+            event_close_time: null,
+            operating_schedule: null,
+            allow_pay_at_stall: true,
+        };
+        const menuConfigNoCash = { ...menuConfigWithCash, allow_pay_at_stall: false };
+
+        const createdOrder = makeOrder({ vendor_id: 'vendor-1', event_id: 'event-1', status: 'PENDING', payment_method: 'CASH', payment_status: 'pay_at_stall' });
+
+        /** Helper that mocks `from()` based on the table name passed. */
+        function mockFromByTable(tableMap: Record<string, Array<{ data: any; error: any }>>) {
+            const counters: Record<string, number> = {};
+            supabaseMock.from.mockImplementation((table: string) => {
+                counters[table] = (counters[table] ?? 0);
+                const responses = tableMap[table] ?? [{ data: null, error: null }];
+                const resp = responses[counters[table]] ?? responses[responses.length - 1];
+                counters[table]++;
+                return createSupabaseMock(resp);
+            });
+        }
+
+        it('creates a PENDING order with payment_status=pay_at_stall when paymentMethod is CASH', async () => {
+            mockFromByTable({
+                vendors: [{ data: vendorData, error: null }],
+                events: [{ data: eventData, error: null }],
+                event_menu_configurations: [{ data: menuConfigWithCash, error: null }],
+                orders: [
+                    { data: createdOrder, error: null }, // insert
+                    { data: createdOrder, error: null }, // update QR
+                    { data: null, error: null },         // queue positions
+                ],
+            });
+
+            const result = await service.createOrder({
+                ...baseOrderInput,
+                paymentMethod: 'CASH',
+            } as any);
+
+            expect(result.paymentUrl).toBe('');
+        });
+
+        it('rejects cash order when allow_pay_at_stall is false', async () => {
+            mockFromByTable({
+                vendors: [{ data: vendorData, error: null }],
+                events: [{ data: eventData, error: null }],
+                event_menu_configurations: [{ data: menuConfigNoCash, error: null }],
+                orders: [],
+            });
+
+            await expect(
+                service.createOrder({ ...baseOrderInput, paymentMethod: 'CASH' } as any)
+            ).rejects.toThrow('Pay at stall is not available');
+        });
+
+        it('creates a PAYMENT_PENDING order and returns paymentUrl for online payment', async () => {
+            const onlineOrder = makeOrder({ vendor_id: 'vendor-1', event_id: 'event-1', status: 'PAYMENT_PENDING', payment_method: 'ONLINE' });
+
+            mockFromByTable({
+                vendors: [{ data: vendorData, error: null }],
+                events: [{ data: eventData, error: null }],
+                event_menu_configurations: [{ data: menuConfigWithCash, error: null }],
+                orders: [
+                    { data: onlineOrder, error: null },  // insert
+                    { data: onlineOrder, error: null },  // update QR
+                    { data: null, error: null },         // queue positions
+                    { data: null, error: null },         // store stitch payment id
+                ],
+            });
+
+            const result = await service.createOrder({
+                ...baseOrderInput,
+                paymentMethod: 'ONLINE',
+            } as any);
+
+            expect(result.paymentUrl).toBe('https://stitch.test/pay/pay_test_123');
         });
     });
 });

@@ -65,6 +65,19 @@ vi.mock('../../discount/discount.service.js', () => ({
     }),
 }));
 
+vi.mock('../../payment/payment.service.js', () => ({
+    PaymentService: vi.fn(function() {
+        return {
+            getClientToken: vi.fn().mockResolvedValue('test-token'),
+            createPaymentRequest: vi.fn().mockResolvedValue({
+                paymentId: 'test-payment-id',
+                paymentUrl: 'https://pay.stitch.money/test',
+            }),
+            verifyWebhookSignature: vi.fn().mockResolvedValue(true),
+        };
+    }),
+}));
+
 vi.mock('../../lib/qr.helper.js', () => ({
     QRHelper: vi.fn(function() {
         return {

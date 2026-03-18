@@ -5,6 +5,7 @@ import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
+import { PaymentService } from "../payment/payment.service.js";
 import { ValidationError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
@@ -19,6 +20,7 @@ interface EventMenuConfig {
     event_open_time: string | null;
     event_close_time: string | null;
     operating_schedule: any[] | null;
+    allow_pay_at_stall: boolean;
 }
 
 export class OrderService {
@@ -69,7 +71,7 @@ export class OrderService {
 
     async createOrder(
         order: Omit<Order, 'id' | 'created_at' | 'status' | 'type' | 'estimatedPrepTime' | 'qr_image' | 'qr_code'>
-    ): Promise<Order> {
+    ): Promise<Order & { paymentUrl: string }> {
         const qrHelper = new QRHelper();
 
         // ── Parallel fetch: vendor, event dates, menu config ─────────────
@@ -88,7 +90,7 @@ export class OrderService {
                       .select(
                           'is_accepting_orders, status, max_concurrent_orders, current_active_orders, ' +
                           'order_cooldown_minutes, max_orders_per_customer_event, prep_time_buffer_minutes, ' +
-                          'event_open_time, event_close_time, operating_schedule'
+                          'event_open_time, event_close_time, operating_schedule, allow_pay_at_stall'
                       )
                       .eq('vendor_id', order.vendor_id)
                       .eq('event_id', order.event_id)
@@ -322,17 +324,25 @@ export class OrderService {
         // Strip internal fields and map camelCase to snake_case before inserting into DB
         const { _minimumOrderValue, _serviceFeePercent, paymentMethod, ...cleanOrder } = order as any;
 
+        // Determine if this is a cash (pay-at-stall) order
+        const menuConfig = menuConfigResult.data as EventMenuConfig | null;
+        const isCashOrder = paymentMethod === 'CASH';
+
+        // Validate cash orders are allowed
+        if (isCashOrder && (!menuConfig || !menuConfig.allow_pay_at_stall)) {
+            throw new Error('Pay at stall is not available for this vendor at this event.');
+        }
+
         // Set defaults including estimated prep time and scheduling data
         const orderWithDefaults = {
             ...cleanOrder,
-            ...(paymentMethod || cleanOrder.payment_method
-                ? { payment_method: paymentMethod || cleanOrder.payment_method }
-                : {}),
+            payment_method: isCashOrder ? 'CASH' : (paymentMethod || cleanOrder.payment_method || 'ONLINE'),
             items: validatedItems,
             total: Math.round(validatedTotal * 100) / 100,
             ...(serviceFee > 0 ? { service_fee: serviceFee } : {}),
-            status: OrderStatus.PENDING,
-            type: OrderType.CART,
+            status: isCashOrder ? OrderStatus.PENDING : OrderStatus.PAYMENT_PENDING,
+            payment_status: isCashOrder ? ('pay_at_stall' as const) : ('pending' as const),
+            type: isCashOrder ? OrderType.ORDER : OrderType.CART,
             estimated_prep_time: estimatedPrepTime,
             qr_code: `PENDING-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             qr_image: '',
@@ -369,35 +379,63 @@ export class OrderService {
             console.error('Failed to update queue positions:', err?.message || err)
         );
 
-        // Fire-and-forget WhatsApp notification
+        // Cash order: skip Stitch, send notifications immediately
+        if (isCashOrder) {
+            this.sendOrderNotifications(updatedOrder).catch(err =>
+                console.error('Failed to send cash order notifications:', err?.message || err)
+            );
+            return { ...updatedOrder, paymentUrl: '' };
+        }
+
+        // Online order: create Stitch payment request
+        const paymentService = new PaymentService();
+        const { paymentId, paymentUrl } = await paymentService.createPaymentRequest(
+            updatedOrder.id,
+            Math.round(validatedTotal * 100), // Convert rands to cents
+            vendor.name
+        );
+
+        // Store payment reference on order
+        await supabase
+            .from('orders')
+            .update({ stitch_payment_id: paymentId })
+            .eq('id', updatedOrder.id);
+
+        return { ...updatedOrder, paymentUrl };
+    }
+
+    /**
+     * Send WhatsApp + WebSocket notifications for a confirmed order.
+     * Called from webhook handler after payment is confirmed.
+     */
+    async sendOrderNotifications(order: any): Promise<void> {
         try {
+            // Fire-and-forget WhatsApp notification
             const token = process.env.WA_ACCESS_TOKEN;
-            if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && updatedOrder?.phone) {
+            if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order?.phone) {
                 const whatsapp = new WhatsappService();
 
                 void whatsapp
-                    .sendOrderPlacedTemplate(updatedOrder.phone, {
-                        orderId: String(updatedOrder.id),
-                        total: order.total.toString(),
-                        prepTimeMinutes: String(estimatedPrepTime),
-                        qrImageUrl: qr_image,
+                    .sendOrderPlacedTemplate(order.phone, {
+                        orderId: String(order.id),
+                        total: String(order.total),
+                        prepTimeMinutes: String(order.estimated_prep_time || 12),
+                        qrImageUrl: order.qr_image || '',
                     })
                     .catch((err) => {
                         console.error('Failed to send WhatsApp notification:', err?.message || err);
                     });
             }
-        } catch (notifyErr) {
-            console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
+
+            // Notify the vendor's live panel in real time
+            broadcastNewOrder({
+                orderId: order.id,
+                vendorId: order.vendor_id,
+                eventId: order.event_id,
+            });
+        } catch (err) {
+            console.error('Failed to send order notifications:', err);
         }
-
-        // Notify the vendor's live panel in real time
-        broadcastNewOrder({
-            orderId: updatedOrder.id,
-            vendorId: updatedOrder.vendor_id,
-            eventId: updatedOrder.event_id,
-        });
-
-        return updatedOrder;
     }
 
     /**
@@ -613,16 +651,20 @@ export class OrderService {
         return { orders: data || [], page, pageSize, total, totalPages };
     }
 
-    async getOrdersByPhone(phone: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+    async getOrdersByPhone(phone: string, pagination?: PaginationParams, eventId?: string): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
-        const { data, error, count } = await supabase
+        let query = supabase
             .from('orders')
             .select('*', { count: 'exact' })
-            .eq('phone', phone)
+            .eq('phone', phone);
+
+        if (eventId) query = query.eq('event_id', eventId);
+
+        const { data, error, count } = await query
             .order('created_at', { ascending: false })
             .range(from, to);
 
@@ -630,9 +672,46 @@ export class OrderService {
             throw new Error(`Failed to fetch orders by phone: ${error.message}`);
         }
 
+        const orders: Order[] = data || [];
+
+        // Enrich orders with vendor name + stall info
+        if (orders.length > 0) {
+            const vendorIds = [...new Set(orders.map(o => o.vendor_id))];
+            const eventIds = [...new Set(orders.map(o => o.event_id).filter(Boolean))];
+
+            const [vendorResult, configResult] = await Promise.all([
+                supabase
+                    .from('vendors')
+                    .select('id, name')
+                    .in('id', vendorIds),
+                eventIds.length > 0
+                    ? supabase
+                        .from('event_menu_configurations')
+                        .select('vendor_id, event_id, booth_info')
+                        .in('vendor_id', vendorIds)
+                        .in('event_id', eventIds)
+                    : Promise.resolve({ data: [] }),
+            ]);
+
+            const vendorMap = new Map<string, string>();
+            (vendorResult.data || []).forEach((v: any) => vendorMap.set(v.id, v.name));
+
+            const stallMap = new Map<string, string>();
+            (configResult.data || []).forEach((c: any) => {
+                if (c.booth_info) stallMap.set(`${c.vendor_id}:${c.event_id}`, c.booth_info);
+            });
+
+            for (const order of orders) {
+                const vendorName = vendorMap.get(order.vendor_id);
+                if (vendorName) order.vendor = { name: vendorName };
+                const stallInfo = stallMap.get(`${order.vendor_id}:${order.event_id}`);
+                if (stallInfo) order.stall_info = stallInfo;
+            }
+        }
+
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders, page, pageSize, total, totalPages };
     }
 
     async getOrdersByStatus(status: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {

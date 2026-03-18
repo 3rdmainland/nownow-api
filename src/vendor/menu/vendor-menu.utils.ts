@@ -366,6 +366,7 @@ export function toDbEventMenuConfig(config: Partial<EventMenuConfiguration>): Re
     if (config.vendorId !== undefined) dbConfig.vendor_id = config.vendorId;
     if (config.templateId !== undefined) dbConfig.template_id = config.templateId;
     if (config.globalPriceAdjustment !== undefined) dbConfig.global_price_adjustment = config.globalPriceAdjustment;
+    if (config.allowPayAtStall !== undefined) dbConfig.allow_pay_at_stall = config.allowPayAtStall;
     if (config.isAcceptingOrders !== undefined) dbConfig.is_accepting_orders = config.isAcceptingOrders;
     if (config.maxConcurrentOrders !== undefined) dbConfig.max_concurrent_orders = config.maxConcurrentOrders;
     if (config.currentActiveOrders !== undefined) dbConfig.current_active_orders = config.currentActiveOrders;
@@ -402,6 +403,7 @@ export function fromDbEventMenuConfig(
         menuItems,
         categoryConfigurations: dbConfig.category_configurations || [],
         globalPriceAdjustment: dbConfig.global_price_adjustment,
+        allowPayAtStall: dbConfig.allow_pay_at_stall ?? false,
         isAcceptingOrders: dbConfig.is_accepting_orders ?? true,
         maxConcurrentOrders: dbConfig.max_concurrent_orders,
         currentActiveOrders: dbConfig.current_active_orders || 0,

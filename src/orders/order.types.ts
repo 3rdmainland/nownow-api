@@ -18,6 +18,7 @@ export enum OrderType {
 }
 
 export enum OrderStatus {
+    PAYMENT_PENDING = 'PAYMENT_PENDING',
     PENDING = 'PENDING',
     PREPARING = 'PREPARING',
     READY = 'READY',
@@ -43,11 +44,16 @@ export interface Order {
     collected_at?: string;
     prepared_at?: string;
     ready_at?: string;
+    stitch_payment_id?: string;
+    payment_status?: 'none' | 'pending' | 'complete' | 'cancelled' | 'expired' | 'failed' | 'pay_at_stall';
+    paid_at?: string;
     qr_image?: string;
     scheduled_pickup_time?: string;
     actual_prep_time?: number;
     queue_position?: number;
     estimated_ready_time?: string;
+    vendor?: { name: string };
+    stall_info?: string | null;
 }
 
 export interface PaginationParams {

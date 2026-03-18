@@ -184,6 +184,7 @@ const eventMenuConfigProperties = {
     vendorId: { type: 'string' },
     templateId: { type: 'string' },
     globalPriceAdjustment: priceAdjustmentSchema,
+    allowPayAtStall: { type: 'boolean' },
     isAcceptingOrders: { type: 'boolean' },
     maxConcurrentOrders: { type: 'number' },
     currentActiveOrders: { type: 'number' },
@@ -752,6 +753,7 @@ export const updateEventMenuConfigSchema = {
         properties: {
             templateId: { type: ['string', 'null'] },
             globalPriceAdjustment: { oneOf: [priceAdjustmentSchema, { type: 'null' }] },
+            allowPayAtStall: { type: 'boolean' },
             isAcceptingOrders: { type: 'boolean' },
             maxConcurrentOrders: { type: ['number', 'null'] },
             orderCooldownMinutes: { type: ['number', 'null'] },
