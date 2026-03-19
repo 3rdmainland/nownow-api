@@ -316,6 +316,7 @@ export interface EventMenuConfiguration {
     minimumOrderValue?: number;             // Minimum order total required
     serviceFeePercent?: number;             // Service charge added at checkout (%)
     prepTimeBufferMinutes?: number;         // Extra minutes added to all item prep times
+    slotDurationMinutes?: number;           // Duration of each pickup time slot (default 30)
 
     // Operational info visible to customers
     estimatedWaitMinutes?: number;          // Vendor-set wait time shown to customers
@@ -515,6 +516,7 @@ export interface UpdateEventMenuConfigInput {
     minimumOrderValue?: number | null;
     serviceFeePercent?: number | null;
     prepTimeBufferMinutes?: number | null;
+    slotDurationMinutes?: number | null;
     estimatedWaitMinutes?: number | null;
     boothInfo?: string | null;
     vendorNotice?: string | null;

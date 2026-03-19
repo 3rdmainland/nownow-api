@@ -520,11 +520,11 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
     });
 
     it('allows order when current time is within daily operating window', async () => {
-      // Create a wide-open window that always includes "now"
+      // Create a wide-open window that always includes "now" (UTC — matches service logic)
       const now = new Date();
       const pad = (n: number) => n.toString().padStart(2, '0');
-      const openTime = `${pad(now.getHours())}:00`;
-      const closeHour = now.getHours() === 23 ? '23' : pad(now.getHours() + 1);
+      const openTime = `${pad(now.getUTCHours())}:00`;
+      const closeHour = now.getUTCHours() === 23 ? '23' : pad(now.getUTCHours() + 1);
       const closeTime = `${closeHour}:59`;
 
       const config = makeEventMenuConfig({
@@ -611,8 +611,8 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
       const todayDate = new Date().toISOString().split('T')[0];
       const now = new Date();
       const pad = (n: number) => n.toString().padStart(2, '0');
-      const openTime = `${pad(now.getHours())}:00`;
-      const closeHour = now.getHours() === 23 ? '23' : pad(now.getHours() + 1);
+      const openTime = `${pad(now.getUTCHours())}:00`;
+      const closeHour = now.getUTCHours() === 23 ? '23' : pad(now.getUTCHours() + 1);
       const closeTime = `${closeHour}:59`;
 
       const config = makeEventMenuConfig({

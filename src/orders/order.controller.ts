@@ -148,7 +148,7 @@ const orderController: FastifyPluginAsync = async (fastify) => {
             const { vendorId, eventId } = request.query as { vendorId: string; eventId: string };
             const { data, error } = await supabase
                 .from('event_menu_configurations')
-                .select('allow_pay_at_stall')
+                .select('allow_pay_at_stall, slot_duration_minutes')
                 .eq('vendor_id', vendorId)
                 .eq('event_id', eventId)
                 .single();
@@ -157,7 +157,10 @@ const orderController: FastifyPluginAsync = async (fastify) => {
                 return { allowPayAtStall: false };
             }
 
-            return { allowPayAtStall: data.allow_pay_at_stall ?? false };
+            return {
+                allowPayAtStall: data.allow_pay_at_stall ?? false,
+                slotDurationMinutes: data.slot_duration_minutes ?? undefined,
+            };
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

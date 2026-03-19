@@ -201,31 +201,39 @@ export class OrderService {
                     }
                 }
 
-                // 6. Check event operating hours — per-day schedule first, then daily default
+                // 6. Check event operating hours at the relevant time
+                // For scheduled orders → check the pickup date/time
+                // For immediate orders → check now
                 {
-                    const now = new Date();
+                    const checkTime = order.scheduled_pickup_time
+                        ? new Date(order.scheduled_pickup_time)
+                        : new Date();
                     const pad = (n: number) => n.toString().padStart(2, '0');
-                    const currentHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-                    const todayDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+                    const checkHHMM = `${pad(checkTime.getUTCHours())}:${pad(checkTime.getUTCMinutes())}`;
+                    const checkDate = checkTime.toISOString().split('T')[0]; // YYYY-MM-DD (UTC)
 
-                    const todaySchedule = (menuConfig.operating_schedule as any[] | null)
-                        ?.find((s: any) => s.date === todayDate);
+                    const daySchedule = (menuConfig.operating_schedule as any[] | null)
+                        ?.find((s: any) => s.date === checkDate);
 
-                    if (todaySchedule) {
+                    if (daySchedule) {
                         // Per-day entry exists — use it
-                        if (todaySchedule.isClosed) {
-                            throw new ValidationError('This vendor is not operating today.');
+                        if (daySchedule.isClosed) {
+                            throw new ValidationError(
+                                order.scheduled_pickup_time
+                                    ? `This vendor is not operating on ${checkDate}.`
+                                    : 'This vendor is not operating today.'
+                            );
                         }
-                        if (todaySchedule.openTime && todaySchedule.closeTime) {
-                            if (currentHHMM < todaySchedule.openTime || currentHHMM >= todaySchedule.closeTime) {
+                        if (daySchedule.openTime && daySchedule.closeTime) {
+                            if (checkHHMM < daySchedule.openTime || checkHHMM >= daySchedule.closeTime) {
                                 throw new ValidationError(
-                                    `This vendor operates ${todaySchedule.openTime} – ${todaySchedule.closeTime} today.`
+                                    `This vendor operates ${daySchedule.openTime} – ${daySchedule.closeTime} on ${checkDate}.`
                                 );
                             }
                         }
                     } else if (menuConfig.event_open_time && menuConfig.event_close_time) {
                         // Fall back to daily default
-                        if (currentHHMM < menuConfig.event_open_time || currentHHMM >= menuConfig.event_close_time) {
+                        if (checkHHMM < menuConfig.event_open_time || checkHHMM >= menuConfig.event_close_time) {
                             throw new ValidationError(
                                 `This vendor is only accepting orders between ${menuConfig.event_open_time} and ${menuConfig.event_close_time}.`
                             );

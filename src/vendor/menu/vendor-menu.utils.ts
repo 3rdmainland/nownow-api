@@ -380,6 +380,7 @@ export function toDbEventMenuConfig(config: Partial<EventMenuConfiguration>): Re
     if (config.minimumOrderValue !== undefined) dbConfig.minimum_order_value = config.minimumOrderValue;
     if (config.serviceFeePercent !== undefined) dbConfig.service_fee_percent = config.serviceFeePercent;
     if (config.prepTimeBufferMinutes !== undefined) dbConfig.prep_time_buffer_minutes = config.prepTimeBufferMinutes;
+    if (config.slotDurationMinutes !== undefined) dbConfig.slot_duration_minutes = config.slotDurationMinutes;
     if (config.estimatedWaitMinutes !== undefined) dbConfig.estimated_wait_minutes = config.estimatedWaitMinutes;
     if (config.boothInfo !== undefined) dbConfig.booth_info = config.boothInfo;
     if (config.vendorNotice !== undefined) dbConfig.vendor_notice = config.vendorNotice;
@@ -417,6 +418,7 @@ export function fromDbEventMenuConfig(
         minimumOrderValue: dbConfig.minimum_order_value,
         serviceFeePercent: dbConfig.service_fee_percent,
         prepTimeBufferMinutes: dbConfig.prep_time_buffer_minutes,
+        slotDurationMinutes: dbConfig.slot_duration_minutes,
         estimatedWaitMinutes: dbConfig.estimated_wait_minutes,
         boothInfo: dbConfig.booth_info,
         vendorNotice: dbConfig.vendor_notice,

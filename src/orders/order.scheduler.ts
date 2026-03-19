@@ -248,6 +248,18 @@ export class OrderScheduler {
             };
         }
 
+        // 4b. Validate pickup time falls within vendor operating hours
+        const intervals = await this.buildAllowedIntervals(event, vendorId, now);
+        const withinOperatingHours = intervals.some(
+            ({ start, end }) => pickupTime >= start && pickupTime < end
+        );
+        if (!withinOperatingHours) {
+            return {
+                isValid: false,
+                error: 'Pickup time is outside vendor operating hours'
+            };
+        }
+
         // 5. Calculate queue and waiting time
         const queueData = await this.calculateQueuePosition(vendorId, requestedPickupTime);
 
@@ -374,13 +386,26 @@ export class OrderScheduler {
         const eventEnd = new Date(event.end_date);
         const now = new Date();
 
-        // Fetch vendor prep time so we don't show slots that are too soon to prepare
+        // Fetch vendor prep time and menu config for buffer + slot duration
         const { data: vendor } = await supabase
             .from('vendors')
             .select('estimated_prep_time')
             .eq('id', vendorId)
             .single();
-        const prepTimeMinutes = vendor?.estimated_prep_time || 12;
+
+        const { data: menuConfig } = await supabase
+            .from('event_menu_configurations')
+            .select('prep_time_buffer_minutes, slot_duration_minutes')
+            .eq('vendor_id', vendorId)
+            .eq('event_id', eventId)
+            .single();
+
+        const prepTimeMinutes = (vendor?.estimated_prep_time || 12) + (menuConfig?.prep_time_buffer_minutes ?? 0);
+
+        // Use config slot duration as default, but allow query param to override
+        if (slotDurationMinutes === 30 && menuConfig?.slot_duration_minutes) {
+            slotDurationMinutes = menuConfig.slot_duration_minutes;
+        }
 
         // Earliest possible pickup = now + prep time
         const earliest = new Date(now.getTime() + prepTimeMinutes * 60000);
