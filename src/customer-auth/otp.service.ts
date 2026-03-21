@@ -12,7 +12,7 @@ const OTP_HOURLY_KEY = (phone: string) => `otp:hourly:${phone}`;
 const OTP_TTL = 300;           // 5 minutes
 const OTP_COOLDOWN = 60;       // 60 seconds between sends
 const MAX_ATTEMPTS = 5;        // Max verification attempts per OTP
-const MAX_OTPS_PER_HOUR = 5;   // Max OTPs per phone per hour
+const MAX_OTPS_PER_HOUR = 50;   // Max OTPs per phone per hour
 const OTP_LENGTH = 6;
 
 export class OtpService {

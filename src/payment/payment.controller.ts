@@ -5,7 +5,7 @@ import { webhookSchema, paymentStatusSchema } from './payment.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import { supabase } from '../lib/supabase.js';
 import { WhatsappService } from '../whatsapp/whatsapp.service.js';
-import { broadcastNewOrder } from '../websocket/index.js';
+import { broadcastNewOrder, broadcastAdminOrderFeed, broadcastPaymentFailed } from '../websocket/index.js';
 
 const paymentController: FastifyPluginAsync = async (fastify) => {
   const paymentService = new PaymentService();
@@ -83,12 +83,38 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
           vendorId: order.vendor_id,
           eventId: order.event_id,
         });
+
+        // Notify admin dashboard
+        broadcastAdminOrderFeed({
+          orderId: order.id,
+          customerPhone: order.phone || null,
+          customerName: order.customer_name || null,
+          vendorId: order.vendor_id,
+          vendorName: null, // Will be enriched client-side or via snapshot
+          eventId: order.event_id || null,
+          eventName: null,
+          total: Number(order.total_amount) || 0,
+          status: 'PENDING',
+          paymentStatus: 'complete',
+          items: Array.isArray(order.items) ? order.items.map((i: any) => ({ name: i.name || i.menu_item_name || '', quantity: i.quantity || 1 })) : [],
+          createdAt: order.created_at,
+        });
       }
-    } else if (paymentStatus === 'cancelled' || paymentStatus === 'expired') {
+    } else if (paymentStatus === 'cancelled' || paymentStatus === 'expired' || paymentStatus === 'failed') {
       await supabase
         .from('orders')
         .update({ payment_status: paymentStatus })
         .eq('id', orderId);
+
+      // Notify admins of payment failure
+      broadcastPaymentFailed({
+        orderId: order.id,
+        customerPhone: order.phone || null,
+        vendorName: null,
+        total: Number(order.total_amount) || 0,
+        paymentStatus,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     return { received: true };

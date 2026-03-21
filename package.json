@@ -37,6 +37,7 @@
     "fastify": "^5.6.0",
     "fastify-bcrypt": "^1.0.1",
     "nanoid": "^5.1.5",
+    "posthog-node": "^5.21.2",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

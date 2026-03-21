@@ -21,10 +21,37 @@ import organizerAuthController from "./organizer/organizer-auth.controller";
 import uploadController from "./upload/upload.controller";
 import paymentController from "./payment/payment.controller.js";
 import customerAuthController from "./customer-auth/customer-auth.controller";
+import adminAuthController from "./admin-auth/admin-auth.controller";
+import adminController from "./admin/admin.controller";
+import supportController from "./support/support.controller";
+import customerSupportController from "./support/customer-support.controller";
 import { AppError } from "./lib/errors";
 
 if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET environment variable is required");
+}
+
+// Error tracking ring buffer for admin health endpoint
+interface TrackedError {
+    method: string;
+    path: string;
+    statusCode: number;
+    message: string;
+    timestamp: string;
+}
+
+const recentErrors: TrackedError[] = [];
+const MAX_TRACKED_ERRORS = 100;
+
+export function getRecentErrors(): TrackedError[] {
+    return [...recentErrors];
+}
+
+function trackError(error: TrackedError): void {
+    recentErrors.unshift(error);
+    if (recentErrors.length > MAX_TRACKED_ERRORS) {
+        recentErrors.pop();
+    }
 }
 
 const fastify = Fastify({ logger: true });
@@ -35,6 +62,7 @@ await fastify.register(fastifyCors, {
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3003",
+        "http://localhost:3004",
         "https://nownow-dev-api-production.up.railway.app",
         "https://nownow-nine.vercel.app",
         "https://nownow-vendor.vercel.app",
@@ -104,6 +132,10 @@ fastify.register(organizerAuthController, { prefix: "/organizer/auth" });
 fastify.register(uploadController, { prefix: "/upload" });
 fastify.register(paymentController, { prefix: "/payment" });
 fastify.register(customerAuthController, { prefix: "/customer/auth" });
+fastify.register(adminAuthController, { prefix: "/admin/auth" });
+fastify.register(adminController, { prefix: "/admin" });
+fastify.register(supportController, { prefix: "/support" });
+fastify.register(customerSupportController, { prefix: "/customer/support" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {
@@ -128,6 +160,17 @@ fastify.get('/health', async (request, reply) => {
 
 fastify.setErrorHandler((error, request, reply) => {
     fastify.log.error(error);
+
+    const statusCode = (error as any)?.statusCode || 500;
+
+    // Track errors for admin health dashboard
+    trackError({
+        method: request.method,
+        path: request.url,
+        statusCode,
+        message: error.message || 'Unknown error',
+        timestamp: new Date().toISOString(),
+    });
 
     // Fastify schema validation errors (FST_ERR_VALIDATION) — return 400
     if ((error as any)?.code === 'FST_ERR_VALIDATION') {

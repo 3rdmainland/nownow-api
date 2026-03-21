@@ -8,7 +8,10 @@ export type WebSocketEventType =
   | 'ITEM_AVAILABILITY_UPDATE'
   | 'VENDOR_STATUS_UPDATE'
   | 'ORDER_STATUS_UPDATE'
-  | 'NEW_ORDER';
+  | 'NEW_ORDER'
+  | 'ADMIN_ORDER_FEED'
+  | 'PAYMENT_FAILED'
+  | 'TICKET_UPDATE';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;
@@ -68,9 +71,43 @@ export interface NewOrderPayload {
   eventId?: string;
 }
 
+export interface AdminOrderFeedPayload {
+  orderId: string;
+  customerPhone: string | null;
+  customerName: string | null;
+  vendorId: string;
+  vendorName: string | null;
+  eventId: string | null;
+  eventName: string | null;
+  total: number;
+  status: string;
+  paymentStatus: string | null;
+  items: { name: string; quantity: number }[];
+  createdAt: string;
+}
+
+export interface PaymentFailedPayload {
+  orderId: string;
+  customerPhone: string | null;
+  vendorName: string | null;
+  total: number;
+  paymentStatus: string;
+  timestamp: string;
+}
+
+export interface TicketUpdatePayload {
+  ticketId: string;
+  ticketNumber: number;
+  action: 'created' | 'updated' | 'message';
+  customerPhone: string | null;
+  status?: string;
+  subject?: string;
+}
+
 // Client subscription tracking
 export interface ClientSubscription {
   eventId?: string;
   vendorId?: string;
   phone?: string; // For order tracking
+  admin?: boolean; // For admin dashboard subscriptions
 }

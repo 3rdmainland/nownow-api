@@ -35,6 +35,19 @@ export async function authenticateCustomer(request: FastifyRequest, reply: Fasti
   }
 }
 
+export async function authenticateAdmin(request: FastifyRequest, reply: FastifyReply) {
+  try {
+    await request.jwtVerify();
+  } catch (err) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const payload = request.user as { role?: string };
+  if (payload.role !== 'admin') {
+    throw new UnauthorizedError('Access denied');
+  }
+}
+
 /**
  * Optional customer auth — sets request.user if valid JWT with customer role,
  * otherwise silently continues (no error).

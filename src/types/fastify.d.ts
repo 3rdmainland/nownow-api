@@ -14,7 +14,13 @@ type CustomerJwtPayload = {
   role: 'customer';
 };
 
-type AppJwtPayload = VendorOrganizerJwtPayload | CustomerJwtPayload;
+type AdminJwtPayload = {
+  userId: string;
+  email: string;
+  role: 'admin';
+};
+
+type AppJwtPayload = VendorOrganizerJwtPayload | CustomerJwtPayload | AdminJwtPayload;
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {

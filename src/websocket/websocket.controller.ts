@@ -10,6 +10,9 @@ import type {
   OrderStatusUpdatePayload,
   NewOrderPayload,
   ClientSubscription,
+  AdminOrderFeedPayload,
+  PaymentFailedPayload,
+  TicketUpdatePayload,
 } from './websocket.types';
 
 const MAX_CONNECTIONS = 1000;
@@ -65,6 +68,41 @@ export function broadcastToVendor<T>(vendorId: string, message: WebSocketMessage
       }
     }
   }
+}
+
+/**
+ * Broadcast to all admin-subscribed clients
+ */
+export function broadcastToAdmins<T>(message: WebSocketMessage<T>): void {
+  const messageStr = JSON.stringify(message);
+
+  for (const [socket, client] of clients) {
+    if (socket.readyState === socket.OPEN && client.subscriptions.admin) {
+      socket.send(messageStr);
+    }
+  }
+}
+
+/**
+ * Broadcast admin order feed event
+ */
+export function broadcastAdminOrderFeed(payload: AdminOrderFeedPayload): void {
+  broadcastToAdmins({
+    type: 'ADMIN_ORDER_FEED',
+    payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Broadcast payment failure to admins
+ */
+export function broadcastPaymentFailed(payload: PaymentFailedPayload): void {
+  broadcastToAdmins({
+    type: 'PAYMENT_FAILED',
+    payload,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 /**
@@ -159,6 +197,25 @@ export function broadcastNewOrder(payload: NewOrderPayload): void {
   };
 
   broadcastToVendor(payload.vendorId, message);
+}
+
+/**
+ * Broadcast ticket update to the customer (by phone) AND all admins
+ */
+export function broadcastTicketUpdate(payload: TicketUpdatePayload): void {
+  const message: WebSocketMessage<TicketUpdatePayload> = {
+    type: 'TICKET_UPDATE',
+    payload,
+    timestamp: new Date().toISOString(),
+  };
+
+  // Notify admins
+  broadcastToAdmins(message);
+
+  // Notify the customer by phone
+  if (payload.customerPhone) {
+    broadcastToPhone(payload.customerPhone, message);
+  }
 }
 
 /**
