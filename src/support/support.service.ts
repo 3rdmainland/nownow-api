@@ -9,6 +9,7 @@ import {
   SupportMessage,
   SupportTicketWithMessages,
   CreateTicketPayload,
+  CreateGuestTicketPayload,
   UpdateTicketPayload,
   AddMessagePayload,
   TicketListParams,
@@ -381,6 +382,46 @@ export class SupportService {
       ticketNumber: ticket.ticketNumber,
       action: 'created',
       customerPhone: customerPhone,
+      status: ticket.status,
+      subject: ticket.subject,
+    });
+
+    return ticket;
+  }
+
+  async createGuestTicket(payload: CreateGuestTicketPayload): Promise<SupportTicket> {
+    const { data, error } = await supabase
+      .from('support_tickets')
+      .insert([{
+        subject: payload.subject,
+        description: payload.description,
+        category: payload.category,
+        priority: payload.priority || 'MEDIUM',
+        source: 'GUEST' as const,
+        customer_phone: null,
+        order_id: null,
+        event_id: payload.eventId || null,
+        vendor_id: null,
+      }])
+      .select('*, admin_users!support_tickets_assigned_admin_id_fkey(name)')
+      .single();
+
+    if (error) throw error;
+
+    await supabase.from('support_messages').insert([{
+      ticket_id: data.id,
+      sender_type: 'SYSTEM',
+      message: 'Ticket created by guest (unauthenticated)',
+    }]);
+
+    await cache.del(STATS_CACHE_KEY);
+
+    const ticket = ticketFromDb(data);
+    broadcastTicketUpdate({
+      ticketId: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      action: 'created',
+      customerPhone: null,
       status: ticket.status,
       subject: ticket.subject,
     });

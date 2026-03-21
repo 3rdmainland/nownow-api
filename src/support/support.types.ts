@@ -1,7 +1,7 @@
 export type TicketCategory = 'ORDER_ISSUE' | 'ACCOUNT_ISSUE' | 'PAYMENT_ISSUE' | 'GENERAL_INQUIRY' | 'VENDOR_COMPLAINT' | 'EVENT_ISSUE';
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 export type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
-export type TicketSource = 'CUSTOMER' | 'VENDOR' | 'ADMIN';
+export type TicketSource = 'CUSTOMER' | 'VENDOR' | 'ADMIN' | 'GUEST';
 export type SenderType = 'ADMIN' | 'CUSTOMER' | 'SYSTEM';
 
 export interface SupportTicket {
@@ -50,6 +50,17 @@ export interface CreateTicketPayload {
   orderId?: string;
   eventId?: string;
   vendorId?: string;
+}
+
+/** Categories allowed for guest (unauthenticated) ticket submissions */
+export type GuestTicketCategory = 'ACCOUNT_ISSUE' | 'GENERAL_INQUIRY' | 'EVENT_ISSUE';
+
+export interface CreateGuestTicketPayload {
+  subject: string;
+  description: string;
+  category: GuestTicketCategory;
+  priority?: TicketPriority;
+  eventId?: string;
 }
 
 export interface UpdateTicketPayload {

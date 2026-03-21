@@ -89,6 +89,29 @@ export const customerCreateTicketSchema = {
   },
 };
 
+const guestCategoryEnum = ['ACCOUNT_ISSUE', 'GENERAL_INQUIRY', 'EVENT_ISSUE'];
+
+export const customerCreateGuestTicketSchema = {
+  description: 'Create a support ticket as an unauthenticated guest (non-order issues only)',
+  tags: ['customer-support'],
+  body: {
+    type: 'object',
+    required: ['subject', 'description', 'category'],
+    properties: {
+      subject: { type: 'string', minLength: 1 },
+      description: { type: 'string', minLength: 1 },
+      category: { type: 'string', enum: guestCategoryEnum },
+      priority: { type: 'string', enum: priorityEnum },
+      eventId: { type: 'string', format: 'uuid' },
+    },
+  },
+  response: {
+    201: { type: 'object', properties: ticketProperties },
+    400: errorResponse,
+    429: errorResponse,
+  },
+};
+
 export const customerAddMessageSchema = {
   description: 'Add a message to a ticket as a customer',
   tags: ['customer-support'],
