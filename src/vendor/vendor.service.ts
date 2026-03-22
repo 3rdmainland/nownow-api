@@ -954,8 +954,10 @@ export class VendorService {
 
         const now = new Date();
         const pad = (n: number) => n.toString().padStart(2, '0');
-        const currentHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-        const todayDate = now.toISOString().split('T')[0];
+        // Convert to SA time — server is in Netherlands (UTC+1), events are in SA (UTC+2)
+        const saTime = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Johannesburg' }));
+        const currentHHMM = `${pad(saTime.getHours())}:${pad(saTime.getMinutes())}`;
+        const todayDate = `${saTime.getFullYear()}-${pad(saTime.getMonth() + 1)}-${pad(saTime.getDate())}`;
 
         for (const config of configs) {
             if (!config.is_accepting_orders) {
@@ -974,15 +976,23 @@ export class VendorService {
                     continue;
                 }
                 if (todaySchedule.openTime && todaySchedule.closeTime) {
-                    if (currentHHMM < todaySchedule.openTime || currentHHMM >= todaySchedule.closeTime) {
-                        statusMap.set(config.vendor_id, 'CLOSED');
-                        continue;
+                    // "00:00"/"00:00" means open all day — skip time check
+                    if (todaySchedule.openTime !== todaySchedule.closeTime) {
+                        // Treat closeTime "00:00" as end of day (midnight)
+                        const effectiveClose = todaySchedule.closeTime === '00:00' ? '24:00' : todaySchedule.closeTime;
+                        if (currentHHMM < todaySchedule.openTime || currentHHMM >= effectiveClose) {
+                            statusMap.set(config.vendor_id, 'CLOSED');
+                            continue;
+                        }
                     }
                 }
             } else if (config.event_open_time && config.event_close_time) {
-                if (currentHHMM < config.event_open_time || currentHHMM >= config.event_close_time) {
-                    statusMap.set(config.vendor_id, 'CLOSED');
-                    continue;
+                if (config.event_open_time !== config.event_close_time) {
+                    const effectiveClose = config.event_close_time === '00:00' ? '24:00' : config.event_close_time;
+                    if (currentHHMM < config.event_open_time || currentHHMM >= effectiveClose) {
+                        statusMap.set(config.vendor_id, 'CLOSED');
+                        continue;
+                    }
                 }
             }
         }

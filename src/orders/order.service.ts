@@ -224,14 +224,14 @@ export class OrderService {
                                     : 'This vendor is not operating today.'
                             );
                         }
-                        if (daySchedule.openTime && daySchedule.closeTime) {
+                        if (daySchedule.openTime && daySchedule.closeTime && daySchedule.openTime !== daySchedule.closeTime) {
                             if (checkHHMM < daySchedule.openTime || checkHHMM >= daySchedule.closeTime) {
                                 throw new ValidationError(
                                     `This vendor operates ${daySchedule.openTime} – ${daySchedule.closeTime} on ${checkDate}.`
                                 );
                             }
                         }
-                    } else if (menuConfig.event_open_time && menuConfig.event_close_time) {
+                    } else if (menuConfig.event_open_time && menuConfig.event_close_time && menuConfig.event_open_time !== menuConfig.event_close_time) {
                         // Fall back to daily default
                         if (checkHHMM < menuConfig.event_open_time || checkHHMM >= menuConfig.event_close_time) {
                             throw new ValidationError(
@@ -537,9 +537,9 @@ export class OrderService {
             throw new Error(`Failed to fetch order: ${fetchError.message}`);
         }
 
-        // Cancellation is only allowed from PENDING status
-        if (status === OrderStatus.CANCELLED && currentOrder.status !== OrderStatus.PENDING) {
-            throw new ValidationError('Order can only be cancelled before it starts preparing', {
+        // Cancellation is only allowed from PENDING or PREPARING status
+        if (status === OrderStatus.CANCELLED && currentOrder.status !== OrderStatus.PENDING && currentOrder.status !== OrderStatus.PREPARING) {
+            throw new ValidationError('Order can only be cancelled before it is ready', {
                 currentStatus: currentOrder.status,
             });
         }

@@ -176,6 +176,12 @@ export class OrderScheduler {
                 effectiveClose = '23:59';
             }
 
+            // Treat equal open/close (e.g. 00:00–00:00) as "open all day"
+            if (effectiveOpen === effectiveClose) {
+                effectiveOpen = '00:00';
+                effectiveClose = '23:59';
+            }
+
             const open = this.toUTCDate(day, effectiveOpen);
             const close = this.toUTCDate(day, effectiveClose);
 
