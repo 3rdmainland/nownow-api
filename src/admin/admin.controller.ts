@@ -12,6 +12,7 @@ import {
   getConfigSchema,
   setConfigSchema,
   vendorPipelineSchema,
+  stakeholderStatsSchema,
   revenueReportSchema,
   operationalSnapshotSchema,
   globalSearchSchema,
@@ -121,6 +122,11 @@ const adminController: FastifyPluginAsync = async (fastify) => {
   fastify.get('/vendor-pipeline', { schema: vendorPipelineSchema }, async (request, reply) => {
     const stages = await adminService.getVendorPipeline();
     return { stages };
+  });
+
+  // GET /admin/stakeholder-stats
+  fastify.get('/stakeholder-stats', { schema: stakeholderStatsSchema }, async (request, reply) => {
+    return adminService.getStakeholderStats();
   });
 
   // GET /admin/revenue-report

@@ -5,6 +5,7 @@ import {
   AuditLogEntry,
   PlatformConfigEntry,
   VendorPipelineStage,
+  PipelineVendor,
   RevenueReport,
   UserListParams,
   OperationalSnapshot,
@@ -18,6 +19,7 @@ import {
   ConversionFunnel,
   Alert,
   SystemHealth,
+  StakeholderStats,
 } from './admin.types.js';
 import { getConnectionStats, broadcastToAdmins } from '../websocket/index.js';
 import redis, { cache } from '../lib/redis.js';
@@ -244,21 +246,37 @@ export class AdminService {
   }
 
   async getVendorPipeline(): Promise<VendorPipelineStage[]> {
-    // Count vendors at each onboarding stage
-    const [invited, registered, menuSetup, firstEvent, active] = await Promise.all([
+    // Count vendors at each onboarding stage + fetch top 10 recent per stage
+    const [
+      invited, registered, menuSetup, firstEvent, active,
+      invitedVendors, registeredVendors, menuSetupVendors, firstEventVendors, activeVendors,
+    ] = await Promise.all([
+      // Counts
       supabase.from('vendor_invites').select('id', { count: 'exact' }).is('used_at', null),
       supabase.from('vendor_users').select('id', { count: 'exact' }),
       supabase.from('vendor_users').select('id, vendors!inner(id, menu_items!inner(id))', { count: 'exact' }),
       supabase.from('vendor_users').select('id, vendors!inner(id, event_vendors!inner(id))', { count: 'exact' }),
       supabase.from('vendor_users').select('id', { count: 'exact' }).eq('is_active', true),
+      // Vendor details (top 10 per stage)
+      supabase.from('vendor_invites').select('id, email, created_at').is('used_at', null).order('created_at', { ascending: false }).limit(10),
+      supabase.from('vendor_users').select('id, name, email, created_at').order('created_at', { ascending: false }).limit(10),
+      supabase.from('vendor_users').select('id, name, email, created_at, vendors!inner(id, menu_items!inner(id))').order('created_at', { ascending: false }).limit(10),
+      supabase.from('vendor_users').select('id, name, email, created_at, vendors!inner(id, event_vendors!inner(id))').order('created_at', { ascending: false }).limit(10),
+      supabase.from('vendor_users').select('id, name, email, created_at').eq('is_active', true).order('created_at', { ascending: false }).limit(10),
     ]);
 
+    const mapInvites = (data: any[]): PipelineVendor[] =>
+      (data || []).map((v: any) => ({ id: v.id, name: null, email: v.email, date: v.created_at }));
+
+    const mapUsers = (data: any[]): PipelineVendor[] =>
+      (data || []).map((v: any) => ({ id: v.id, name: v.name || null, email: v.email, date: v.created_at }));
+
     return [
-      { stage: 'Invited', count: invited.count || 0 },
-      { stage: 'Registered', count: registered.count || 0 },
-      { stage: 'Menu Setup', count: menuSetup.count || 0 },
-      { stage: 'First Event', count: firstEvent.count || 0 },
-      { stage: 'Active', count: active.count || 0 },
+      { stage: 'Invited', count: invited.count || 0, vendors: mapInvites(invitedVendors.data || []) },
+      { stage: 'Registered', count: registered.count || 0, vendors: mapUsers(registeredVendors.data || []) },
+      { stage: 'Menu Setup', count: menuSetup.count || 0, vendors: mapUsers(menuSetupVendors.data || []) },
+      { stage: 'First Event', count: firstEvent.count || 0, vendors: mapUsers(firstEventVendors.data || []) },
+      { stage: 'Active', count: active.count || 0, vendors: mapUsers(activeVendors.data || []) },
     ];
   }
 
@@ -930,6 +948,142 @@ export class AdminService {
       database: { status: dbStatus, latencyMs: dbLatency },
       websocket: { totalConnections: wsStats.totalConnections },
       recentErrors: recentErrors.slice(0, 50),
+    };
+  }
+
+  async getStakeholderStats(): Promise<StakeholderStats> {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // --- Customer stats ---
+    const [
+      totalCustomers,
+      newCustomers7d,
+      newCustomers30d,
+      allOrders,
+    ] = await Promise.all([
+      supabase.from('customers').select('id', { count: 'exact', head: true }),
+      supabase.from('customers').select('id', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
+      supabase.from('customers').select('id', { count: 'exact', head: true }).gte('created_at', thirtyDaysAgo),
+      supabase.from('orders').select('phone, total, created_at'),
+    ]);
+
+    const orders = allOrders.data || [];
+    const ordersByPhone = new Map<string, { count: number; total: number; lastOrder: string }>();
+    for (const o of orders) {
+      const phone = o.phone;
+      if (!phone) continue;
+      const existing = ordersByPhone.get(phone) || { count: 0, total: 0, lastOrder: '' };
+      existing.count++;
+      existing.total += Number(o.total) || 0;
+      if (o.created_at > existing.lastOrder) existing.lastOrder = o.created_at;
+      ordersByPhone.set(phone, existing);
+    }
+
+    const customersWithOrders = ordersByPhone.size;
+    const repeatCustomers = Array.from(ordersByPhone.values()).filter(c => c.count > 1).length;
+    const active30dCustomers = Array.from(ordersByPhone.entries()).filter(([_, c]) => c.lastOrder >= thirtyDaysAgo).length;
+    const totalCustomerSpend = Array.from(ordersByPhone.values()).reduce((sum, c) => sum + c.total, 0);
+
+    // --- Vendor stats ---
+    const [
+      totalVendors,
+      activeVendors,
+      totalMenuItems,
+      vendorOrders,
+    ] = await Promise.all([
+      supabase.from('vendor_users').select('id', { count: 'exact', head: true }),
+      supabase.from('vendor_users').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('menu_items').select('id', { count: 'exact', head: true }),
+      supabase.from('orders').select('vendor_id, total, status'),
+    ]);
+
+    const vendorAgg = new Map<string, { orders: number; revenue: number }>();
+    for (const o of (vendorOrders.data || [])) {
+      if (!o.vendor_id) continue;
+      const existing = vendorAgg.get(o.vendor_id) || { orders: 0, revenue: 0 };
+      existing.orders++;
+      if (o.status === 'COLLECTED' || o.status === 'completed') {
+        existing.revenue += Number(o.total) || 0;
+      }
+      vendorAgg.set(o.vendor_id, existing);
+    }
+
+    // Get vendor names for top performers
+    const vendorEntries = Array.from(vendorAgg.entries()).sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 5);
+    const topVendorIds = vendorEntries.map(([id]) => id);
+    const { data: vendorNames } = topVendorIds.length > 0
+      ? await supabase.from('vendors').select('id, name').in('id', topVendorIds)
+      : { data: [] };
+    const vendorNameMap = new Map((vendorNames || []).map((v: any) => [v.id, v.name]));
+
+    const vendorsWithOrders = vendorAgg.size;
+    const totalVendorRevenue = Array.from(vendorAgg.values()).reduce((sum, v) => sum + v.revenue, 0);
+    const totalVendorOrders = Array.from(vendorAgg.values()).reduce((sum, v) => sum + v.orders, 0);
+
+    // --- Organizer stats ---
+    const [
+      totalOrganizers,
+      totalEvents,
+      activeEvents,
+      eventsByOrganizer,
+    ] = await Promise.all([
+      supabase.from('organizer_users').select('id', { count: 'exact', head: true }),
+      supabase.from('events').select('id', { count: 'exact', head: true }),
+      supabase.from('events').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('events').select('organizer_id, id, name'),
+    ]);
+
+    const orgAgg = new Map<string, number>();
+    for (const e of (eventsByOrganizer.data || [])) {
+      if (!e.organizer_id) continue;
+      orgAgg.set(e.organizer_id, (orgAgg.get(e.organizer_id) || 0) + 1);
+    }
+
+    const topOrgEntries = Array.from(orgAgg.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const topOrgIds = topOrgEntries.map(([id]) => id);
+    const { data: orgNames } = topOrgIds.length > 0
+      ? await supabase.from('organizer_users').select('id, name').in('id', topOrgIds)
+      : { data: [] };
+    const orgNameMap = new Map((orgNames || []).map((o: any) => [o.id, o.name]));
+
+    const orgCount = totalOrganizers.count || 1;
+
+    return {
+      customers: {
+        total: totalCustomers.count || 0,
+        active30d: active30dCustomers,
+        repeatRate: customersWithOrders > 0 ? (repeatCustomers / customersWithOrders) * 100 : 0,
+        avgSpend: customersWithOrders > 0 ? totalCustomerSpend / customersWithOrders : 0,
+        totalSpend: totalCustomerSpend,
+        newLast7d: newCustomers7d.count || 0,
+        newLast30d: newCustomers30d.count || 0,
+      },
+      vendors: {
+        total: totalVendors.count || 0,
+        active: activeVendors.count || 0,
+        avgOrdersPerVendor: vendorsWithOrders > 0 ? totalVendorOrders / vendorsWithOrders : 0,
+        avgRevenuePerVendor: vendorsWithOrders > 0 ? totalVendorRevenue / vendorsWithOrders : 0,
+        totalMenuItems: totalMenuItems.count || 0,
+        topPerformers: vendorEntries.map(([id, data]) => ({
+          id,
+          name: vendorNameMap.get(id) || 'Unknown',
+          orders: data.orders,
+          revenue: data.revenue,
+        })),
+      },
+      organizers: {
+        total: totalOrganizers.count || 0,
+        totalEventsCreated: totalEvents.count || 0,
+        activeEvents: activeEvents.count || 0,
+        avgEventsPerOrganizer: (totalEvents.count || 0) / orgCount,
+        topOrganizers: topOrgEntries.map(([id, events]) => ({
+          id,
+          name: orgNameMap.get(id) || 'Unknown',
+          events,
+        })),
+      },
     };
   }
 }

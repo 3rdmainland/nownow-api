@@ -19,6 +19,8 @@ vi.mock('../../websocket/index.js', () => ({
   broadcastNewOrder: vi.fn(),
   broadcastOrderStatusUpdate: vi.fn(),
   broadcastToVendor: vi.fn(),
+  broadcastAdminOrderFeed: vi.fn(),
+  broadcastToAdmins: vi.fn(),
 }));
 
 vi.mock('../../whatsapp/whatsapp.service.js', () => ({

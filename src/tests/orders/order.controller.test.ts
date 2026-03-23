@@ -21,6 +21,19 @@ vi.mock('../../websocket/index.js', () => ({
     broadcastNewOrder: vi.fn(),
     broadcastOrderStatusUpdate: vi.fn(),
     broadcastToVendor: vi.fn(),
+    broadcastAdminOrderFeed: vi.fn(),
+    broadcastToAdmins: vi.fn(),
+}));
+
+vi.mock('../../lib/auth.js', () => ({
+    authenticate: vi.fn(async (req: any, _reply: any) => {
+        // Simulate authenticated vendor user for tests
+        req.user = { vendorId: 'test-vendor-id', role: 'vendor' };
+    }),
+    authenticateCustomer: vi.fn(async (req: any, _reply: any) => {
+        req.user = { phone: '+27600000000', role: 'customer' };
+    }),
+    optionalAuthenticateCustomer: vi.fn(async (_req: any, _reply: any) => {}),
 }));
 
 vi.mock('../../whatsapp/whatsapp.service.js', () => ({
@@ -393,13 +406,12 @@ describe('Order Controller (integration via inject)', () => {
 
     describe('GET /orders/vendor/:vendorId', () => {
         it('returns 200 with paginated vendor orders', async () => {
-            const vendor = makeVendor();
-            const orders = [makeOrder({ vendor_id: vendor.id }), makeOrder({ vendor_id: vendor.id })];
+            const orders = [makeOrder({ vendor_id: 'test-vendor-id' }), makeOrder({ vendor_id: 'test-vendor-id' })];
             mockFrom({ data: orders, error: null });
 
             const res = await app.inject({
                 method: 'GET',
-                url: `/orders/vendor/${vendor.id}`,
+                url: '/orders/vendor/test-vendor-id',
             });
 
             expect(res.statusCode).toBe(200);
@@ -409,10 +421,16 @@ describe('Order Controller (integration via inject)', () => {
             expect(body).toHaveProperty('total');
         });
 
+        it('returns 403 when vendor requests another vendor orders', async () => {
+            const res = await app.inject({ method: 'GET', url: '/orders/vendor/other-vendor-id' });
+
+            expect(res.statusCode).toBe(403);
+        });
+
         it('returns 500 when the service throws', async () => {
             mockFrom({ data: null, error: { message: 'error' } });
 
-            const res = await app.inject({ method: 'GET', url: '/orders/vendor/bad-id' });
+            const res = await app.inject({ method: 'GET', url: '/orders/vendor/test-vendor-id' });
 
             expect(res.statusCode).toBe(500);
         });

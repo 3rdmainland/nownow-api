@@ -32,6 +32,7 @@ const orderSchema = {
     properties: {
         id: { type: "string" },
         vendor_id: { type: "string" },
+        event_id: { type: "string" },
         phone: { type: "string" },
         items: { type: "array", items: orderItemSchema },
         total: { type: "number" },
@@ -248,6 +249,14 @@ export const getOrdersByVendorSchema = {
                 ...paginationResponseProperties
             },
             required: ["orders", "page", "pageSize", "total", "totalPages"]
+        },
+        401: {
+            type: "object",
+            properties: { error: { type: "string" } }
+        },
+        403: {
+            type: "object",
+            properties: { error: { type: "string" } }
         },
         500: {
             type: "object",
@@ -592,6 +601,14 @@ export const getOrdersByEventSchema = {
                 ...paginationResponseProperties
             },
             required: ["orders", "page", "pageSize", "total", "totalPages"]
+        },
+        401: {
+            type: "object",
+            properties: { error: { type: "string" } }
+        },
+        403: {
+            type: "object",
+            properties: { error: { type: "string" } }
         },
         500: {
             type: "object",

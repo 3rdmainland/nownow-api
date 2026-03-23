@@ -129,10 +129,17 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by vendor
-    fastify.get("/vendor/:vendorId", { schema: getOrdersByVendorSchema }, async (request, reply) => {
+    // Get orders by vendor (auth required — vendor can only access their own orders)
+    fastify.get("/vendor/:vendorId", { schema: getOrdersByVendorSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { vendorId } = request.params as { vendorId: string };
+            const user = request.user as { vendorId?: string; role?: string };
+
+            // Admins can access any vendor's orders; vendors can only access their own
+            if (user.role !== 'admin' && user.vendorId !== vendorId) {
+                return reply.status(403).send({ error: "Access denied" });
+            }
+
             const { page, pageSize } = request.query as { page?: number; pageSize?: number };
             const result = await orderService.getOrdersByVendor(vendorId, { page, pageSize });
             return result;
@@ -168,7 +175,7 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     });
 
     // Get orders by event
-    fastify.get("/event/:eventId", { schema: getOrdersByEventSchema }, async (request, reply) => {
+    fastify.get("/event/:eventId", { schema: getOrdersByEventSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { eventId } = request.params as { eventId: string };
             const { page, pageSize } = request.query as { page?: number; pageSize?: number };

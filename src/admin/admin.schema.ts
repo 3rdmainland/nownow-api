@@ -439,13 +439,28 @@ export const setConfigSchema = {
 };
 
 export const vendorPipelineSchema = {
-  description: 'Get vendor onboarding pipeline',
+  description: 'Get vendor onboarding pipeline with vendor details',
   tags: ['admin'],
   response: {
     200: {
       type: 'object',
       properties: {
         stages: { type: 'array' },
+      },
+    },
+  },
+};
+
+export const stakeholderStatsSchema = {
+  description: 'Get comprehensive stakeholder stats (customers, vendors, organizers)',
+  tags: ['admin'],
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        customers: { type: 'object', additionalProperties: true },
+        vendors: { type: 'object', additionalProperties: true },
+        organizers: { type: 'object', additionalProperties: true },
       },
     },
   },

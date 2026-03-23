@@ -26,9 +26,44 @@ export interface PlatformConfigEntry {
   updatedAt: string;
 }
 
+export interface PipelineVendor {
+  id: string;
+  name: string | null;
+  email: string;
+  date: string;
+}
+
 export interface VendorPipelineStage {
   stage: string;
   count: number;
+  vendors: PipelineVendor[];
+}
+
+export interface StakeholderStats {
+  customers: {
+    total: number;
+    active30d: number;
+    repeatRate: number;
+    avgSpend: number;
+    totalSpend: number;
+    newLast7d: number;
+    newLast30d: number;
+  };
+  vendors: {
+    total: number;
+    active: number;
+    avgOrdersPerVendor: number;
+    avgRevenuePerVendor: number;
+    totalMenuItems: number;
+    topPerformers: { id: string; name: string; orders: number; revenue: number }[];
+  };
+  organizers: {
+    total: number;
+    totalEventsCreated: number;
+    activeEvents: number;
+    avgEventsPerOrganizer: number;
+    topOrganizers: { id: string; name: string; events: number }[];
+  };
 }
 
 export interface RevenueReport {

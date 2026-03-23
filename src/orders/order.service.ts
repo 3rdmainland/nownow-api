@@ -3,7 +3,7 @@ import {supabase} from "../lib/supabase";
 import { WhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
-import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor } from "../websocket";
+import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor, broadcastAdminOrderFeed, broadcastToAdmins } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 import { PaymentService } from "../payment/payment.service.js";
 import { ValidationError, NotFoundError, TooManyRequestsError } from "../lib/errors.js";
@@ -445,6 +445,24 @@ export class OrderService {
                 vendorId: order.vendor_id,
                 eventId: order.event_id,
             });
+
+            // Notify admin dashboard live feed
+            broadcastAdminOrderFeed({
+                orderId: order.id,
+                customerPhone: order.phone || null,
+                customerName: order.customer_name || null,
+                vendorId: order.vendor_id,
+                vendorName: null,
+                eventId: order.event_id || null,
+                eventName: null,
+                total: Number(order.total) || 0,
+                status: order.status,
+                paymentStatus: order.payment_status || null,
+                items: Array.isArray(order.items)
+                    ? order.items.map((i: any) => ({ name: i.name || i.menu_item_name || '', quantity: i.quantity || 1 }))
+                    : [],
+                createdAt: order.created_at,
+            });
         } catch (err) {
             console.error('Failed to send order notifications:', err);
         }
@@ -624,6 +642,13 @@ export class OrderService {
                 eventId: data.event_id,
             });
         }
+
+        // Broadcast status change to admin live feed
+        broadcastToAdmins({
+            type: 'ORDER_STATUS_UPDATE',
+            payload: { orderId: data.id, status: data.status },
+            timestamp: new Date().toISOString(),
+        });
 
         // Broadcast to vendor's KDS and live event panel
         broadcastToVendor(data.vendor_id, {
