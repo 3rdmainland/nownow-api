@@ -72,6 +72,11 @@ const eventSchema = {
         vendorIds: { type: "array", items: { type: "string" } },
         code: { type: "string" },
         branding: brandingSchema,
+        menuStatus: {
+            type: "string",
+            enum: ["DRAFT", "PUBLISHED", "NOT_CONFIGURED"]
+        },
+        menuTemplateName: { type: "string" },
     },
     required: [
         "id",

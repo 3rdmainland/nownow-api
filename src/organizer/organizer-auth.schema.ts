@@ -2,6 +2,8 @@ const organizerUserProperties = {
   id: { type: 'string' },
   email: { type: 'string' },
   name: { type: 'string' },
+  phone: { type: 'string', nullable: true },
+  organization: { type: 'string', nullable: true },
   createdAt: { type: 'string' },
   updatedAt: { type: 'string' },
 };
@@ -196,6 +198,28 @@ export const organizerAdminResetPasswordSchema = {
 export const organizerMeSchema = {
   description: 'Get current authenticated organizer',
   tags: ['organizer-auth'],
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        user: { type: 'object', properties: organizerUserProperties },
+      },
+    },
+    401: errorResponse,
+  },
+};
+
+export const organizerUpdateProfileSchema = {
+  description: 'Update organizer profile',
+  tags: ['organizer-auth'],
+  body: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', minLength: 1 },
+      phone: { type: 'string' },
+      organization: { type: 'string' },
+    },
+  },
   response: {
     200: {
       type: 'object',

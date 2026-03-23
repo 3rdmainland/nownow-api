@@ -933,7 +933,7 @@ export class OrderService {
         if (cached) return cached;
 
         // Parallel queries: summary stats (no items) + items for top-item calc
-        let summaryQuery = supabase.from('orders').select('total, status, payment_method, refund_status, refund_amount');
+        let summaryQuery = supabase.from('orders').select('total, status, payment_method, refund_status, refund_amount, created_at, collected_at, phone');
         let itemsQuery = supabase.from('orders').select('items, status').neq('status', OrderStatus.CANCELLED);
 
         if (vendorId) {
@@ -989,6 +989,45 @@ export class OrderService {
         const refunded = orders.filter((o: any) => o.refund_status && o.refund_status !== 'none');
         const refundedValue = refunded.reduce((sum: number, o: any) => sum + Number(o.refund_amount || 0), 0);
 
+        // Avg turnaround: created_at → collected_at for collected orders (in minutes)
+        const fulfilledOrders = collected.filter((o: any) => o.created_at && o.collected_at);
+        const avgTurnaroundMinutes = fulfilledOrders.length > 0
+            ? fulfilledOrders.reduce((sum: number, o: any) => {
+                const created = new Date(o.created_at).getTime();
+                const collectedAt = new Date(o.collected_at).getTime();
+                return sum + (collectedAt - created) / 60000;
+            }, 0) / fulfilledOrders.length
+            : null;
+
+        // Peak order hours: count orders per hour of day
+        const hourCounts: Record<number, number> = {};
+        orders.forEach((o: any) => {
+            if (o.created_at) {
+                const hour = new Date(o.created_at).getHours();
+                hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+            }
+        });
+        const peakHours = Object.entries(hourCounts)
+            .sort((a, b) => Number(b[1]) - Number(a[1]))
+            .slice(0, 3)
+            .map(([hour, count]) => ({ hour: Number(hour), count }));
+
+        // Avg items per order (non-cancelled)
+        const totalItemQty = nonCancelledWithItems.reduce((sum: number, o: any) => {
+            const items = Array.isArray(o.items) ? o.items : [];
+            return sum + items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0);
+        }, 0);
+        const avgItemsPerOrder = nonCancelled.length > 0
+            ? Math.round((totalItemQty / nonCancelled.length) * 10) / 10
+            : null;
+
+        // Repeat customers: distinct phones with >1 non-cancelled order
+        const phoneCounts: Record<string, number> = {};
+        nonCancelled.forEach((o: any) => {
+            if (o.phone) phoneCounts[o.phone] = (phoneCounts[o.phone] || 0) + 1;
+        });
+        const repeatCustomerCount = Object.values(phoneCounts).filter(c => c > 1).length;
+
         const stats: OrderStats = {
             totalOrders: orders.length,
             totalRevenue,
@@ -1006,6 +1045,10 @@ export class OrderService {
             topItems,
             refundedCount: refunded.length,
             refundedValue,
+            avgTurnaroundMinutes: avgTurnaroundMinutes !== null ? Math.round(avgTurnaroundMinutes) : null,
+            peakHours,
+            avgItemsPerOrder,
+            repeatCustomerCount,
         };
 
         await cache.set(cacheKey, stats, CACHE_TTL.ITEM_AVAILABILITY); // 10s TTL

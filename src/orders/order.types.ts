@@ -100,6 +100,10 @@ export interface OrderStats {
     topItems: Array<{ name: string; qty: number }>;
     refundedCount: number;
     refundedValue: number;
+    avgTurnaroundMinutes: number | null;
+    peakHours: Array<{ hour: number; count: number }>;
+    avgItemsPerOrder: number | null;
+    repeatCustomerCount: number;
 }
 
 export type TimeSeriesGranularity = 'day' | 'week' | 'month';

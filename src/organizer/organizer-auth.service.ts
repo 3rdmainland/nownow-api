@@ -3,6 +3,7 @@ import {
   OrganizerLoginPayload,
   OrganizerRegisterPayload,
   OrganizerInvitePayload,
+  OrganizerUpdateProfilePayload,
   SafeOrganizerUser,
 } from './organizer-auth.types.js';
 import {
@@ -108,7 +109,7 @@ export class OrganizerAuthService {
         name: payload.name,
         password_hash: passwordHash,
       }])
-      .select('id, email, name, created_at, updated_at')
+      .select('id, email, name, phone, organization, created_at, updated_at')
       .single();
 
     if (error) {
@@ -124,6 +125,8 @@ export class OrganizerAuthService {
       id: data.id,
       email: data.email,
       name: data.name,
+      phone: data.phone,
+      organization: data.organization,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
@@ -149,6 +152,8 @@ export class OrganizerAuthService {
       id: data.id,
       email: data.email,
       name: data.name,
+      phone: data.phone,
+      organization: data.organization,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
@@ -157,7 +162,7 @@ export class OrganizerAuthService {
   async getUserById(userId: string): Promise<SafeOrganizerUser | null> {
     const { data, error } = await supabase
       .from('organizer_users')
-      .select('id, email, name, created_at, updated_at')
+      .select('id, email, name, phone, organization, created_at, updated_at')
       .eq('id', userId)
       .single();
 
@@ -167,6 +172,36 @@ export class OrganizerAuthService {
       id: data.id,
       email: data.email,
       name: data.name,
+      phone: data.phone,
+      organization: data.organization,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  async updateProfile(userId: string, payload: OrganizerUpdateProfilePayload): Promise<SafeOrganizerUser> {
+    const updateData: Record<string, string> = { updated_at: new Date().toISOString() };
+    if (payload.name !== undefined) updateData.name = payload.name;
+    if (payload.phone !== undefined) updateData.phone = payload.phone;
+    if (payload.organization !== undefined) updateData.organization = payload.organization;
+
+    const { data, error } = await supabase
+      .from('organizer_users')
+      .update(updateData)
+      .eq('id', userId)
+      .select('id, email, name, phone, organization, created_at, updated_at')
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Failed to update profile: ${error?.message || 'User not found'}`);
+    }
+
+    return {
+      id: data.id,
+      email: data.email,
+      name: data.name,
+      phone: data.phone,
+      organization: data.organization,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };

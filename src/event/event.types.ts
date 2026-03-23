@@ -44,5 +44,6 @@ export interface Event {
     vendorIds: string[];
     code: string;
     menuStatus?: 'DRAFT' | 'PUBLISHED' | 'NOT_CONFIGURED';
+    menuTemplateName?: string;
     branding?: EventBranding;
 }

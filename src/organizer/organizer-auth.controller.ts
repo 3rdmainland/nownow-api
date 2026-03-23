@@ -10,6 +10,7 @@ import {
   organizerAdminResetPasswordSchema,
   organizerForgotPasswordSchema,
   organizerResetPasswordSchema,
+  organizerUpdateProfileSchema,
 } from './organizer-auth.schema.js';
 import { OrganizerAuthService } from './organizer-auth.service.js';
 import {
@@ -17,6 +18,7 @@ import {
   OrganizerRegisterPayload,
   OrganizerInvitePayload,
   OrganizerJwtPayload,
+  OrganizerUpdateProfilePayload,
 } from './organizer-auth.types.js';
 import { authenticateOrganizer } from '../lib/auth.js';
 import { UnauthorizedError, TooManyRequestsError } from '../lib/errors.js';
@@ -164,6 +166,17 @@ const organizerAuthController: FastifyPluginAsync = async (fastify) => {
     const { email, newPassword } = request.body as { email: string; newPassword: string };
     await authService.adminResetPassword(email, newPassword);
     return { message: 'Password reset successfully' };
+  });
+
+  // PATCH /organizer/auth/profile — Update organizer profile
+  fastify.patch('/profile', {
+    schema: organizerUpdateProfileSchema,
+    preHandler: [authenticateOrganizer],
+  }, async (request, reply) => {
+    const { userId } = request.user as OrganizerJwtPayload;
+    const payload = request.body as OrganizerUpdateProfilePayload;
+    const user = await authService.updateProfile(userId, payload);
+    return { user };
   });
 
   // GET /organizer/auth/me — Get current organizer + renew session (sliding expiry)

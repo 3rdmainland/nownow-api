@@ -66,7 +66,8 @@ await fastify.register(fastifyCors, {
         "https://nownow-dev-api-production.up.railway.app",
         "https://nownow-nine.vercel.app",
         "https://nownow-vendor.vercel.app",
-        "https://nownow-organizer.vercel.app"
+        "https://nownow-organizer.vercel.app",
+        "https://nownow-admin.vercel.app"
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

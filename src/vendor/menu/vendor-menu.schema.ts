@@ -1133,6 +1133,78 @@ export const reorderCategoriesSchema = {
     },
 };
 
+export const reorderModifiersSchema = {
+    description: 'Reorder modifiers within a modifier group',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: {
+            vendorId: { type: 'string' },
+            groupId: { type: 'string' },
+        },
+        required: ['vendorId', 'groupId'],
+    },
+    body: {
+        type: 'object',
+        required: ['orders'],
+        properties: {
+            orders: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    required: ['id', 'displayOrder'],
+                    properties: {
+                        id: { type: 'string' },
+                        displayOrder: { type: 'number' },
+                    },
+                },
+            },
+        },
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: { success: { type: 'boolean' } },
+        },
+        500: errorResponse,
+    },
+};
+
+export const reorderMenuItemsSchema = {
+    description: 'Reorder menu items (bulk update displayOrder and optionally categoryId)',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: { vendorId: { type: 'string' } },
+        required: ['vendorId'],
+    },
+    body: {
+        type: 'object',
+        required: ['orders'],
+        properties: {
+            orders: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    required: ['id', 'displayOrder'],
+                    properties: {
+                        id: { type: 'string' },
+                        displayOrder: { type: 'number' },
+                        categoryId: { type: 'string' },
+                    },
+                },
+            },
+        },
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: { success: { type: 'boolean' } },
+        },
+        500: errorResponse,
+    },
+};
+
 // ==================== MODIFIER SCHEMAS ====================
 
 export const getModifierGroupsSchema = {

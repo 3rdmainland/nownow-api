@@ -1106,6 +1106,36 @@ export class VendorMenuService {
         await this.invalidateMenuCaches(vendorId);
     }
 
+    async reorderMenuItems(vendorId: string, orders: { id: string; displayOrder: number; categoryId?: string }[]): Promise<void> {
+        await Promise.all(
+            orders.map((order) => {
+                const update: Record<string, unknown> = { display_order: order.displayOrder };
+                if (order.categoryId) update.category_id = order.categoryId;
+                return supabase
+                    .from('default_menu_items')
+                    .update(update)
+                    .eq('id', order.id)
+                    .eq('vendor_id', vendorId);
+            })
+        );
+
+        await this.invalidateMenuCaches(vendorId);
+    }
+
+    async reorderModifiers(vendorId: string, groupId: string, orders: { id: string; displayOrder: number }[]): Promise<void> {
+        await Promise.all(
+            orders.map((order) =>
+                supabase
+                    .from('modifiers')
+                    .update({ display_order: order.displayOrder })
+                    .eq('id', order.id)
+                    .eq('group_id', groupId)
+            )
+        );
+
+        await this.invalidateMenuCaches(vendorId);
+    }
+
     // ==================== MODIFIER GROUPS ====================
 
     async getVendorModifierGroups(vendorId: string): Promise<ModifierGroup[]> {

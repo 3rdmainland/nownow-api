@@ -432,12 +432,27 @@ export const getOrderStatsSchema = {
                     }
                 },
                 refundedCount: { type: "number" },
-                refundedValue: { type: "number" }
+                refundedValue: { type: "number" },
+                avgTurnaroundMinutes: { type: ["number", "null"] },
+                peakHours: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            hour: { type: "number" },
+                            count: { type: "number" }
+                        },
+                        required: ["hour", "count"]
+                    }
+                },
+                avgItemsPerOrder: { type: ["number", "null"] },
+                repeatCustomerCount: { type: "number" }
             },
             required: [
                 "totalOrders", "totalRevenue", "averageOrderValue", "ordersByStatus",
                 "grossSales", "collectedRevenue", "cancelledCount", "cancelledValue",
-                "topItem", "paymentBreakdown", "topItems", "refundedCount", "refundedValue"
+                "topItem", "paymentBreakdown", "topItems", "refundedCount", "refundedValue",
+                "avgTurnaroundMinutes", "peakHours", "avgItemsPerOrder", "repeatCustomerCount"
             ]
         },
         500: {

@@ -1007,22 +1007,23 @@ describe('OrderService', () => {
             expect(result.status).toBe(OrderStatus.COLLECTED);
         });
 
-        it('throws ValidationError when cancelling a non-PENDING order', async () => {
+        it('allows cancelling a PREPARING order', async () => {
             const currentOrder = makeOrder({ status: OrderStatus.PREPARING });
             mockFrom({ data: currentOrder, error: null });
 
+            // Should NOT throw — cancellation from PREPARING is now allowed
             await expect(
                 service.updateOrderStatus(currentOrder.id, OrderStatus.CANCELLED)
-            ).rejects.toThrow(ValidationError);
+            ).resolves.toBeDefined();
         });
 
-        it('throws ValidationError with message about PENDING status for CANCELLED attempt', async () => {
+        it('throws ValidationError when cancelling a READY order', async () => {
             const currentOrder = makeOrder({ status: OrderStatus.READY });
             mockFrom({ data: currentOrder, error: null });
 
             await expect(
                 service.updateOrderStatus(currentOrder.id, OrderStatus.CANCELLED)
-            ).rejects.toThrow('Order can only be cancelled before it starts preparing');
+            ).rejects.toThrow('Order can only be cancelled before it is ready');
         });
 
         it('throws when the order is not found (fetch returns error)', async () => {

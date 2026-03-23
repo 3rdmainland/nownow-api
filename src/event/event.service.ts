@@ -251,26 +251,45 @@ export class EventService {
 
         if (events.length === 0) return events;
 
-        // Fetch menu config statuses for this vendor across all events in one query
+        // Fetch menu config statuses and template IDs for this vendor across all events
         const eventIds = events.map(e => e.id);
         const { data: configs } = await supabase
             .from("event_menu_configurations")
-            .select("event_id, status")
+            .select("event_id, status, template_id")
             .eq("vendor_id", vendorId)
             .in("event_id", eventIds);
 
-        const configMap = new Map<string, string>(
-            (configs || []).map(c => [c.event_id, c.status])
+        const configMap = new Map<string, { status: string; templateId?: string }>(
+            (configs || []).map(c => [c.event_id, { status: c.status, templateId: c.template_id }])
         );
 
+        // Fetch template names for configs that reference a template
+        const templateIds = [...new Set(
+            (configs || []).map(c => c.template_id).filter(Boolean)
+        )];
+
+        let templateNameMap = new Map<string, string>();
+        if (templateIds.length > 0) {
+            const { data: templates } = await supabase
+                .from("menu_templates")
+                .select("id, name")
+                .in("id", templateIds);
+            templateNameMap = new Map(
+                (templates || []).map(t => [t.id, t.name])
+            );
+        }
+
         return events.map(event => {
-            const rawStatus = configMap.get(event.id);
-            const menuStatus: Event['menuStatus'] = !rawStatus
+            const config = configMap.get(event.id);
+            const menuStatus: Event['menuStatus'] = !config
                 ? 'NOT_CONFIGURED'
-                : rawStatus === 'PUBLISHED'
+                : config.status === 'PUBLISHED'
                     ? 'PUBLISHED'
                     : 'DRAFT';
-            return { ...event, menuStatus };
+            const menuTemplateName = config?.templateId
+                ? templateNameMap.get(config.templateId)
+                : undefined;
+            return { ...event, menuStatus, menuTemplateName };
         });
     }
 }

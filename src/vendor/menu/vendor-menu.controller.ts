@@ -13,6 +13,7 @@ import {
     updateDefaultMenuItemSchema,
     deleteDefaultMenuItemSchema,
     bulkCreateDefaultMenuItemsSchema,
+    reorderMenuItemsSchema,
 
     // Event Menu Schemas
     getEventMenuSchema,
@@ -52,6 +53,7 @@ import {
     addModifierSchema,
     updateModifierSchema,
     deleteModifierSchema,
+    reorderModifiersSchema,
 
     // Tag Schemas
     getTagsSchema,
@@ -195,6 +197,25 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
                 if (err.message.includes('Validation failed')) {
                     return reply.status(400).send({ error: err.message });
                 }
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * PUT /vendors/:vendorId/menu/default/items/reorder
+     * Bulk reorder menu items (update displayOrder and optionally categoryId)
+     */
+    fastify.put<{ Params: { vendorId: string } }>(
+        "/:vendorId/menu/default/items/reorder",
+        { schema: reorderMenuItemsSchema },
+        async (request, reply) => {
+            try {
+                const { orders } = request.body as { orders: { id: string; displayOrder: number; categoryId?: string }[] };
+                await menuService.reorderMenuItems(request.params.vendorId, orders);
+                return { success: true };
+            } catch (err) {
+                fastify.log.error(err);
                 return reply.status(500).send({ error: "Internal server error" });
             }
         }
@@ -841,6 +862,25 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
                 if (err.message.includes('not found')) {
                     return reply.status(404).send({ error: err.message });
                 }
+                return reply.status(500).send({ error: "Internal server error" });
+            }
+        }
+    );
+
+    /**
+     * PUT /vendors/:vendorId/menu/modifier-groups/:groupId/reorder
+     * Reorder modifiers within a group
+     */
+    fastify.put<{ Params: { vendorId: string; groupId: string } }>(
+        "/:vendorId/menu/modifier-groups/:groupId/reorder",
+        { schema: reorderModifiersSchema },
+        async (request, reply) => {
+            try {
+                const { orders } = request.body as { orders: { id: string; displayOrder: number }[] };
+                await menuService.reorderModifiers(request.params.vendorId, request.params.groupId, orders);
+                return { success: true };
+            } catch (err) {
+                fastify.log.error(err);
                 return reply.status(500).send({ error: "Internal server error" });
             }
         }
