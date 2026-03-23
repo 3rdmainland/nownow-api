@@ -295,20 +295,30 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.post<{ Body: { qr_code: string; vendor_id: string } }>(
+    fastify.post<{ Body: { qr_code: string } }>(
         "/collect",
-        { schema: confirmCollectionSchema },
+        {
+            schema: confirmCollectionSchema,
+            preHandler: [authenticate],
+            config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+        },
         async (request, reply) => {
             try {
+                const user = request.user as { vendorId?: string; role?: string };
+                if (!user?.vendorId) {
+                    return reply.status(403).send({ error: "Vendor identity required" });
+                }
+
                 const order = await orderService.confirmCollectionByQR(
                     request.body.qr_code,
-                    request.body.vendor_id
+                    user.vendorId
                 );
                 return { order };
             } catch (err: any) {
                 fastify.log.error(err);
-                if (err.message.includes('Invalid QR') || err.message.includes('cannot be collected')) {
-                    return reply.status(400).send({ error: err.message });
+                const statusCode = err.statusCode;
+                if (statusCode === 400 || statusCode === 403 || statusCode === 404) {
+                    return reply.status(statusCode).send({ error: err.message });
                 }
                 return reply.status(500).send({ error: "Internal server error" });
             }

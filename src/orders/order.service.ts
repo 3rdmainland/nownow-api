@@ -6,7 +6,7 @@ import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor, broadcastAdminOrderFeed, broadcastToAdmins } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 import { PaymentService } from "../payment/payment.service.js";
-import { ValidationError, NotFoundError, TooManyRequestsError } from "../lib/errors.js";
+import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
 interface EventMenuConfig {
@@ -474,28 +474,33 @@ export class OrderService {
      */
     async confirmCollectionByQR(qrCode: string, vendorId: string): Promise<Order> {
         const qrHelper = new QRHelper();
-        const orderId = qrHelper.parseQRCode(qrCode);
+        const result = qrHelper.verifyQRSignature(qrCode);
 
-        if (!orderId) {
-            throw new Error('Invalid QR code format');
+        if (!result.valid || !result.orderId) {
+            throw new ValidationError('Invalid QR code or forged signature');
         }
 
-        // Fetch the order
+        const orderId = result.orderId;
+
+        // Fetch order by ID (without vendor filter) for distinct error messages
         const { data: order, error: fetchError } = await supabase
             .from('orders')
             .select('*')
             .eq('id', orderId)
-            .eq('vendor_id', vendorId)
-            .eq('status', OrderStatus.READY)
             .single();
 
         if (fetchError || !order) {
-            throw new Error(`Order not found: ${fetchError?.message || 'Unknown error'}`);
+            throw new NotFoundError('Order not found');
         }
 
-        // Validate order can be collected (must be READY)
+        // Check vendor ownership
+        if (order.vendor_id !== vendorId) {
+            throw new ForbiddenError('This order does not belong to your vendor');
+        }
+
+        // Validate order status
         if (order.status !== OrderStatus.READY) {
-            throw new Error(`Order cannot be collected. Current status: ${order.status}`);
+            throw new ValidationError(`Order cannot be collected. Current status: ${order.status}`);
         }
 
         // Update order status to COLLECTED

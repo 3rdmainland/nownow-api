@@ -95,11 +95,31 @@ vi.mock('../../lib/qr.helper.js', () => ({
     QRHelper: vi.fn(function() {
         return {
             generateAndUploadQRCode: vi.fn().mockResolvedValue({
-                qr_code: 'ORDER:test-order-id',
+                qr_code: 'ORDER:test-order-id:abcdef0123456789',
                 qr_image: 'https://storage.test/qr.png',
             }),
+            generateQRCodeString: vi.fn().mockImplementation((orderId: string) =>
+                `ORDER:${orderId}:abcdef0123456789`
+            ),
+            signOrderId: vi.fn().mockReturnValue('abcdef0123456789'),
+            verifyQRSignature: vi.fn().mockImplementation((code: string) => {
+                if (!code.startsWith('ORDER:')) {
+                    return { valid: false, orderId: null, isLegacy: false };
+                }
+                const parts = code.split(':');
+                // Legacy format
+                if (parts.length === 2) {
+                    return { valid: true, orderId: parts[1], isLegacy: true };
+                }
+                // Signed format — accept 'abcdef0123456789' as valid sig
+                if (parts.length === 3) {
+                    const valid = parts[2] === 'abcdef0123456789';
+                    return { valid, orderId: valid ? parts[1] : null, isLegacy: false };
+                }
+                return { valid: false, orderId: null, isLegacy: false };
+            }),
             parseQRCode: vi.fn().mockImplementation((code: string) =>
-                code.startsWith('ORDER:') ? code.replace('ORDER:', '') : null
+                code.startsWith('ORDER:') ? code.split(':')[1] : null
             ),
         };
     }),
@@ -696,15 +716,15 @@ describe('Order Controller (integration via inject)', () => {
 
     describe('POST /orders/collect', () => {
         it('returns 200 with the collected order when QR code is valid and order is READY', async () => {
-            const order = makeOrder({ status: OrderStatus.READY });
+            const order = makeOrder({ status: OrderStatus.READY, vendor_id: 'test-vendor-id' });
             const orderId = order.id;
-            const validQrCode = `ORDER:${orderId}`;
-            const vendor = makeVendor();
+            const validQrCode = `ORDER:${orderId}:abcdef0123456789`;
+            const vendor = makeVendor({ id: 'test-vendor-id' });
             const collectedOrder = { ...order, status: OrderStatus.COLLECTED, collected_at: new Date().toISOString() };
 
-            // Sequence: fetch READY order → update to COLLECTED → fetch vendor name
+            // Sequence: fetch order by id → update to COLLECTED → fetch vendor name
             mockFromSequence(
-                { data: order, error: null },           // fetch order by id + vendor_id + status=READY
+                { data: order, error: null },           // fetch order by id
                 { data: collectedOrder, error: null },  // update to COLLECTED
                 { data: vendor, error: null },          // fetch vendor name for WhatsApp
             );
@@ -712,10 +732,7 @@ describe('Order Controller (integration via inject)', () => {
             const res = await app.inject({
                 method: 'POST',
                 url: '/orders/collect',
-                payload: {
-                    qr_code: validQrCode,
-                    vendor_id: vendor.id,
-                },
+                payload: { qr_code: validQrCode },
             });
 
             expect(res.statusCode).toBe(200);
@@ -724,15 +741,10 @@ describe('Order Controller (integration via inject)', () => {
         });
 
         it('returns 400 when the QR code is invalid (does not start with ORDER:)', async () => {
-            // The QRHelper.parseQRCode mock returns null for invalid codes
-            // so the service throws 'Invalid QR code format' → controller → 400
             const res = await app.inject({
                 method: 'POST',
                 url: '/orders/collect',
-                payload: {
-                    qr_code: 'INVALID-QR-CODE',
-                    vendor_id: 'some-vendor-id',
-                },
+                payload: { qr_code: 'INVALID-QR-CODE' },
             });
 
             expect(res.statusCode).toBe(400);
@@ -740,23 +752,61 @@ describe('Order Controller (integration via inject)', () => {
             expect(body.error).toMatch(/invalid qr/i);
         });
 
-        it('returns 400 when the order is not found (fetch returns null)', async () => {
-            // parseQRCode succeeds but the order lookup fails
+        it('returns 404 when the order is not found', async () => {
             mockFrom({ data: null, error: { message: 'not found' } });
 
             const res = await app.inject({
                 method: 'POST',
                 url: '/orders/collect',
-                payload: {
-                    qr_code: 'ORDER:some-order-id',
-                    vendor_id: 'some-vendor-id',
-                },
+                payload: { qr_code: 'ORDER:some-order-id:abcdef0123456789' },
             });
 
-            // "Order not found" contains "not found" — controller maps to 500 generically,
-            // unless message matches 'Invalid QR' or 'cannot be collected'.
-            // "Order not found" does not match those patterns, so it falls through to 500.
-            expect(res.statusCode).toBe(500);
+            expect(res.statusCode).toBe(404);
+            const body = res.json<{ error: string }>();
+            expect(body.error).toMatch(/not found/i);
+        });
+
+        it('returns 403 when a vendor tries to collect another vendor order (cross-vendor)', async () => {
+            // Order belongs to a different vendor than the authenticated user
+            const order = makeOrder({ status: OrderStatus.READY, vendor_id: 'other-vendor-id' });
+            mockFrom({ data: order, error: null });
+
+            const res = await app.inject({
+                method: 'POST',
+                url: '/orders/collect',
+                payload: { qr_code: `ORDER:${order.id}:abcdef0123456789` },
+            });
+
+            expect(res.statusCode).toBe(403);
+            const body = res.json<{ error: string }>();
+            expect(body.error).toMatch(/does not belong/i);
+        });
+
+        it('returns 400 when the QR signature is forged', async () => {
+            const res = await app.inject({
+                method: 'POST',
+                url: '/orders/collect',
+                payload: { qr_code: 'ORDER:some-order-id:forgedsignature1' },
+            });
+
+            expect(res.statusCode).toBe(400);
+            const body = res.json<{ error: string }>();
+            expect(body.error).toMatch(/invalid qr|forged/i);
+        });
+
+        it('returns 400 when order is not in READY status', async () => {
+            const order = makeOrder({ status: OrderStatus.PREPARING, vendor_id: 'test-vendor-id' });
+            mockFrom({ data: order, error: null });
+
+            const res = await app.inject({
+                method: 'POST',
+                url: '/orders/collect',
+                payload: { qr_code: `ORDER:${order.id}:abcdef0123456789` },
+            });
+
+            expect(res.statusCode).toBe(400);
+            const body = res.json<{ error: string }>();
+            expect(body.error).toMatch(/cannot be collected/i);
         });
     });
 });

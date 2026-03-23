@@ -618,13 +618,12 @@ export const getOrdersByEventSchema = {
 };
 
 export const confirmCollectionSchema = {
-    description: "Confirm collection of order. This will update the order status to COLLECTED only when status is READY and set the collected_at timestamp.",
+    description: "Confirm collection of order via QR scan. Requires vendor authentication. Updates order status to COLLECTED only when status is READY.",
     tags: ['orders'],
     body: {
         type: 'object',
         properties: {
-            qr_code: { type: 'string' },
-            vendor_id: { type: 'string' }
+            qr_code: { type: 'string' }
         },
         required: ['qr_code']
     },
@@ -632,10 +631,28 @@ export const confirmCollectionSchema = {
         200: {
             type: 'object',
             properties: {
-                order: { /* same as getOrderByIdResponseSchema */ }
+                order: orderSchema
             }
         },
         400: {
+            type: 'object',
+            properties: {
+                error: { type: 'string' }
+            }
+        },
+        401: {
+            type: 'object',
+            properties: {
+                error: { type: 'string' }
+            }
+        },
+        403: {
+            type: 'object',
+            properties: {
+                error: { type: 'string' }
+            }
+        },
+        404: {
             type: 'object',
             properties: {
                 error: { type: 'string' }

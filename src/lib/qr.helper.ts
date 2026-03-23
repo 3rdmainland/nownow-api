@@ -1,4 +1,5 @@
 import QRCode from 'qrcode';
+import { createHmac } from 'crypto';
 import { supabase } from './supabase';
 
 export interface QRCodeResult {
@@ -6,25 +7,67 @@ export interface QRCodeResult {
     qr_image: string;
 }
 
+export interface QRVerifyResult {
+    valid: boolean;
+    orderId: string | null;
+    isLegacy: boolean;
+}
+
 export class QRHelper {
     private bucketName = 'order-qrcodes';
 
     /**
-     * Generates a unique QR code string containing the order ID
-     * This will be scanned to confirm collection
+     * HMAC-SHA256 sign an order ID, truncated to 16 hex chars
      */
-    generateQRCodeString(orderId: string): string {
-        return `ORDER:${orderId}`;
+    signOrderId(orderId: string): string {
+        const secret = process.env.QR_SIGN_SECRET || process.env.JWT_SECRET || 'default-dev-secret';
+        return createHmac('sha256', secret)
+            .update(orderId)
+            .digest('hex')
+            .slice(0, 16);
     }
 
     /**
-     * Parses QR code string to extract order ID
+     * Generates a signed QR code string: ORDER:{orderId}:{signature}
+     */
+    generateQRCodeString(orderId: string): string {
+        const signature = this.signOrderId(orderId);
+        return `ORDER:${orderId}:${signature}`;
+    }
+
+    /**
+     * Verifies a QR code signature. Supports both signed (3-part) and legacy unsigned (2-part) formats.
+     */
+    verifyQRSignature(qrCode: string): QRVerifyResult {
+        if (!qrCode.startsWith('ORDER:')) {
+            return { valid: false, orderId: null, isLegacy: false };
+        }
+
+        const parts = qrCode.split(':');
+
+        // Legacy format: ORDER:{orderId}
+        if (parts.length === 2) {
+            return { valid: true, orderId: parts[1], isLegacy: true };
+        }
+
+        // Signed format: ORDER:{orderId}:{signature}
+        if (parts.length === 3) {
+            const orderId = parts[1];
+            const signature = parts[2];
+            const expectedSignature = this.signOrderId(orderId);
+            const valid = signature === expectedSignature;
+            return { valid, orderId: valid ? orderId : null, isLegacy: false };
+        }
+
+        return { valid: false, orderId: null, isLegacy: false };
+    }
+
+    /**
+     * Parses QR code string to extract order ID (backward-compatible)
      */
     parseQRCode(qrCode: string): string | null {
-        if (qrCode.startsWith('ORDER:')) {
-            return qrCode.replace('ORDER:', '');
-        }
-        return null;
+        const result = this.verifyQRSignature(qrCode);
+        return result.valid ? result.orderId : null;
     }
 
     /**
