@@ -28,6 +28,7 @@ import customerSupportController from "./support/customer-support.controller";
 import retentionController from "./retention/retention.controller";
 import nudgeEndpoint from "./retention/nudge.endpoint";
 import whatsappWebhook from "./whatsapp/whatsapp.webhook";
+import legalController from "./legal/legal.controller";
 import { AppError } from "./lib/errors";
 
 if (!process.env.JWT_SECRET) {
@@ -143,6 +144,7 @@ fastify.register(customerSupportController, { prefix: "/customer/support" });
 fastify.register(retentionController, { prefix: "/retention" });
 fastify.register(nudgeEndpoint, { prefix: "/internal/nudge" });
 fastify.register(whatsappWebhook, { prefix: "/whatsapp/webhook" });
+fastify.register(legalController, { prefix: "/legal" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {
