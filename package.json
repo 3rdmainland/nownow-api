@@ -31,6 +31,7 @@
     "@mgcrea/pino-pretty-compact": "^1.4.2",
     "@sinclair/typebox": "^0.34.41",
     "@supabase/supabase-js": "^2.57.4",
+    "@upstash/qstash": "^2.10.1",
     "@upstash/redis": "^1.35.6",
     "dayjs": "^1.11.18",
     "dotenv": "^17.2.2",

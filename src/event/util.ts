@@ -13,6 +13,7 @@ export function toDbEvent(event: Partial<Event>) {
         code: event.code,
         status: event.status,
         branding: event.branding ?? undefined,
+        event_type: event.eventType ?? 'default',
     };
 }
 
@@ -32,5 +33,6 @@ export function fromDbEvent(dbEvent: any): Event {
         updated_at: dbEvent.updated_at,
         vendorIds: dbEvent.vendorIds ?? [],
         branding: dbEvent.branding ?? undefined,
+        eventType: dbEvent.event_type ?? 'default',
     };
 }

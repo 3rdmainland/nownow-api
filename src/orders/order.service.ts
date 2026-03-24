@@ -544,6 +544,29 @@ export class OrderService {
             console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
         }
 
+        // Schedule retention nudges (fire-and-forget, non-fatal)
+        try {
+            if (order.customer_id && order.phone && process.env.NODE_ENV !== 'test') {
+                const { NudgeScheduler } = await import('../retention/nudge.scheduler.js');
+                const { data: event } = await supabase
+                    .from('events')
+                    .select('id, name, code, end_date, event_type')
+                    .eq('id', order.event_id)
+                    .single();
+
+                if (event) {
+                    const scheduler = new NudgeScheduler();
+                    void scheduler
+                        .scheduleRetentionNudges(order, event)
+                        .catch((err: any) => {
+                            console.error('Retention scheduling error (non-fatal):', err?.message || err);
+                        });
+                }
+            }
+        } catch (retentionErr) {
+            console.error('Retention import error (non-fatal):', (retentionErr as any)?.message || retentionErr);
+        }
+
         return updatedOrder;
     }
 

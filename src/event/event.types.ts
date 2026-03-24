@@ -1,5 +1,7 @@
 export type EventStatus = 'ACTIVE' | 'CANCELED';
 
+export type EventType = 'festival' | 'concert' | 'party' | 'farmers_market' | 'food_festival' | 'corporate' | 'sports' | 'default';
+
 export interface EventBranding {
     theme?: {
         primary?: string;
@@ -46,4 +48,5 @@ export interface Event {
     menuStatus?: 'DRAFT' | 'PUBLISHED' | 'NOT_CONFIGURED';
     menuTemplateName?: string;
     branding?: EventBranding;
+    eventType?: EventType;
 }

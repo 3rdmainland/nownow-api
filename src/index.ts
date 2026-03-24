@@ -25,6 +25,9 @@ import adminAuthController from "./admin-auth/admin-auth.controller";
 import adminController from "./admin/admin.controller";
 import supportController from "./support/support.controller";
 import customerSupportController from "./support/customer-support.controller";
+import retentionController from "./retention/retention.controller";
+import nudgeEndpoint from "./retention/nudge.endpoint";
+import whatsappWebhook from "./whatsapp/whatsapp.webhook";
 import { AppError } from "./lib/errors";
 
 if (!process.env.JWT_SECRET) {
@@ -70,7 +73,7 @@ await fastify.register(fastifyCors, {
         "https://nownow-admin.vercel.app"
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Upstash-Signature'],
     credentials: true,
 });
 
@@ -137,6 +140,9 @@ fastify.register(adminAuthController, { prefix: "/admin/auth" });
 fastify.register(adminController, { prefix: "/admin" });
 fastify.register(supportController, { prefix: "/support" });
 fastify.register(customerSupportController, { prefix: "/customer/support" });
+fastify.register(retentionController, { prefix: "/retention" });
+fastify.register(nudgeEndpoint, { prefix: "/internal/nudge" });
+fastify.register(whatsappWebhook, { prefix: "/whatsapp/webhook" });
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {

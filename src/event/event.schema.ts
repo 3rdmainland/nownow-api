@@ -77,6 +77,10 @@ const eventSchema = {
             enum: ["DRAFT", "PUBLISHED", "NOT_CONFIGURED"]
         },
         menuTemplateName: { type: "string" },
+        eventType: {
+            type: "string",
+            enum: ["festival", "concert", "party", "farmers_market", "food_festival", "corporate", "sports", "default"]
+        },
     },
     required: [
         "id",
@@ -160,6 +164,10 @@ export const createEventSchema = {
             vendorIds: { type: "array", items: { type: "string" } },
             code: { type: "string" },
             branding: brandingSchema,
+            eventType: {
+                type: "string",
+                enum: ["festival", "concert", "party", "farmers_market", "food_festival", "corporate", "sports", "default"]
+            },
         },
         required: ["name", "startDate", "endDate", "location", "isPublic", "vendorIds", "code"]
     },
@@ -196,6 +204,10 @@ export const updateEventSchema = {
             vendorIds: { type: "array", items: { type: "string" } },
             code: { type: "string" },
             branding: brandingSchema,
+            eventType: {
+                type: "string",
+                enum: ["festival", "concert", "party", "farmers_market", "food_festival", "corporate", "sports", "default"]
+            },
         }
     },
     response: {

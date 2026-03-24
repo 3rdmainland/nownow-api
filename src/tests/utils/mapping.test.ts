@@ -195,6 +195,7 @@ describe('Event Utils', () => {
         code: 'TESTEVENT',
         status: 'ACTIVE',
         branding: undefined,
+        event_type: 'default',
       });
     });
 
@@ -256,6 +257,7 @@ describe('Event Utils', () => {
         updated_at: '2026-01-02T00:00:00Z',
         vendorIds: [],
         branding: { theme: { primary: '#000' } },
+        eventType: 'default',
       });
     });
 
