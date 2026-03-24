@@ -352,6 +352,114 @@ export const unsuspendUserSchema = {
   },
 };
 
+export const getUserDetailSchema = {
+  description: 'Get detailed user info by type and ID',
+  tags: ['admin'],
+  params: {
+    type: 'object',
+    required: ['type', 'id'],
+    properties: {
+      type: { type: 'string', enum: ['vendor', 'organizer', 'customer'] },
+      id: { type: 'string' },
+    },
+  },
+  response: {
+    200: { type: 'object', additionalProperties: true },
+    404: errorResponse,
+  },
+};
+
+export const updateUserSchema = {
+  description: 'Update user fields by type and ID',
+  tags: ['admin'],
+  params: {
+    type: 'object',
+    required: ['type', 'id'],
+    properties: {
+      type: { type: 'string', enum: ['vendor', 'organizer', 'customer'] },
+      id: { type: 'string' },
+    },
+  },
+  body: {
+    type: 'object',
+    additionalProperties: true,
+  },
+  response: {
+    200: { type: 'object', properties: { message: { type: 'string' } } },
+    404: errorResponse,
+  },
+};
+
+export const deleteUserSchema = {
+  description: 'Delete a user by type and ID',
+  tags: ['admin'],
+  params: {
+    type: 'object',
+    required: ['type', 'id'],
+    properties: {
+      type: { type: 'string', enum: ['vendor', 'organizer', 'customer'] },
+      id: { type: 'string' },
+    },
+  },
+  response: {
+    200: { type: 'object', properties: { message: { type: 'string' } } },
+    404: errorResponse,
+  },
+};
+
+export const inviteUserSchema = {
+  description: 'Invite a vendor or organizer user',
+  tags: ['admin'],
+  params: {
+    type: 'object',
+    required: ['type'],
+    properties: {
+      type: { type: 'string', enum: ['vendor', 'organizer'] },
+    },
+  },
+  body: {
+    type: 'object',
+    required: ['email'],
+    properties: {
+      email: { type: 'string', format: 'email' },
+      vendorId: { type: 'string' },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        inviteToken: { type: 'string' },
+        expiresAt: { type: 'string' },
+      },
+    },
+    400: errorResponse,
+  },
+};
+
+export const sendResetLinkSchema = {
+  description: 'Generate a password reset link for a user',
+  tags: ['admin'],
+  params: {
+    type: 'object',
+    required: ['type', 'id'],
+    properties: {
+      type: { type: 'string', enum: ['vendor', 'organizer'] },
+      id: { type: 'string' },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        token: { type: 'string' },
+        resetUrl: { type: 'string' },
+      },
+    },
+    404: errorResponse,
+  },
+};
+
 export const resetUserPasswordSchema = {
   description: 'Admin-initiated password reset for a user',
   tags: ['admin'],

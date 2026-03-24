@@ -8,6 +8,11 @@ import {
   suspendUserSchema,
   unsuspendUserSchema,
   resetUserPasswordSchema,
+  getUserDetailSchema,
+  updateUserSchema,
+  deleteUserSchema,
+  inviteUserSchema,
+  sendResetLinkSchema,
   auditLogsSchema,
   getConfigSchema,
   setConfigSchema,
@@ -86,6 +91,50 @@ const adminController: FastifyPluginAsync = async (fastify) => {
     await adminService.resetUserPassword(type, id, newPassword);
     await adminService.logAction(userId, 'password_reset', type, id, null, request.ip);
     return { message: 'Password reset successfully' };
+  });
+
+  // GET /admin/users/:type/:id — View user detail
+  fastify.get('/users/:type/:id', { schema: getUserDetailSchema }, async (request, reply) => {
+    const { type, id } = request.params as { type: string; id: string };
+    return adminService.getUserDetail(type, id);
+  });
+
+  // PATCH /admin/users/:type/:id — Update user
+  fastify.patch('/users/:type/:id', { schema: updateUserSchema }, async (request, reply) => {
+    const { type, id } = request.params as { type: string; id: string };
+    const payload = request.body as Record<string, unknown>;
+    const { userId } = request.user as AdminJwtPayload;
+    await adminService.updateUser(type, id, payload);
+    await adminService.logAction(userId, 'user_updated', type, id, payload, request.ip);
+    return { message: 'User updated' };
+  });
+
+  // DELETE /admin/users/:type/:id — Delete user
+  fastify.delete('/users/:type/:id', { schema: deleteUserSchema }, async (request, reply) => {
+    const { type, id } = request.params as { type: string; id: string };
+    const { userId } = request.user as AdminJwtPayload;
+    await adminService.deleteUser(type, id);
+    await adminService.logAction(userId, 'user_deleted', type, id, null, request.ip);
+    return { message: 'User deleted' };
+  });
+
+  // POST /admin/users/:type/invite — Invite vendor/organizer
+  fastify.post('/users/:type/invite', { schema: inviteUserSchema }, async (request, reply) => {
+    const { type } = request.params as { type: string };
+    const { email, vendorId } = request.body as { email: string; vendorId?: string };
+    const { userId } = request.user as AdminJwtPayload;
+    const result = await adminService.inviteUser(type, { email, vendorId });
+    await adminService.logAction(userId, 'user_invited', type, null, { email, vendorId }, request.ip);
+    return result;
+  });
+
+  // POST /admin/users/:type/:id/send-reset-link — Generate reset link
+  fastify.post('/users/:type/:id/send-reset-link', { schema: sendResetLinkSchema }, async (request, reply) => {
+    const { type, id } = request.params as { type: string; id: string };
+    const { userId } = request.user as AdminJwtPayload;
+    const result = await adminService.sendResetLink(type, id);
+    await adminService.logAction(userId, 'reset_link_sent', type, id, null, request.ip);
+    return result;
   });
 
   // GET /admin/audit-logs

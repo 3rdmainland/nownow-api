@@ -204,3 +204,65 @@ export interface UserListParams {
   page?: number;
   limit?: number;
 }
+
+export interface VendorUserDetail {
+  id: string;
+  email: string;
+  name: string;
+  vendorId: string | null;
+  vendorName: string | null;
+  isActive: boolean;
+  createdAt: string;
+  orderCount: number;
+  totalRevenue: number;
+}
+
+export interface OrganizerUserDetail {
+  id: string;
+  email: string;
+  name: string;
+  phone: string | null;
+  organization: string | null;
+  isActive: boolean;
+  createdAt: string;
+  eventCount: number;
+  activeEventCount: number;
+}
+
+export interface CustomerDetail {
+  id: string;
+  phone: string;
+  name: string | null;
+  isActive: boolean;
+  createdAt: string;
+  orderCount: number;
+  totalSpend: number;
+}
+
+export type UserDetail = VendorUserDetail | OrganizerUserDetail | CustomerDetail;
+
+export interface UpdateVendorUserPayload {
+  email?: string;
+  name?: string;
+}
+
+export interface UpdateOrganizerPayload {
+  name?: string;
+  email?: string;
+  phone?: string;
+  organization?: string;
+}
+
+export interface UpdateCustomerPayload {
+  name?: string;
+  phone?: string;
+}
+
+export interface InviteVendorPayload {
+  email: string;
+  vendorId: string;
+}
+
+export interface InviteOrganizerPayload {
+  email: string;
+}

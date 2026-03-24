@@ -20,10 +20,16 @@ import {
   Alert,
   SystemHealth,
   StakeholderStats,
+  VendorUserDetail,
+  OrganizerUserDetail,
+  CustomerDetail,
+  UserDetail,
 } from './admin.types.js';
 import { getConnectionStats, broadcastToAdmins } from '../websocket/index.js';
 import redis, { cache } from '../lib/redis.js';
 import bcrypt from 'bcryptjs';
+import { AuthService } from '../auth/auth.service.js';
+import { OrganizerAuthService } from '../organizer/organizer-auth.service.js';
 
 const SALT_ROUNDS = 10;
 
@@ -1085,5 +1091,193 @@ export class AdminService {
         })),
       },
     };
+  }
+
+  async getUserDetail(type: string, id: string): Promise<UserDetail> {
+    const table = USER_TABLES[type];
+    if (!table) throw new ValidationError(`Invalid user type: ${type}`);
+
+    const { data: user, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !user) throw new NotFoundError('User not found');
+
+    if (type === 'vendor') {
+      // Get linked vendor entity and order stats
+      const { data: vendor } = await supabase
+        .from('vendors')
+        .select('id, name')
+        .eq('user_id', id)
+        .single();
+
+      let orderCount = 0;
+      let totalRevenue = 0;
+      if (vendor) {
+        const { data: orders } = await supabase
+          .from('orders')
+          .select('id, total')
+          .eq('vendor_id', vendor.id);
+        orderCount = (orders || []).length;
+        totalRevenue = (orders || []).reduce((sum: number, o: any) => sum + (Number(o.total) || 0), 0);
+      }
+
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name || '',
+        vendorId: vendor?.id || null,
+        vendorName: vendor?.name || null,
+        isActive: user.is_active !== false,
+        createdAt: user.created_at,
+        orderCount,
+        totalRevenue,
+      } as VendorUserDetail;
+    }
+
+    if (type === 'organizer') {
+      const { count: eventCount } = await supabase
+        .from('events')
+        .select('id', { count: 'exact', head: true })
+        .eq('organizer_id', id);
+
+      const { count: activeEventCount } = await supabase
+        .from('events')
+        .select('id', { count: 'exact', head: true })
+        .eq('organizer_id', id)
+        .eq('is_active', true);
+
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name || '',
+        phone: user.phone || null,
+        organization: user.organization || null,
+        isActive: user.is_active !== false,
+        createdAt: user.created_at,
+        eventCount: eventCount || 0,
+        activeEventCount: activeEventCount || 0,
+      } as OrganizerUserDetail;
+    }
+
+    // customer
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('id, total')
+      .eq('phone', user.phone);
+
+    return {
+      id: user.id,
+      phone: user.phone,
+      name: user.name || null,
+      isActive: user.is_active !== false,
+      createdAt: user.created_at,
+      orderCount: (orders || []).length,
+      totalSpend: (orders || []).reduce((sum: number, o: any) => sum + (Number(o.total) || 0), 0),
+    } as CustomerDetail;
+  }
+
+  async updateUser(type: string, id: string, payload: Record<string, unknown>): Promise<void> {
+    const table = USER_TABLES[type];
+    if (!table) throw new ValidationError(`Invalid user type: ${type}`);
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from(table)
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existing) throw new NotFoundError('User not found');
+
+    // Build update object based on type, only allowing valid fields
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (type === 'vendor') {
+      if (payload.email !== undefined) update.email = payload.email;
+      if (payload.name !== undefined) update.name = payload.name;
+    } else if (type === 'organizer') {
+      if (payload.name !== undefined) update.name = payload.name;
+      if (payload.email !== undefined) update.email = payload.email;
+      if (payload.phone !== undefined) update.phone = payload.phone;
+      if (payload.organization !== undefined) update.organization = payload.organization;
+    } else {
+      // customer
+      if (payload.name !== undefined) update.name = payload.name;
+      if (payload.phone !== undefined) update.phone = payload.phone;
+    }
+
+    const { error } = await supabase
+      .from(table)
+      .update(update)
+      .eq('id', id);
+
+    if (error) throw new Error(`Failed to update user: ${error.message}`);
+  }
+
+  async deleteUser(type: string, id: string): Promise<void> {
+    const table = USER_TABLES[type];
+    if (!table) throw new ValidationError(`Invalid user type: ${type}`);
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from(table)
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existing) throw new NotFoundError('User not found');
+
+    const { error } = await supabase
+      .from(table)
+      .delete()
+      .eq('id', id);
+
+    if (error) throw new Error(`Failed to delete user: ${error.message}`);
+  }
+
+  async inviteUser(type: string, payload: { email: string; vendorId?: string }): Promise<{ inviteToken: string; expiresAt: string }> {
+    if (type === 'vendor') {
+      if (!payload.vendorId) throw new ValidationError('vendorId is required for vendor invites');
+      const authService = new AuthService();
+      return authService.createInvite({ vendorId: payload.vendorId, email: payload.email });
+    }
+    if (type === 'organizer') {
+      const orgAuthService = new OrganizerAuthService();
+      return orgAuthService.createInvite({ email: payload.email });
+    }
+    throw new ValidationError('Invites are only supported for vendor and organizer users');
+  }
+
+  async sendResetLink(type: string, id: string): Promise<{ token: string; resetUrl: string }> {
+    if (type !== 'vendor' && type !== 'organizer') {
+      throw new ValidationError('Password reset is only supported for vendor and organizer users');
+    }
+
+    const table = USER_TABLES[type];
+    const { data: user, error } = await supabase
+      .from(table!)
+      .select('id, email')
+      .eq('id', id)
+      .single();
+
+    if (error || !user) throw new NotFoundError('User not found');
+
+    let token: string;
+    if (type === 'vendor') {
+      const authService = new AuthService();
+      const result = await authService.createPasswordReset(user.email);
+      token = result.token;
+    } else {
+      const orgAuthService = new OrganizerAuthService();
+      const result = await orgAuthService.createPasswordReset(user.email);
+      token = result.token;
+    }
+
+    const baseUrl = type === 'vendor'
+      ? (process.env.VENDOR_APP_URL || 'http://localhost:3001')
+      : (process.env.ORGANIZER_APP_URL || 'http://localhost:3003');
+    const resetUrl = `${baseUrl}/auth/reset-password?token=${token}`;
+
+    return { token, resetUrl };
   }
 }
