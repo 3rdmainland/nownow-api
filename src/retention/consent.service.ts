@@ -81,6 +81,29 @@ export class ConsentService {
   }
 
   /**
+   * Revoke all marketing consent for a phone number (token-based opt-out, no auth required).
+   */
+  async revokeAllByPhone(phone: string): Promise<number> {
+    const { data, error } = await supabase
+      .from('whatsapp_consents')
+      .update({
+        granted: false,
+        revoked_at: new Date().toISOString(),
+      })
+      .eq('phone', phone)
+      .eq('consent_type', 'marketing')
+      .eq('granted', true)
+      .select('id');
+
+    if (error) {
+      console.error('ConsentService.revokeAllByPhone failed:', error.message);
+      throw new Error(`Failed to revoke consents: ${error.message}`);
+    }
+
+    return data?.length ?? 0;
+  }
+
+  /**
    * Get full consent status for a customer at a specific event.
    */
   async getConsentStatus(

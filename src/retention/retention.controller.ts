@@ -64,6 +64,39 @@ const retentionController: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  // ── Token-based opt-out (no auth — POPIA compliance) ──────────────
+
+  fastify.post<{
+    Body: { token: string };
+  }>(
+    '/opt-out',
+    async (request, reply) => {
+      const { token } = request.body ?? {};
+      if (!token || typeof token !== 'string') {
+        return reply.status(400).send({ error: 'Missing opt-out token' });
+      }
+
+      // Token is base64(phone) — simple, no secrets needed for revocation
+      let phone: string;
+      try {
+        phone = Buffer.from(token, 'base64').toString('utf-8');
+        // Basic phone validation
+        if (!/^\+?\d{7,15}$/.test(phone.replace(/\s/g, ''))) {
+          return reply.status(400).send({ error: 'Invalid opt-out token' });
+        }
+      } catch {
+        return reply.status(400).send({ error: 'Invalid opt-out token' });
+      }
+
+      try {
+        const count = await consentService.revokeAllByPhone(phone);
+        return { success: true, revokedCount: count };
+      } catch (err: any) {
+        return reply.status(500).send({ error: err.message });
+      }
+    },
+  );
+
   // ── Admin stats endpoint ───────────────────────────────────────────
 
   fastify.get(
