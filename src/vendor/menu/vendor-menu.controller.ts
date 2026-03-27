@@ -5,6 +5,7 @@
 
 import { FastifyPluginAsync } from "fastify";
 import { VendorMenuService } from "./vendor-menu.service";
+import { requireFeature } from "../../lib/feature-flags.js";
 import {
     // Default Menu Schemas
     getDefaultMenuSchema,
@@ -475,7 +476,7 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
      */
     fastify.get<{ Params: { vendorId: string } }>(
         "/:vendorId/menu/templates",
-        { schema: getTemplatesSchema },
+        { schema: getTemplatesSchema, preHandler: [requireFeature('menu_templates')] },
         async (request, reply) => {
             try {
                 const templates = await menuService.getVendorTemplates(request.params.vendorId);
@@ -493,7 +494,7 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
      */
     fastify.get<{ Params: { vendorId: string; templateId: string } }>(
         "/:vendorId/menu/templates/:templateId",
-        { schema: getTemplateSchema },
+        { schema: getTemplateSchema, preHandler: [requireFeature('menu_templates')] },
         async (request, reply) => {
             try {
                 const response = await menuService.getTemplate(
@@ -514,7 +515,7 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
      */
     fastify.post<{ Params: { vendorId: string } }>(
         "/:vendorId/menu/templates",
-        { schema: createTemplateSchema },
+        { schema: createTemplateSchema, preHandler: [requireFeature('menu_templates')] },
         async (request, reply) => {
             try {
                 const template = await menuService.createTemplate(
@@ -535,7 +536,7 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
      */
     fastify.put<{ Params: { vendorId: string; templateId: string } }>(
         "/:vendorId/menu/templates/:templateId",
-        { schema: updateTemplateSchema },
+        { schema: updateTemplateSchema, preHandler: [requireFeature('menu_templates')] },
         async (request, reply) => {
             try {
                 const template = await menuService.updateTemplate(
@@ -557,7 +558,7 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
      */
     fastify.delete<{ Params: { vendorId: string; templateId: string } }>(
         "/:vendorId/menu/templates/:templateId",
-        { schema: deleteTemplateSchema },
+        { schema: deleteTemplateSchema, preHandler: [requireFeature('menu_templates')] },
         async (request, reply) => {
             try {
                 await menuService.deleteTemplate(
@@ -578,7 +579,7 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
      */
     fastify.post<{ Params: { vendorId: string; templateId: string } }>(
         "/:vendorId/menu/templates/:templateId/apply",
-        { schema: applyTemplateSchema },
+        { schema: applyTemplateSchema, preHandler: [requireFeature('menu_templates')] },
         async (request, reply) => {
             try {
                 const { eventId, overrideExisting } = request.body as any;

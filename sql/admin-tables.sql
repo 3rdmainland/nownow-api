@@ -36,5 +36,5 @@ CREATE TABLE platform_config (
 -- Seed initial config entries
 INSERT INTO platform_config (key, value) VALUES
   ('platform_fee_percentage', '12'),
-  ('feature_flags', '{"admin_dashboard": true}'),
+  ('feature_flags', '{"admin_dashboard": true, "vendor_pos": false, "vendor_billing": false, "menu_templates": false, "discounts": false, "retention": false, "reorder": false, "push_notifications": false}'),
   ('branding_overrides', '{}');

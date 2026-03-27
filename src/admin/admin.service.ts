@@ -27,6 +27,7 @@ import {
 } from './admin.types.js';
 import { getConnectionStats, broadcastToAdmins } from '../websocket/index.js';
 import redis, { cache } from '../lib/redis.js';
+import { invalidateFeatureFlagsCache } from '../lib/feature-flags.js';
 import bcrypt from 'bcryptjs';
 import { AuthService } from '../auth/auth.service.js';
 import { OrganizerAuthService } from '../organizer/organizer-auth.service.js';
@@ -249,6 +250,10 @@ export class AdminService {
       }, { onConflict: 'key' });
 
     if (error) throw new Error(`Failed to set config: ${error.message}`);
+
+    if (key === 'feature_flags') {
+      await invalidateFeatureFlagsCache();
+    }
   }
 
   async getVendorPipeline(): Promise<VendorPipelineStage[]> {

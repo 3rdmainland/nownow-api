@@ -749,7 +749,7 @@ describe('Order Controller (integration via inject)', () => {
 
             expect(res.statusCode).toBe(400);
             const body = res.json<{ error: string }>();
-            expect(body.error).toMatch(/invalid qr/i);
+            expect(body.error).toMatch(/invalid.*qr/i);
         });
 
         it('returns 404 when the order is not found', async () => {
@@ -791,7 +791,7 @@ describe('Order Controller (integration via inject)', () => {
 
             expect(res.statusCode).toBe(400);
             const body = res.json<{ error: string }>();
-            expect(body.error).toMatch(/invalid qr|forged/i);
+            expect(body.error).toMatch(/invalid.*qr|forged/i);
         });
 
         it('returns 400 when order is not in READY status', async () => {
@@ -806,7 +806,7 @@ describe('Order Controller (integration via inject)', () => {
 
             expect(res.statusCode).toBe(400);
             const body = res.json<{ error: string }>();
-            expect(body.error).toMatch(/cannot be collected/i);
+            expect(body.error).toMatch(/still being prepared/i);
         });
     });
 });

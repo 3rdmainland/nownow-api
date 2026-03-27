@@ -51,6 +51,32 @@ export class LegalService {
     return data as LegalAcceptance;
   }
 
+  /** Check if a customer has accepted the currently published version of a document */
+  async hasAccepted(
+    slug: string,
+    customerId: string | null,
+    customerPhone: string | null,
+  ): Promise<boolean> {
+    const doc = await this.getPublished(slug).catch(() => null);
+    if (!doc) return false;
+
+    let query = supabase
+      .from('legal_acceptances')
+      .select('id', { count: 'exact', head: true })
+      .eq('document_id', doc.id);
+
+    if (customerId) {
+      query = query.eq('customer_id', customerId);
+    } else if (customerPhone) {
+      query = query.eq('customer_phone', customerPhone);
+    } else {
+      return false;
+    }
+
+    const { count } = await query;
+    return (count ?? 0) > 0;
+  }
+
   // ── Admin ───────────────────────────────────────────────────────────
 
   /** List all documents (latest version per slug) */

@@ -5,6 +5,7 @@ export interface RequestOtpPayload {
 export interface VerifyOtpPayload {
   phone: string;
   code: string;
+  name?: string;
 }
 
 export interface CustomerJwtPayload {

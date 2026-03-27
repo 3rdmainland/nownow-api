@@ -71,6 +71,7 @@ export interface Order {
     age_verified?: boolean;
     age_verified_at?: string;
     customer_id?: string;
+    customer_name?: string;
 }
 
 export interface PaginationParams {

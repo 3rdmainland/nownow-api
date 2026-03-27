@@ -29,7 +29,10 @@ import retentionController from "./retention/retention.controller";
 import nudgeEndpoint from "./retention/nudge.endpoint";
 import whatsappWebhook from "./whatsapp/whatsapp.webhook";
 import legalController from "./legal/legal.controller";
+import settlementController from "./settlement/settlement.controller";
+import vendorSettlementController from "./settlement/vendor-settlement.controller";
 import { AppError } from "./lib/errors";
+import { getFeatureFlags } from "./lib/feature-flags";
 
 if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET environment variable is required");
@@ -145,6 +148,14 @@ fastify.register(retentionController, { prefix: "/retention" });
 fastify.register(nudgeEndpoint, { prefix: "/internal/nudge" });
 fastify.register(whatsappWebhook, { prefix: "/whatsapp/webhook" });
 fastify.register(legalController, { prefix: "/legal" });
+fastify.register(settlementController, { prefix: "/settlement" });
+fastify.register(vendorSettlementController, { prefix: "/vendor" });
+
+// Public feature flags endpoint (no auth required)
+fastify.get('/config/flags', async () => {
+    const flags = await getFeatureFlags();
+    return { flags };
+});
 
 // Register health check route with redis
 fastify.get('/health', async (request, reply) => {

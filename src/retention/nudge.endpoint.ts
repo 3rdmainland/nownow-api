@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { Receiver } from '@upstash/qstash';
 import { processNudge } from './nudge.processor.js';
+import { requireFeature } from '../lib/feature-flags.js';
 
 const receiver = (process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_NEXT_SIGNING_KEY)
   ? new Receiver({
@@ -14,6 +15,7 @@ const receiver = (process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_N
  * NOT a public API — only QStash should call this (verified via signature).
  */
 const nudgeEndpoint: FastifyPluginAsync = async (fastify) => {
+  fastify.addHook('preHandler', requireFeature('retention'));
   fastify.post<{ Body: { nudgeId: string } }>(
     '/send',
     async (request, reply) => {

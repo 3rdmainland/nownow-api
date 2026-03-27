@@ -1,6 +1,7 @@
 import {
-  StitchClientTokenResponse,
-  StitchPaymentRequestResponse,
+  StitchExpressTokenResponse,
+  StitchPaymentLinkResponse,
+  StitchPaymentStatusResponse,
   CreatePaymentResult,
 } from './payment.types.js';
 import { ServiceUnavailableError, InternalError } from '../lib/errors.js';
@@ -10,8 +11,8 @@ export class PaymentService {
   private tokenExpiresAt: number = 0;
 
   /**
-   * Get a client token from Stitch OAuth2 endpoint.
-   * Tokens are cached until expiry.
+   * Get a client token from Stitch Express token endpoint.
+   * Tokens are cached until 1 minute before expiry.
    */
   async getClientToken(): Promise<string> {
     if (this.clientToken && Date.now() < this.tokenExpiresAt - 60_000) {
@@ -25,13 +26,12 @@ export class PaymentService {
       throw new InternalError('Stitch credentials not configured');
     }
 
-    const res = await fetch('https://secure.stitch.money/connect/token', {
+    const res = await fetch('https://express.stitch.money/api/v1/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: clientId,
-        client_secret: clientSecret,
+      headers: { 'Content-Type': 'application/json', 'accept': 'application/json' },
+      body: JSON.stringify({
+        clientId,
+        clientSecret,
         scope: 'client_paymentrequest',
       }),
     });
@@ -41,109 +41,88 @@ export class PaymentService {
       throw new ServiceUnavailableError(`Stitch token request failed: ${res.status} ${text}`);
     }
 
-    const data = await res.json() as StitchClientTokenResponse;
-    this.clientToken = data.access_token;
-    this.tokenExpiresAt = Date.now() + data.expires_in * 1000;
+    const body = await res.json() as StitchExpressTokenResponse;
+    const accessToken = body.data.accessToken;
+    this.clientToken = accessToken;
+    // Express tokens last 15 minutes; cache conservatively
+    this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
 
-    return this.clientToken;
+    return accessToken;
   }
 
   /**
-   * Create a payment request via Stitch GraphQL API.
-   * Returns the payment ID and redirect URL.
+   * Create a payment link via Stitch Express REST API.
+   * Returns the payment ID and payment link URL.
    */
   async createPaymentRequest(
     orderId: string,
     amountInCents: number,
-    vendorName: string
+    payerName: string,
+    payerPhone?: string
   ): Promise<CreatePaymentResult> {
     const token = await this.getClientToken();
 
-    const redirectUrl = `${process.env.STITCH_REDIRECT_BASE_URL}/checkout/payment-callback`;
-
-    const mutation = `
-      mutation CreatePaymentRequest(
-        $amount: MoneyInput!,
-        $externalReference: String!,
-        $beneficiary: BeneficiaryInput!,
-        $merchant: MerchantInput!,
-        $paymentMethods: PaymentMethodsInput
-      ) {
-        clientPaymentInitiationRequestCreate(input: {
-          amount: $amount,
-          externalReference: $externalReference,
-          beneficiary: $beneficiary,
-          merchant: $merchant,
-          paymentMethods: $paymentMethods
-        }) {
-          paymentInitiationRequest {
-            id
-            url
-          }
-        }
-      }
-    `;
-
-    const variables = {
-      amount: {
-        quantity: amountInCents.toString(),
-        currency: 'ZAR',
-      },
-      externalReference: orderId,
-      beneficiary: {
-        bankAccount: {
-          name: process.env.STITCH_BENEFICIARY_NAME,
-          bankId: process.env.STITCH_BENEFICIARY_BANK_ID,
-          accountNumber: process.env.STITCH_BENEFICIARY_ACCOUNT,
-          accountType: process.env.STITCH_BENEFICIARY_ACCOUNT_TYPE || 'current',
-          beneficiaryType: process.env.STITCH_BENEFICIARY_TYPE || 'private',
-          reference: `NowNow-${orderId.slice(0, 12)}`,
-        },
-      },
-      merchant: {
-        name: vendorName,
-        url: process.env.STITCH_REDIRECT_BASE_URL || 'https://nownow.co.za',
-      },
-      paymentMethods: {
-        card: { enabled: true },
-        applePay: { enabled: true },
-        googlePay: { enabled: true },
-      },
+    const payload: Record<string, unknown> = {
+      amount: amountInCents,
+      merchantReference: orderId.slice(0, 50),
+      payerName: payerName.slice(0, 40),
     };
+    if (payerPhone) payload.payerPhoneNumber = payerPhone;
 
-    const apiUrl = process.env.STITCH_API_URL || 'https://api.stitch.money/graphql';
-
-    const res = await fetch(apiUrl, {
+    const res = await fetch('https://express.stitch.money/api/v1/payment-links', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ query: mutation, variables }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
       const text = await res.text();
-      throw new ServiceUnavailableError(`Stitch payment request failed: ${res.status} ${text}`);
+      throw new ServiceUnavailableError(`Stitch payment link failed: ${res.status} ${text}`);
     }
 
-    const json = await res.json() as { data: StitchPaymentRequestResponse; errors?: Array<{ message: string }> };
+    const body = await res.json() as StitchPaymentLinkResponse;
 
-    if (json.errors?.length) {
-      throw new ServiceUnavailableError(
-        `Stitch GraphQL error: ${json.errors.map(e => e.message).join(', ')}`
-      );
+    if (!body.success || !body.data?.payment) {
+      throw new InternalError('Stitch returned no payment data');
     }
 
-    const result = json.data.clientPaymentInitiationRequestCreate.paymentInitiationRequest;
-    if (!result) {
-      throw new InternalError('Stitch returned null payment request');
-    }
+    const payment = body.data.payment;
+
+    // Append redirect URL so Stitch redirects back to our app after payment
+    const redirectBase = process.env.STITCH_REDIRECT_BASE_URL || 'http://localhost:3000';
+    const redirectUrl = `${redirectBase}/checkout/payment-callback`;
+    const paymentUrl = `${payment.link}?redirect_uri=${encodeURIComponent(redirectUrl)}`;
 
     return {
-      paymentId: result.id,
-      paymentUrl: `${result.url}?redirect_uri=${encodeURIComponent(redirectUrl)}`,
+      paymentId: payment.id,
+      paymentUrl,
     };
+  }
+
+  /**
+   * Poll Stitch Express for the current status of a payment link.
+   */
+  async checkPaymentStatus(paymentId: string): Promise<string> {
+    const token = await this.getClientToken();
+
+    const res = await fetch(`https://express.stitch.money/api/v1/payment-links/${paymentId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'accept': 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ServiceUnavailableError(`Stitch status check failed: ${res.status} ${text}`);
+    }
+
+    const body = await res.json() as StitchPaymentStatusResponse;
+    return body.data.payment.status;
   }
 
   /**

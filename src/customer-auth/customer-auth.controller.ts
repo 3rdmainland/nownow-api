@@ -47,13 +47,13 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
 
   // POST /customer/auth/verify-otp — Verify OTP, issue JWT, auto-create customer
   fastify.post('/verify-otp', { schema: verifyOtpSchema }, async (request, reply) => {
-    const { phone, code } = request.body as VerifyOtpPayload;
+    const { phone, code, name } = request.body as VerifyOtpPayload;
     const normalized = normalizePhone(phone);
 
     await otpService.verifyOtp(normalized, code);
 
-    // Find or create customer
-    const customer = await customerAuthService.findOrCreateByPhone(normalized);
+    // Find or create customer (name is only used for new customers)
+    const { isNewCustomer, ...customer } = await customerAuthService.findOrCreateByPhone(normalized, name);
 
     // Issue JWT
     const jwtPayload: CustomerJwtPayload = {
@@ -72,7 +72,7 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: COOKIE_MAX_AGE,
       })
-      .send({ customer });
+      .send({ customer, isNewCustomer });
   });
 
   // GET /customer/auth/me — Get current customer (sliding session renewal)

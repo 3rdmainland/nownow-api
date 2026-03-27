@@ -4,10 +4,13 @@ import { ConsentService } from './consent.service.js';
 import { grantConsentSchema, revokeConsentSchema, getConsentSchema } from './retention.schema.js';
 import { supabase } from '../lib/supabase.js';
 import type { ConsentType } from './retention.types.js';
+import { requireFeature } from '../lib/feature-flags.js';
 
 const consentService = new ConsentService();
 
 const retentionController: FastifyPluginAsync = async (fastify) => {
+  // Gate entire controller behind the 'retention' feature flag
+  fastify.addHook('preHandler', requireFeature('retention'));
   // ── Consent endpoints (customer-facing) ────────────────────────────
 
   fastify.post<{

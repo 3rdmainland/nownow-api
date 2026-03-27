@@ -32,6 +32,10 @@ vi.mock('../../lib/auth.js', () => ({
   authenticateOrganizer: vi.fn(async (_req: any, _reply: any) => {}),
 }));
 
+vi.mock('../../lib/feature-flags.js', () => ({
+  requireFeature: () => async () => {},
+}));
+
 // Import after mocks
 import { DiscountService } from '../../discount/discount.service.js';
 import discountController from '../../discount/discount.controller.js';

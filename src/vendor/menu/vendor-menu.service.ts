@@ -217,6 +217,25 @@ export class VendorMenuService {
         if (error) throw new Error(`Failed to update menu item: ${error.message}`);
 
         await this.invalidateMenuCaches(vendorId);
+
+        // Also invalidate ALL event menu caches for this vendor — event menus derive
+        // effectivePrice from basePrice when there's no priceOverride, so stale
+        // event caches would serve old prices.
+        if (input.basePrice !== undefined) {
+            const { data: events } = await supabase
+                .from('event_menu_items')
+                .select('event_id')
+                .eq('vendor_id', vendorId)
+                .eq('default_menu_item_id', itemId);
+
+            if (events) {
+                const eventIds = [...new Set(events.map(e => e.event_id))];
+                await Promise.all(
+                    eventIds.map(eid => this.invalidateEventMenuCaches(vendorId, eid))
+                );
+            }
+        }
+
         return fromDbDefaultMenuItem(data);
     }
 
@@ -540,6 +559,9 @@ export class VendorMenuService {
 
         if (error) throw new Error(`Failed to update event menu item: ${error.message}`);
 
+        // Invalidate cache BEFORE broadcasting so clients refetch fresh data
+        await this.invalidateEventMenuCaches(vendorId, eventId);
+
         // Broadcast price update if price changed
         if (input.priceOverride !== undefined && currentItem) {
             const oldPrice = currentItem.price_override ?? currentItem.default_menu_items?.base_price ?? 0;
@@ -573,7 +595,6 @@ export class VendorMenuService {
             });
         }
 
-        await this.invalidateEventMenuCaches(vendorId, eventId);
         return fromDbEventMenuItem(data);
     }
 

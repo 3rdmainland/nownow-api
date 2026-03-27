@@ -110,6 +110,28 @@ const legalController: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  /** GET /legal/:slug/accepted — Check if current customer has accepted (public, optional auth) */
+  fastify.get<{ Params: { slug: string } }>(
+    '/:slug/accepted',
+    { preHandler: [optionalAuthenticateCustomer] },
+    async (request, reply) => {
+      try {
+        const user = request.user as { customerId?: string; phone?: string } | undefined;
+        const customerId = user?.customerId ?? null;
+        const customerPhone = user?.phone ?? null;
+
+        const accepted = await legalService.hasAccepted(
+          request.params.slug,
+          customerId,
+          customerPhone,
+        );
+        return { accepted };
+      } catch (err: any) {
+        return reply.status(500).send({ error: err.message });
+      }
+    },
+  );
+
   /** POST /legal/:slug/accept — Record acceptance (public, optional auth) */
   fastify.post<{ Params: { slug: string }; Body: { customer_phone?: string } }>(
     '/:slug/accept',

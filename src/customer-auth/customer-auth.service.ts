@@ -7,7 +7,7 @@ export class CustomerAuthService {
    * Find existing customer by phone, or create a new one.
    * Used after OTP verification.
    */
-  async findOrCreateByPhone(phone: string): Promise<Customer> {
+  async findOrCreateByPhone(phone: string, name?: string): Promise<Customer & { isNewCustomer: boolean }> {
     // Try to find existing customer
     const { data: existing, error: findErr } = await supabase
       .from('customers')
@@ -29,13 +29,17 @@ export class CustomerAuthService {
         createdAt: existing.created_at,
         updatedAt: existing.updated_at,
         lastLoginAt: new Date().toISOString(),
+        isNewCustomer: false,
       };
     }
+
+    // Sanitize name: strip HTML tags and trim
+    const sanitizedName = name?.replace(/<[^>]*>/g, '').trim() || null;
 
     // Create new customer
     const { data: created, error: createErr } = await supabase
       .from('customers')
-      .insert([{ phone }])
+      .insert([{ phone, ...(sanitizedName ? { name: sanitizedName } : {}) }])
       .select('*')
       .single();
 
@@ -50,6 +54,7 @@ export class CustomerAuthService {
       createdAt: created.created_at,
       updatedAt: created.updated_at,
       lastLoginAt: created.last_login_at,
+      isNewCustomer: true,
     };
   }
 

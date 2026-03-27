@@ -24,6 +24,10 @@ vi.mock('../../websocket/index.js', () => ({
   broadcastAvailabilityUpdate: vi.fn(),
 }));
 
+vi.mock('../../lib/feature-flags.js', () => ({
+  requireFeature: () => async () => {},
+}));
+
 vi.mock('../../discount/discount.service.js', () => ({
   DiscountService: vi.fn(function () {
     return {

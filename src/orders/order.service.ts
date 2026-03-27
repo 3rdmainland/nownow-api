@@ -399,12 +399,26 @@ export class OrderService {
             return { ...updatedOrder, paymentUrl: '' };
         }
 
-        // Online order: create Stitch payment request
+        // Online order: look up customer name for payment (required by Stitch)
+        let payerName: string | null = null;
+        if (order.customer_id) {
+            const { data: customer } = await supabase
+                .from('customers')
+                .select('name')
+                .eq('id', order.customer_id)
+                .single();
+            if (customer?.name) payerName = customer.name;
+        }
+        if (!payerName) {
+            throw new ValidationError('Customer name is required for online payment. Please update your profile.');
+        }
+
         const paymentService = new PaymentService();
         const { paymentId, paymentUrl } = await paymentService.createPaymentRequest(
             updatedOrder.id,
             Math.round(validatedTotal * 100), // Convert rands to cents
-            vendor.name
+            payerName,
+            order.phone
         );
 
         // Store payment reference on order
@@ -477,7 +491,7 @@ export class OrderService {
         const result = qrHelper.verifyQRSignature(qrCode);
 
         if (!result.valid || !result.orderId) {
-            throw new ValidationError('Invalid QR code or forged signature');
+            throw new ValidationError('Invalid or unrecognised QR code');
         }
 
         const orderId = result.orderId;
@@ -500,7 +514,14 @@ export class OrderService {
 
         // Validate order status
         if (order.status !== OrderStatus.READY) {
-            throw new ValidationError(`Order cannot be collected. Current status: ${order.status}`);
+            const statusMessages: Record<string, string> = {
+                [OrderStatus.COLLECTED]: 'This order has already been collected',
+                [OrderStatus.CANCELLED]: 'This order was cancelled',
+                [OrderStatus.PENDING]: 'This order hasn\'t been prepared yet',
+                [OrderStatus.PREPARING]: 'This order is still being prepared',
+                [OrderStatus.PAYMENT_PENDING]: 'Payment hasn\'t been confirmed for this order',
+            };
+            throw new ValidationError(statusMessages[order.status] || `Order cannot be collected (status: ${order.status})`);
         }
 
         // Update order status to COLLECTED
@@ -518,27 +539,28 @@ export class OrderService {
             throw new Error(`Failed to update order: ${updateError.message}`);
         }
 
-        // Fetch vendor name for WhatsApp message
-        const { data: vendor } = await supabase
-            .from('vendors')
-            .select('name')
-            .eq('id', order.vendor_id)
-            .single();
-
-        // Send collection confirmation via WhatsApp
+        // Send collection confirmation via WhatsApp (fire-and-forget, non-blocking)
         try {
             const token = process.env.WA_ACCESS_TOKEN;
             if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order.phone) {
-                const whatsapp = new WhatsappService();
+                // Fetch vendor name inside fire-and-forget to avoid blocking the response
+                void (async () => {
+                    try {
+                        const { data: vendor } = await supabase
+                            .from('vendors')
+                            .select('name')
+                            .eq('id', order.vendor_id)
+                            .single();
 
-                void whatsapp
-                    .sendOrderCollectedTemplate(order.phone, {
-                        orderId: String(orderId),
-                        vendorName: vendor?.name || 'the vendor',
-                    })
-                    .catch((err) => {
+                        const whatsapp = new WhatsappService();
+                        await whatsapp.sendOrderCollectedTemplate(order.phone, {
+                            orderId: String(orderId),
+                            vendorName: vendor?.name || 'the vendor',
+                        });
+                    } catch (err: any) {
                         console.error('Failed to send collection confirmation:', err?.message || err);
-                    });
+                    }
+                })();
             }
         } catch (notifyErr) {
             console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);

@@ -11,8 +11,11 @@ import {
     updateDiscountSchema,
     deleteDiscountSchema,
 } from './discount.schema.js';
+import { requireFeature } from '../lib/feature-flags.js';
 
 const discountController: FastifyPluginAsync = async (fastify) => {
+    // Gate entire controller behind the 'discounts' feature flag
+    fastify.addHook('preHandler', requireFeature('discounts'));
     const discountService = new DiscountService();
 
     // ==================== VENDOR ROUTES ====================

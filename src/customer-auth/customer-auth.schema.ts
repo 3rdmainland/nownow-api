@@ -36,7 +36,7 @@ export const requestOtpSchema = {
 };
 
 export const verifyOtpSchema = {
-  description: 'Verify OTP and issue customer JWT',
+  description: 'Verify OTP and issue customer JWT. Optionally pass name for first-time customers.',
   tags: ['customer-auth'],
   body: {
     type: 'object',
@@ -44,6 +44,7 @@ export const verifyOtpSchema = {
     properties: {
       phone: { type: 'string', minLength: 10 },
       code: { type: 'string', minLength: 6, maxLength: 6 },
+      name: { type: 'string', minLength: 1, maxLength: 100 },
     },
   },
   response: {
@@ -51,6 +52,7 @@ export const verifyOtpSchema = {
       type: 'object',
       properties: {
         customer: { type: 'object', properties: customerProperties },
+        isNewCustomer: { type: 'boolean' },
       },
     },
     401: errorResponse,

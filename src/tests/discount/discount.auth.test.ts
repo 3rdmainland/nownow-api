@@ -28,6 +28,10 @@ vi.mock('../../lib/redis.js', () => ({
 // NOTE: We do NOT mock auth.js here — we want the real authenticate middleware to run
 // so that requests without a valid JWT are rejected with 401.
 
+vi.mock('../../lib/feature-flags.js', () => ({
+  requireFeature: () => async () => {},
+}));
+
 // Import after mocks
 import discountController from '../../discount/discount.controller.js';
 
