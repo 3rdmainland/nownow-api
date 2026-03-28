@@ -6,7 +6,7 @@ import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor, broadcastAdminOrderFeed, broadcastToAdmins } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
 import { PaymentService } from "../payment/payment.service.js";
-import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError } from "../lib/errors.js";
+import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError, ConflictError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
 interface EventMenuConfig {
@@ -361,6 +361,25 @@ export class OrderService {
             age_verified: cleanOrder.age_verified || false,
             age_verified_at: cleanOrder.age_verified ? new Date().toISOString() : null,
         };
+
+        // Dedup guard: reject if an identical order was created in the last 30 seconds
+        if (orderWithDefaults.phone && orderWithDefaults.vendor_id) {
+            const cutoff = new Date(Date.now() - 30_000).toISOString();
+            let dupQuery = supabase
+                .from('orders')
+                .select('id', { count: 'exact', head: true })
+                .eq('phone', orderWithDefaults.phone)
+                .eq('vendor_id', orderWithDefaults.vendor_id)
+                .eq('total', orderWithDefaults.total)
+                .gte('created_at', cutoff);
+            if (orderWithDefaults.event_id) {
+                dupQuery = dupQuery.eq('event_id', orderWithDefaults.event_id);
+            }
+            const { count: dupCount } = await dupQuery;
+            if (dupCount && dupCount > 0) {
+                throw new ConflictError('A duplicate order was detected. Please wait a moment before ordering again.');
+            }
+        }
 
         const { data: createdOrder, error } = await supabase
             .from('orders')
@@ -921,7 +940,7 @@ export class OrderService {
             .from('orders')
             .select('*', { count: 'exact' })
             .gte('created_at', startDate)
-            .lte('created_at', endDate)
+            .lte('created_at', `${endDate}T23:59:59.999Z`)
             .order('created_at', { ascending: false })
             .range(from, to);
 
@@ -1145,7 +1164,7 @@ export class OrderService {
             .select('total, status, payment_method, items, created_at, collected_at, refund_status, refund_amount');
         if (vendorId) primaryQuery = primaryQuery.eq('vendor_id', vendorId);
         if (eventId) primaryQuery = primaryQuery.eq('event_id', eventId);
-        primaryQuery = primaryQuery.gte('created_at', startDate).lte('created_at', endDate);
+        primaryQuery = primaryQuery.gte('created_at', startDate).lte('created_at', `${endDate}T23:59:59.999Z`);
 
         // Compute previous period range (same duration before startDate)
         const startMs = new Date(startDate).getTime();

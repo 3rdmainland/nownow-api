@@ -44,6 +44,25 @@ function extractWebhookData(event: StitchWebhookEvent): { orderId: string | null
 const paymentController: FastifyPluginAsync = async (fastify) => {
   const paymentService = new PaymentService();
 
+  // Capture raw request body for webhook signature verification.
+  // Fastify's default JSON parser discards the original bytes, but Svix
+  // signatures are computed against the exact raw payload. We store the
+  // raw string on the request so the webhook handler can use it.
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      try {
+        const parsed = JSON.parse(body as string);
+        // Attach the original raw string so the webhook route can verify the signature
+        (parsed as any).__rawBody = body;
+        done(null, parsed);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+
   // Register redirect URL with Stitch on startup (fire-and-forget)
   paymentService.registerRedirectUrl().catch(err => {
     fastify.log.warn({ err }, 'Failed to register Stitch redirect URL on startup');
@@ -57,7 +76,7 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
     const svixId = request.headers['svix-id'] as string;
     const svixTimestamp = request.headers['svix-timestamp'] as string;
     const svixSignature = request.headers['svix-signature'] as string;
-    const rawBody = JSON.stringify(request.body);
+    const rawBody = (request.body as any)?.__rawBody || JSON.stringify(request.body);
 
     if (!svixId || !svixTimestamp || !svixSignature) {
       fastify.log.warn('Missing Svix webhook headers');
@@ -181,7 +200,8 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
  * Shared logic: mark order as paid, send notifications.
  */
 async function completeOrder(order: any, orderId: string, fastify: any) {
-  const { error: updateError } = await supabase
+  // Try optimistic update (order should be PAYMENT_PENDING)
+  const { data: updated, error: updateError } = await supabase
     .from('orders')
     .update({
       status: 'PENDING',
@@ -189,7 +209,19 @@ async function completeOrder(order: any, orderId: string, fastify: any) {
       paid_at: new Date().toISOString(),
     })
     .eq('id', orderId)
-    .eq('status', 'PAYMENT_PENDING');
+    .eq('status', 'PAYMENT_PENDING')
+    .select('id')
+    .maybeSingle();
+
+  // If the status guard didn't match (e.g. order was already moved past PAYMENT_PENDING),
+  // still mark payment as complete so it appears in financials.
+  if (!updateError && !updated) {
+    await supabase
+      .from('orders')
+      .update({ payment_status: 'complete', paid_at: new Date().toISOString() })
+      .eq('id', orderId)
+      .in('payment_status', ['pending']);
+  }
 
   if (!updateError) {
     // Fire-and-forget WhatsApp notification

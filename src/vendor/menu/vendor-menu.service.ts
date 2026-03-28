@@ -1360,7 +1360,7 @@ export class VendorMenuService {
 
         if (eventId) query = query.eq('event_id', eventId);
         if (startDate) query = query.gte('created_at', startDate);
-        if (endDate) query = query.lte('created_at', endDate);
+        if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
 
         const { data: orders } = await query;
 

@@ -465,15 +465,31 @@ export class SettlementService {
     lastPayoutDate: string | null;
     lastPayoutAmount: number | null;
     hasBankDetails: boolean;
+    // Order-based stats so vendors see revenue before settlements are processed
+    orderRevenue: number;
+    orderCount: number;
+    avgOrderValue: number;
+    unsettledRevenue: number;
   }> {
-    // Get all payouts for this vendor
-    const { data: payouts, error } = await supabase
-      .from('settlement_payouts')
-      .select('net_amount, status, created_at')
-      .eq('vendor_id', vendorId)
-      .order('created_at', { ascending: false });
+    // Parallel: payouts, bank details, and order stats
+    const [payoutsResult, bankResult, ordersResult] = await Promise.all([
+      supabase
+        .from('settlement_payouts')
+        .select('net_amount, status, created_at')
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('vendor_bank_details')
+        .select('id')
+        .eq('vendor_id', vendorId)
+        .single(),
+      supabase
+        .from('orders')
+        .select('total, status')
+        .eq('vendor_id', vendorId),
+    ]);
 
-    if (error) throw new Error(`Failed to fetch vendor summary: ${error.message}`);
+    if (payoutsResult.error) throw new Error(`Failed to fetch vendor summary: ${payoutsResult.error.message}`);
 
     let totalEarned = 0;
     let totalPending = 0;
@@ -481,7 +497,7 @@ export class SettlementService {
     let lastPayoutDate: string | null = null;
     let lastPayoutAmount: number | null = null;
 
-    for (const p of (payouts || [])) {
+    for (const p of (payoutsResult.data || [])) {
       const net = Number(p.net_amount) || 0;
       if (p.status === 'settled') {
         totalEarned += net;
@@ -495,12 +511,15 @@ export class SettlementService {
       }
     }
 
-    // Check bank details
-    const { data: bankRow } = await supabase
-      .from('vendor_bank_details')
-      .select('id')
-      .eq('vendor_id', vendorId)
-      .single();
+    // Order-based revenue (collected orders = confirmed revenue)
+    const orders = (ordersResult.data || []) as Array<{ total: number; status: string }>;
+    const collected = orders.filter(o => o.status === 'COLLECTED');
+    const nonCancelled = orders.filter(o => o.status !== 'CANCELLED');
+    const orderRevenue = collected.reduce((sum, o) => sum + Number(o.total), 0);
+    const orderCount = nonCancelled.length;
+    const avgOrderValue = orderCount > 0 ? orderRevenue / collected.length : 0;
+    // Revenue from collected orders minus what has already been settled
+    const unsettledRevenue = Math.max(0, orderRevenue - totalEarned);
 
     return {
       totalEarned: Math.round(totalEarned * 100) / 100,
@@ -508,7 +527,11 @@ export class SettlementService {
       payoutCount,
       lastPayoutDate,
       lastPayoutAmount,
-      hasBankDetails: !!bankRow,
+      hasBankDetails: !!bankResult.data,
+      orderRevenue: Math.round(orderRevenue * 100) / 100,
+      orderCount,
+      avgOrderValue: Math.round(avgOrderValue * 100) / 100,
+      unsettledRevenue: Math.round(unsettledRevenue * 100) / 100,
     };
   }
 }

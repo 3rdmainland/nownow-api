@@ -182,7 +182,7 @@ export class AdminService {
     if (filters.adminUserId) query = query.eq('admin_user_id', filters.adminUserId);
     if (filters.action) query = query.eq('action', filters.action);
     if (filters.startDate) query = query.gte('created_at', filters.startDate);
-    if (filters.endDate) query = query.lte('created_at', filters.endDate);
+    if (filters.endDate) query = query.lte('created_at', `${filters.endDate}T23:59:59.999Z`);
 
     const { data, count, error } = await query
       .order('created_at', { ascending: false })
@@ -440,7 +440,7 @@ export class AdminService {
       .eq('status', 'completed');
 
     if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
 
     const { data, error } = await query.order('created_at', { ascending: true });
 
@@ -606,10 +606,10 @@ export class AdminService {
     let query = supabase
       .from('orders')
       .select('id, total, service_fee, vendor_id, event_id, payment_status, payment_method, status, refund_amount')
-      .in('payment_status', ['complete', 'refunded']);
+      .in('payment_status', ['complete', 'refunded', 'pay_at_stall']);
 
     if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
 
     const { data, error } = await query;
     if (error) throw new Error(`Failed to fetch orders: ${error.message}`);
@@ -709,7 +709,7 @@ export class AdminService {
   async getPeakHoursAnalysis(startDate?: string, endDate?: string, eventId?: string): Promise<PeakHoursAnalysis> {
     let query = supabase.from('orders').select('created_at, total').eq('payment_status', 'complete');
     if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
     if (eventId) query = query.eq('event_id', eventId);
 
     const { data } = await query;
@@ -733,7 +733,7 @@ export class AdminService {
   async getVendorPerformance(startDate?: string, endDate?: string, eventId?: string): Promise<VendorPerformance[]> {
     let query = supabase.from('orders').select('vendor_id, status, total, items, created_at, prepared_at, collected_at');
     if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
     if (eventId) query = query.eq('event_id', eventId);
 
     const { data } = await query;
@@ -790,7 +790,7 @@ export class AdminService {
   async getPopularItems(startDate?: string, endDate?: string, eventId?: string, limit: number = 20): Promise<PopularItemsRanking> {
     let query = supabase.from('orders').select('items, total, vendor_id').eq('payment_status', 'complete');
     if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
     if (eventId) query = query.eq('event_id', eventId);
 
     const { data } = await query;
@@ -826,7 +826,7 @@ export class AdminService {
   async getConversionFunnel(startDate?: string, endDate?: string, eventId?: string): Promise<ConversionFunnel> {
     let baseQuery = supabase.from('orders').select('id, status, payment_status, stitch_payment_id', { count: 'exact' });
     if (startDate) baseQuery = baseQuery.gte('created_at', startDate);
-    if (endDate) baseQuery = baseQuery.lte('created_at', endDate);
+    if (endDate) baseQuery = baseQuery.lte('created_at', `${endDate}T23:59:59.999Z`);
     if (eventId) baseQuery = baseQuery.eq('event_id', eventId);
 
     const { data } = await baseQuery;
