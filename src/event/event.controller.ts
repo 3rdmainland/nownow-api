@@ -50,6 +50,16 @@ const eventController: FastifyPluginAsync = async (fastify) => {
     fastify.post("/", { schema: createEventSchema }, async (request, reply) => {
         try {
             const eventData = request.body as any;
+            // If caller is an authenticated organizer, stamp the event with their ID
+            try {
+                await request.jwtVerify();
+                const user = request.user as { userId?: string; role?: string };
+                if (user?.role === 'organizer' && user.userId) {
+                    eventData.organizerId = user.userId;
+                }
+            } catch {
+                // No valid JWT — that's fine, create without organizer_id
+            }
             const event = await eventService.createEvent(eventData);
             return reply.status(201).send({ event });
         } catch (err) {

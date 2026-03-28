@@ -70,6 +70,45 @@ export const vendorPayoutsSchema = {
   },
 };
 
+export const vendorAgreementsSchema = {
+  description: 'Get own agreements',
+  tags: ['vendor-settlement'],
+  params: {
+    type: 'object',
+    required: ['vendorId'],
+    properties: { vendorId: { type: 'string' } },
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      status: { type: 'string' },
+    },
+  },
+  response: {
+    200: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    403: errorResponse,
+  },
+};
+
+export const vendorAcceptAgreementSchema = {
+  description: 'Accept a draft agreement',
+  tags: ['vendor-settlement'],
+  params: {
+    type: 'object',
+    required: ['vendorId', 'id'],
+    properties: {
+      vendorId: { type: 'string' },
+      id: { type: 'string' },
+    },
+  },
+  response: {
+    200: { type: 'object', additionalProperties: true },
+    400: errorResponse,
+    403: errorResponse,
+    404: errorResponse,
+  },
+};
+
 export const vendorSummarySchema = {
   description: 'Get own settlement summary',
   tags: ['vendor-settlement'],

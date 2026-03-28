@@ -26,6 +26,7 @@ export interface SettlementBatch {
   totalServiceFees: number;
   totalPlatformFees: number;
   totalPayoutFees: number;
+  totalCommissionFees: number;
   totalNet: number;
   orderCount: number;
   vendorCount: number;
@@ -44,10 +45,14 @@ export interface SettlementPayout {
   grossAmount: number;
   serviceFee: number;
   platformFee: number;
+  commissionFee: number;
+  commissionRate: number;
   payoutFee: number;
   refundAmount: number;
   netAmount: number;
   orderCount: number;
+  eventId: string | null;
+  organizerId: string | null;
   status: SettlementPayoutStatus;
   paymentReference: string | null;
   failureReason: string | null;
@@ -64,6 +69,7 @@ export interface SettlementSummary {
   totalSettled: number;
   totalPending: number;
   totalPayoutFees: number;
+  totalCommissionFees: number;
   totalFailed: number;
 }
 

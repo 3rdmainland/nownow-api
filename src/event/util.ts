@@ -1,7 +1,7 @@
 // event.utils.ts
 import {Event} from "./event.types";
 
-export function toDbEvent(event: Partial<Event>) {
+export function toDbEvent(event: Partial<Event> & { organizerId?: string }) {
     return {
         name: event.name,
         description: event.description,
@@ -14,6 +14,7 @@ export function toDbEvent(event: Partial<Event>) {
         status: event.status,
         branding: event.branding ?? undefined,
         event_type: event.eventType ?? 'default',
+        ...(event.organizerId ? { organizer_id: event.organizerId } : {}),
     };
 }
 

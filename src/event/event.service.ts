@@ -170,6 +170,15 @@ export class EventService {
             .eq("event_id", eventId)
             .eq("vendor_id", vendorId);
         if (error) throw new Error(`Failed to remove vendor from event: ${error.message}`);
+
+        // Expire any draft or active agreements for this vendor-event pair
+        await supabase
+            .from('organizer_vendor_agreements')
+            .update({ status: 'expired', updated_at: new Date().toISOString() })
+            .eq('event_id', eventId)
+            .eq('vendor_id', vendorId)
+            .in('status', ['draft', 'active']);
+
         await this.invalidateEventVendorCache(eventId);
         await this.invalidateEventCachesById(eventId);
     }
