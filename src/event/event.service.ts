@@ -79,29 +79,23 @@ export class EventService {
 
     // Add a helper method to get event by ID or code
     async getEventByIdOrCode(eventIdOrCode: string): Promise<string | null> {
-        // First try as UUID (ID)
-        const { data: eventById, error: idError } = await supabase
-            .from('events')
-            .select('id')
-            .eq('id', eventIdOrCode)
-            .single();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventIdOrCode);
 
-        if (!idError && eventById) {
-            return eventById.id;
+        if (isUuid) {
+            const { data, error } = await supabase
+                .from('events')
+                .select('id')
+                .eq('id', eventIdOrCode)
+                .single();
+            return (!error && data) ? data.id : null;
         }
 
-        // If not found by ID, try by code
-        const { data: eventByCode, error: codeError } = await supabase
+        const { data, error } = await supabase
             .from('events')
             .select('id')
             .eq('code', eventIdOrCode)
             .single();
-
-        if (!codeError && eventByCode) {
-            return eventByCode.id;
-        }
-
-        return null;
+        return (!error && data) ? data.id : null;
     }
 
     async createEvent(event: Omit<Event, "id" | "created_at" | "status">): Promise<Event> {

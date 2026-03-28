@@ -6,7 +6,7 @@ import {
 } from './payment.types.js';
 import { ServiceUnavailableError, InternalError } from '../lib/errors.js';
 
-export class PaymentService {
+class PaymentService {
   private clientToken: string | null = null;
   private tokenExpiresAt: number = 0;
 
@@ -198,3 +198,6 @@ export class PaymentService {
     return expectedSignatures.some(s => s === computed);
   }
 }
+
+/** Module-level singleton — token survives across requests */
+export const paymentService = new PaymentService();

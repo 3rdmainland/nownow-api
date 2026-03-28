@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { PaymentService } from './payment.service.js';
+import { paymentService } from './payment.service.js';
 import { StitchWebhookEvent } from './payment.types.js';
 import { webhookSchema, paymentStatusSchema } from './payment.schema.js';
 import { NotFoundError } from '../lib/errors.js';
@@ -42,8 +42,6 @@ function extractWebhookData(event: StitchWebhookEvent): { orderId: string | null
 }
 
 const paymentController: FastifyPluginAsync = async (fastify) => {
-  const paymentService = new PaymentService();
-
   // Capture raw request body for webhook signature verification.
   // Fastify's default JSON parser discards the original bytes, but Svix
   // signatures are computed against the exact raw payload. We store the

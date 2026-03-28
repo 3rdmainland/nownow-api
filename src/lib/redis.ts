@@ -7,6 +7,13 @@ if (!hasRedisCredentials && process.env.NODE_ENV === 'production') {
 }
 
 // No-op Redis client for when Redis is unavailable (local dev, load testing)
+const noopPipeline = {
+    get: () => noopPipeline,
+    set: () => noopPipeline,
+    setex: () => noopPipeline,
+    del: () => noopPipeline,
+    exec: async () => [],
+}
 const noopRedis = {
     get: async () => null,
     set: async () => 'OK',
@@ -16,6 +23,7 @@ const noopRedis = {
     ping: async () => 'PONG',
     incr: async () => 1,
     expire: async () => 1,
+    pipeline: () => noopPipeline,
 } as unknown as Redis
 
 // Create Redis client singleton (real or no-op)
@@ -65,6 +73,32 @@ export const cache = {
     async exists(key: string): Promise<boolean> {
         const result = await redis.exists(key)
         return result === 1
+    },
+
+    // Batch get multiple keys in a single round-trip (uses Upstash pipeline)
+    async mget<T>(...keys: string[]): Promise<(T | null)[]> {
+        if (keys.length === 0) return []
+        if (keys.length === 1) return [await cache.get<T>(keys[0])]
+
+        const pipeline = redis.pipeline()
+        for (const key of keys) pipeline.get(key)
+        const results = await pipeline.exec<(T | null)[]>()
+        return results
+    },
+
+    // Batch set multiple key-value pairs in a single round-trip
+    async mset<T>(entries: { key: string; value: T; ttl?: number }[]): Promise<void> {
+        if (entries.length === 0) return
+
+        const pipeline = redis.pipeline()
+        for (const { key, value, ttl } of entries) {
+            if (ttl) {
+                pipeline.setex(key, ttl, JSON.stringify(value))
+            } else {
+                pipeline.set(key, JSON.stringify(value))
+            }
+        }
+        await pipeline.exec()
     },
 }
 

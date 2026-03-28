@@ -1,7 +1,7 @@
 import { Vendor } from "./vendor.types";
 import { supabase } from "../lib/supabase";
 import { fromDbVendor, toDbVendor } from "./utils";
-import { fromDbDefaultMenuItem } from "./menu/vendor-menu.utils";
+
 import { redis, cache, CACHE_TTL } from "../lib/redis";
 
 // Cache key generator for vendors
@@ -514,29 +514,23 @@ export class VendorService {
     }
 
     private async getEventByIdOrCode(eventIdOrCode: string): Promise<string | null> {
-        // First try as UUID (ID)
-        const { data: eventById, error: idError } = await supabase
-            .from('events')
-            .select('id')
-            .eq('id', eventIdOrCode)
-            .single();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventIdOrCode);
 
-        if (!idError && eventById) {
-            return eventById.id;
+        if (isUuid) {
+            const { data, error } = await supabase
+                .from('events')
+                .select('id')
+                .eq('id', eventIdOrCode)
+                .single();
+            return (!error && data) ? data.id : null;
         }
 
-        // If not found by ID, try by code
-        const { data: eventByCode, error: codeError } = await supabase
+        const { data, error } = await supabase
             .from('events')
             .select('id')
             .eq('code', eventIdOrCode)
             .single();
-
-        if (!codeError && eventByCode) {
-            return eventByCode.id;
-        }
-
-        return null;
+        return (!error && data) ? data.id : null;
     }
 
     async getVendorsByEvent(
@@ -626,10 +620,10 @@ export class VendorService {
                 }
             }
 
-            // Fetch ALL active vendors (no pagination — sort in JS)
+            // Fetch ALL active vendors (no pagination — sort in JS, select only listing fields)
             const { data: vendorRows, error: vendorError } = await supabase
                 .from('vendors')
-                .select('*')
+                .select('id, name, description, phone, email, image_url, logo_url, category_id, cuisine_type, rating, total_reviews, location, hours, is_active, is_paused, minimum_order, delivery_fee, service_fee_percent, estimated_prep_time, payment_methods, created_at, updated_at')
                 .in('id', vendorIds)
                 .eq('is_active', true);
 
@@ -641,12 +635,12 @@ export class VendorService {
             const vendors = (vendorRows || []).map(fromDbVendor);
             const allVendorIds = vendors.map(v => v.id);
 
-            // Fetch all available menu items for ALL vendors (need menu presence for sorting)
+            // Fetch available menu items for ALL vendors (only preview columns)
             let menuByVendor = new Map<string, any[]>();
             if (allVendorIds.length > 0) {
                 const { data: menuRows, error: menuError } = await supabase
                     .from('default_menu_items')
-                    .select('*')
+                    .select('id, vendor_id, category_id, name, description, base_price, image_url, type, prep_time, is_alcohol, created_at, updated_at')
                     .in('vendor_id', allVendorIds)
                     .eq('is_active', true)
                     .eq('availability_status', 'AVAILABLE');
@@ -656,22 +650,20 @@ export class VendorService {
                 }
 
                 for (const row of menuRows || []) {
-                    const defaultItem = fromDbDefaultMenuItem(row);
-                    // Map to preview shape compatible with frontend menu item
                     const item = {
-                        id: defaultItem.id,
-                        vendorId: defaultItem.vendorId,
-                        categoryId: defaultItem.categoryId,
-                        name: defaultItem.name,
-                        description: defaultItem.description,
-                        price: defaultItem.basePrice,
-                        imageUrl: defaultItem.imageUrl,
-                        type: defaultItem.type,
-                        prepTime: defaultItem.prepTime,
+                        id: row.id,
+                        vendorId: row.vendor_id,
+                        categoryId: row.category_id,
+                        name: row.name,
+                        description: row.description,
+                        price: row.base_price,
+                        imageUrl: row.image_url,
+                        type: row.type,
+                        prepTime: row.prep_time,
                         available: true,
-                        isAlcohol: defaultItem.isAlcohol,
-                        createdAt: defaultItem.createdAt,
-                        updatedAt: defaultItem.updatedAt,
+                        isAlcohol: row.is_alcohol ?? false,
+                        createdAt: row.created_at,
+                        updatedAt: row.updated_at,
                     };
                     const list = menuByVendor.get(item.vendorId) || [];
                     list.push(item);

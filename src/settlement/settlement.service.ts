@@ -354,18 +354,19 @@ export class SettlementService {
       .select('*')
       .eq('batch_id', batchId);
 
-    // 4. DUMMY: mark each payout settled with a dummy reference
-    for (const p of (payouts || [])) {
+    // 4. DUMMY: mark each payout settled with a dummy reference (parallel)
+    const now2 = new Date().toISOString();
+    await Promise.all((payouts || []).map(p => {
       const ref = `DUMMY-${nanoid(8)}`;
-      await supabase
+      return supabase
         .from('settlement_payouts')
         .update({
           status: 'settled',
           payment_reference: ref,
-          updated_at: new Date().toISOString(),
+          updated_at: now2,
         })
         .eq('id', p.id);
-    }
+    }));
 
     // 5. Set batch → settled
     const now = new Date().toISOString();

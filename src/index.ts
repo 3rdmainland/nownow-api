@@ -64,7 +64,11 @@ function trackError(error: TrackedError): void {
     }
 }
 
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({
+    logger: true,
+    requestTimeout: 30_000,    // 30s max per request
+    connectionTimeout: 10_000, // 10s to establish connection
+});
 
 // CORS
 await fastify.register(fastifyCors, {
@@ -110,19 +114,43 @@ await fastify.register(fastifyJwt, {
     },
 });
 
-// Register Swagger
-await fastify.register(fastifySwagger, {
-    openapi: {
-        info: {
-            title: 'Now Now API',
-            version: '1.0.0'
+// Register Swagger (dev/staging only — saves memory and reduces attack surface in production)
+if (process.env.NODE_ENV !== 'production') {
+    await fastify.register(fastifySwagger, {
+        openapi: {
+            info: {
+                title: 'Now Now API',
+                version: '1.0.0'
+            }
+        }
+    });
+    await fastify.register(fastifySwaggerUI, {
+        routePrefix: '/documentation'
+    });
+}
+
+// Cache-Control headers for public GET endpoints
+// Matches the server-side cache TTLs so browsers/CDNs can cache too
+const CACHEABLE_ROUTES: Record<string, number> = {
+    '/config/flags': 30,        // feature flags — 30s
+    '/category': 300,           // categories — 5min (stable data)
+    '/legal': 300,              // legal docs — 5min
+};
+
+fastify.addHook('onSend', (request, reply, payload, done) => {
+    if (request.method === 'GET' && reply.statusCode >= 200 && reply.statusCode < 300) {
+        // Check exact path first, then prefix match
+        const maxAge = CACHEABLE_ROUTES[request.url] ??
+            Object.entries(CACHEABLE_ROUTES).find(([prefix]) => request.url.startsWith(prefix + '/'))?.[1];
+
+        if (maxAge) {
+            reply.header('Cache-Control', `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`);
+        } else {
+            // Default: don't cache authenticated/dynamic responses
+            reply.header('Cache-Control', 'no-store');
         }
     }
-});
-
-// Register Swagger UI
-await fastify.register(fastifySwaggerUI, {
-    routePrefix: '/documentation'
+    done();
 });
 
 // Register WebSocket controller (must be before other routes)

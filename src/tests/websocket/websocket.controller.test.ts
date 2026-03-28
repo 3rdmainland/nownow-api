@@ -72,6 +72,7 @@ async function simulateConnection(subscriptions: {
       if (path === '/ws') routeHandler = handler;
     }),
     register: vi.fn().mockImplementation(async () => {}),
+    addHook: vi.fn(),
     log: fakeLog,
   };
 
@@ -118,9 +119,10 @@ describe('WebSocket controller — extended coverage', () => {
 
   describe('UNSUBSCRIBE', () => {
     it('clears all subscriptions so client no longer receives targeted messages', async () => {
+      // Subscribe to eventId and phone (both work without auth)
       const { socket, cleanup, fireMessage } = await simulateConnection({
         eventId: 'event-unsub',
-        vendorId: 'vendor-unsub',
+        phone: '+27820001111',
       });
 
       socket.send.mockClear();
@@ -137,28 +139,15 @@ describe('WebSocket controller — extended coverage', () => {
       // Send UNSUBSCRIBE
       fireMessage(JSON.stringify({ type: 'UNSUBSCRIBE' }));
 
-      // After unsubscribe, client should still receive event broadcasts
-      // because no eventId means "global listener"
+      // After unsubscribe, client should NOT receive targeted broadcasts
       broadcastToEvent('event-unsub', {
         type: 'PRICE_UPDATE',
         payload: null,
         timestamp: new Date().toISOString(),
       });
-      expect(socket.send).toHaveBeenCalledOnce(); // global listener
+      expect(socket.send).not.toHaveBeenCalled();
 
-      socket.send.mockClear();
-
-      // But vendor-specific should also reach (no vendorId = global)
-      broadcastToVendor('vendor-unsub', {
-        type: 'VENDOR_STATUS_UPDATE',
-        payload: null,
-        timestamp: new Date().toISOString(),
-      });
-      expect(socket.send).toHaveBeenCalledOnce(); // global
-
-      socket.send.mockClear();
-
-      // Phone-specific should NOT reach (phone requires exact match)
+      // Phone-specific should also NOT reach after unsubscribe
       broadcastToPhone('+27820001111', {
         type: 'ORDER_STATUS_UPDATE',
         payload: null,
@@ -278,15 +267,15 @@ describe('WebSocket controller — extended coverage', () => {
   // ── Multiple subscriptions ───────────────────────────────────────────────
 
   describe('subscription merging', () => {
-    it('merges subscriptions — adding vendorId to existing eventId', async () => {
+    it('merges subscriptions — adding phone to existing eventId', async () => {
       const { socket, cleanup, fireMessage } = await simulateConnection({
         eventId: 'event-merge',
       });
 
       socket.send.mockClear();
 
-      // Add vendorId subscription on top of existing eventId
-      fireMessage(JSON.stringify({ type: 'SUBSCRIBE', payload: { vendorId: 'vendor-merge' } }));
+      // Add phone subscription on top of existing eventId (phone requires no auth)
+      fireMessage(JSON.stringify({ type: 'SUBSCRIBE', payload: { phone: '+27821234567' } }));
 
       socket.send.mockClear();
 
@@ -299,9 +288,9 @@ describe('WebSocket controller — extended coverage', () => {
       expect(socket.send).toHaveBeenCalledOnce();
       socket.send.mockClear();
 
-      // Should also receive vendor broadcasts
-      broadcastToVendor('vendor-merge', {
-        type: 'NEW_ORDER',
+      // Should also receive phone broadcasts
+      broadcastToPhone('+27821234567', {
+        type: 'ORDER_STATUS_UPDATE',
         payload: null,
         timestamp: new Date().toISOString(),
       });

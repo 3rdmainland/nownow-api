@@ -5,7 +5,7 @@ import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor, broadcastAdminOrderFeed, broadcastToAdmins } from "../websocket";
 import { DiscountService } from "../discount/discount.service.js";
-import { PaymentService } from "../payment/payment.service.js";
+import { paymentService } from "../payment/payment.service.js";
 import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError, ConflictError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
@@ -432,7 +432,6 @@ export class OrderService {
             throw new ValidationError('Customer name is required for online payment. Please update your profile.');
         }
 
-        const paymentService = new PaymentService();
         const { paymentId, paymentUrl } = await paymentService.createPaymentRequest(
             updatedOrder.id,
             Math.round(validatedTotal * 100), // Convert rands to cents

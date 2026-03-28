@@ -112,6 +112,7 @@ async function simulateConnection(subscriptions: {
     register: vi.fn().mockImplementation(async (_plugin: any, _opts?: any) => {
       // Simulate @fastify/websocket doing nothing in the test
     }),
+    addHook: vi.fn(),
     log: fakeLog,
     jwt: {
       verify: vi.fn((token: string) => {
@@ -263,7 +264,7 @@ describe('WebSocket controller – broadcast functions', () => {
       c1(); c2();
     });
 
-    it('also sends to clients with NO eventId subscription (global listeners)', async () => {
+    it('does NOT send to clients with no eventId subscription (targeted only)', async () => {
       const { socket: global, cleanup: c1 } = await simulateConnection({}); // no eventId
       const { socket: specific, cleanup: c2 } = await simulateConnection({ eventId: 'event-123' });
 
@@ -278,9 +279,9 @@ describe('WebSocket controller – broadcast functions', () => {
 
       broadcastToEvent('event-123', message);
 
-      // Global listener (no eventId) should receive it
-      expect(global.send).toHaveBeenCalledOnce();
-      // Specific subscriber should also receive it
+      // Unsubscribed clients should NOT receive targeted broadcasts
+      expect(global.send).not.toHaveBeenCalled();
+      // Specific subscriber should receive it
       expect(specific.send).toHaveBeenCalledOnce();
 
       c1(); c2();
@@ -329,7 +330,7 @@ describe('WebSocket controller – broadcast functions', () => {
       c1(); c2();
     });
 
-    it('sends to clients with no vendorId (global listeners)', async () => {
+    it('does NOT send to clients with no vendorId (targeted only)', async () => {
       const { socket: global, cleanup: c1 } = await simulateConnection({});
       const { socket: targeted, cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-abc' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-abc' });
 
@@ -344,7 +345,8 @@ describe('WebSocket controller – broadcast functions', () => {
 
       broadcastToVendor('vendor-abc', message);
 
-      expect(global.send).toHaveBeenCalledOnce();
+      // Unsubscribed clients should NOT receive targeted broadcasts
+      expect(global.send).not.toHaveBeenCalled();
       expect(targeted.send).toHaveBeenCalledOnce();
 
       c1(); c2();

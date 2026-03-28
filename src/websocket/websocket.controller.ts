@@ -18,6 +18,8 @@ import type {
 } from './websocket.types';
 
 const MAX_CONNECTIONS = 1000;
+const HEARTBEAT_INTERVAL_MS = 30_000; // 30s ping interval
+const PONG_TIMEOUT_MS = 10_000; // close if no pong within 10s
 
 // Allowed subscription keys to prevent arbitrary payload injection
 const ALLOWED_SUBSCRIPTION_KEYS = new Set(['eventId', 'vendorId', 'organizerId', 'phone', 'admin']);
@@ -27,21 +29,72 @@ interface ConnectedClient {
   socket: WebSocket;
   subscriptions: ClientSubscription;
   user: WebSocketUser | null; // null = unauthenticated (limited access)
+  isAlive: boolean;
 }
 
 const clients: Map<WebSocket, ConnectedClient> = new Map();
+
+// Subscription indexes for O(1) targeted broadcasting
+const eventIndex: Map<string, Set<WebSocket>> = new Map();
+const vendorIndex: Map<string, Set<WebSocket>> = new Map();
+const organizerIndex: Map<string, Set<WebSocket>> = new Map();
+const phoneIndex: Map<string, Set<WebSocket>> = new Map();
+const adminSet: Set<WebSocket> = new Set();
+
+/** Add a socket to an index map */
+function addToIndex(index: Map<string, Set<WebSocket>>, key: string, socket: WebSocket): void {
+  let set = index.get(key);
+  if (!set) { set = new Set(); index.set(key, set); }
+  set.add(socket);
+}
+
+/** Remove a socket from an index map */
+function removeFromIndex(index: Map<string, Set<WebSocket>>, key: string, socket: WebSocket): void {
+  const set = index.get(key);
+  if (set) { set.delete(socket); if (set.size === 0) index.delete(key); }
+}
+
+/** Remove socket from ALL indexes (used on disconnect) */
+function removeFromAllIndexes(socket: WebSocket, subs: ClientSubscription): void {
+  if (subs.eventId) removeFromIndex(eventIndex, subs.eventId, socket);
+  if (subs.vendorId) removeFromIndex(vendorIndex, subs.vendorId, socket);
+  if (subs.organizerId) removeFromIndex(organizerIndex, subs.organizerId, socket);
+  if (subs.phone) removeFromIndex(phoneIndex, subs.phone, socket);
+  if (subs.admin) adminSet.delete(socket);
+}
+
+/** Update indexes when subscriptions change */
+function updateIndexes(socket: WebSocket, oldSubs: ClientSubscription, newSubs: ClientSubscription): void {
+  // Remove old entries that changed
+  if (oldSubs.eventId && oldSubs.eventId !== newSubs.eventId) removeFromIndex(eventIndex, oldSubs.eventId, socket);
+  if (oldSubs.vendorId && oldSubs.vendorId !== newSubs.vendorId) removeFromIndex(vendorIndex, oldSubs.vendorId, socket);
+  if (oldSubs.organizerId && oldSubs.organizerId !== newSubs.organizerId) removeFromIndex(organizerIndex, oldSubs.organizerId, socket);
+  if (oldSubs.phone && oldSubs.phone !== newSubs.phone) removeFromIndex(phoneIndex, oldSubs.phone, socket);
+  if (oldSubs.admin && !newSubs.admin) adminSet.delete(socket);
+
+  // Add new entries
+  if (newSubs.eventId) addToIndex(eventIndex, newSubs.eventId, socket);
+  if (newSubs.vendorId) addToIndex(vendorIndex, newSubs.vendorId, socket);
+  if (newSubs.organizerId) addToIndex(organizerIndex, newSubs.organizerId, socket);
+  if (newSubs.phone) addToIndex(phoneIndex, newSubs.phone, socket);
+  if (newSubs.admin) adminSet.add(socket);
+}
+
+/** Send to a set of sockets, cleaning up dead connections */
+function sendToSockets(sockets: Set<WebSocket> | WebSocket[], messageStr: string): void {
+  for (const socket of sockets) {
+    if (socket.readyState === socket.OPEN) {
+      socket.send(messageStr);
+    }
+  }
+}
 
 /**
  * Broadcast a message to all connected clients
  */
 export function broadcast<T>(message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-
-  for (const [socket, client] of clients) {
-    if (socket.readyState === socket.OPEN) {
-      socket.send(messageStr);
-    }
-  }
+  sendToSockets([...clients.keys()], messageStr);
 }
 
 /**
@@ -49,15 +102,8 @@ export function broadcast<T>(message: WebSocketMessage<T>): void {
  */
 export function broadcastToEvent<T>(eventId: string, message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-
-  for (const [socket, client] of clients) {
-    if (socket.readyState === socket.OPEN) {
-      // Send to clients subscribed to this event or all events
-      if (!client.subscriptions.eventId || client.subscriptions.eventId === eventId) {
-        socket.send(messageStr);
-      }
-    }
-  }
+  const sockets = eventIndex.get(eventId);
+  if (sockets) sendToSockets(sockets, messageStr);
 }
 
 /**
@@ -65,15 +111,8 @@ export function broadcastToEvent<T>(eventId: string, message: WebSocketMessage<T
  */
 export function broadcastToVendor<T>(vendorId: string, message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-
-  for (const [socket, client] of clients) {
-    if (socket.readyState === socket.OPEN) {
-      // Send to clients subscribed to this vendor or all vendors
-      if (!client.subscriptions.vendorId || client.subscriptions.vendorId === vendorId) {
-        socket.send(messageStr);
-      }
-    }
-  }
+  const sockets = vendorIndex.get(vendorId);
+  if (sockets) sendToSockets(sockets, messageStr);
 }
 
 /**
@@ -81,12 +120,7 @@ export function broadcastToVendor<T>(vendorId: string, message: WebSocketMessage
  */
 export function broadcastToAdmins<T>(message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-
-  for (const [socket, client] of clients) {
-    if (socket.readyState === socket.OPEN && client.subscriptions.admin) {
-      socket.send(messageStr);
-    }
-  }
+  sendToSockets(adminSet, messageStr);
 }
 
 /**
@@ -168,15 +202,8 @@ export function broadcastVendorStatus(payload: VendorStatusPayload): void {
  */
 export function broadcastToPhone<T>(phone: string, message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-
-  for (const [socket, client] of clients) {
-    if (socket.readyState === socket.OPEN) {
-      // Send to clients subscribed to this phone number
-      if (client.subscriptions.phone === phone) {
-        socket.send(messageStr);
-      }
-    }
-  }
+  const sockets = phoneIndex.get(phone);
+  if (sockets) sendToSockets(sockets, messageStr);
 }
 
 /**
@@ -229,14 +256,8 @@ export function broadcastTicketUpdate(payload: TicketUpdatePayload): void {
  */
 export function broadcastToOrganizer<T>(organizerId: string, message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-
-  for (const [socket, client] of clients) {
-    if (socket.readyState === socket.OPEN) {
-      if (client.subscriptions.organizerId === organizerId) {
-        socket.send(messageStr);
-      }
-    }
-  }
+  const sockets = organizerIndex.get(organizerId);
+  if (sockets) sendToSockets(sockets, messageStr);
 }
 
 /**
@@ -329,6 +350,27 @@ async function websocketController(
   // Register WebSocket plugin
   await fastify.register(websocket);
 
+  // Heartbeat: ping all clients every 30s, close stale ones
+  const heartbeatTimer = setInterval(() => {
+    for (const [socket, client] of clients) {
+      if (!client.isAlive) {
+        // Didn't respond to last ping — terminate
+        const c = clients.get(socket);
+        if (c) removeFromAllIndexes(socket, c.subscriptions);
+        clients.delete(socket);
+        socket.terminate();
+        continue;
+      }
+      client.isAlive = false;
+      socket.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+
+  // Clean up on server close
+  fastify.addHook('onClose', () => {
+    clearInterval(heartbeatTimer);
+  });
+
   // WebSocket connection endpoint
   // Clients pass JWT via ?token=<jwt> query parameter
   fastify.get('/ws', { websocket: true }, (socket, req) => {
@@ -362,8 +404,15 @@ async function websocketController(
       socket,
       subscriptions: {},
       user: wsUser,
+      isAlive: true,
     };
     clients.set(socket, client);
+
+    // Mark alive on pong response
+    socket.on('pong', () => {
+      const c = clients.get(socket);
+      if (c) c.isAlive = true;
+    });
 
     // Send welcome message
     socket.send(JSON.stringify({
@@ -395,10 +444,12 @@ async function websocketController(
               return;
             }
 
+            const oldSubs = { ...existingClient.subscriptions };
             existingClient.subscriptions = {
               ...existingClient.subscriptions,
               ...sanitized,
             };
+            updateIndexes(socket, oldSubs, existingClient.subscriptions);
             fastify.log.info({ subscriptions: existingClient.subscriptions }, 'Client subscribed');
 
             socket.send(JSON.stringify({
@@ -413,6 +464,7 @@ async function websocketController(
         if (message.type === 'UNSUBSCRIBE') {
           const existingClient = clients.get(socket);
           if (existingClient) {
+            removeFromAllIndexes(socket, existingClient.subscriptions);
             existingClient.subscriptions = {};
             fastify.log.info('Client unsubscribed');
           }
@@ -425,12 +477,16 @@ async function websocketController(
     // Handle close
     socket.on('close', () => {
       fastify.log.info('WebSocket connection closed');
+      const c = clients.get(socket);
+      if (c) removeFromAllIndexes(socket, c.subscriptions);
       clients.delete(socket);
     });
 
     // Handle errors
     socket.on('error', (err) => {
       fastify.log.error({ err }, 'WebSocket error');
+      const c = clients.get(socket);
+      if (c) removeFromAllIndexes(socket, c.subscriptions);
       clients.delete(socket);
     });
   });
