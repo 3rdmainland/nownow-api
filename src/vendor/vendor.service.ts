@@ -55,17 +55,31 @@ async function enrichWithCategories(vendorRows: any[]): Promise<void> {
 }
 
 export class VendorService {
-    async getAllVendors(): Promise<Vendor[]> {
+    async getAllVendors(excludeEventId?: string): Promise<Vendor[]> {
         const cacheKey = cacheKeys.allVendors();
 
         try {
-            // Try cache first
-            const cached = await cache.get<Vendor[]>(cacheKey);
-            if (cached) {
-
-                return cached;
+            // Try cache first (only for unfiltered requests)
+            if (!excludeEventId) {
+                const cached = await cache.get<Vendor[]>(cacheKey);
+                if (cached) {
+                    return cached;
+                }
             }
 
+            // If excluding an event's vendors, look up their IDs first
+            let excludeVendorIds: Set<string> | null = null;
+            if (excludeEventId) {
+                const { data: eventVendors, error: evError } = await supabase
+                    .from('event_vendors')
+                    .select('vendor_id')
+                    .eq('event_id', excludeEventId);
+
+                if (evError) {
+                    throw new Error(`Failed to fetch event vendors: ${evError.message}`);
+                }
+                excludeVendorIds = new Set((eventVendors || []).map(ev => ev.vendor_id));
+            }
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -76,11 +90,18 @@ export class VendorService {
                 throw new Error(`Failed to fetch vendors: ${error.message}`);
             }
 
-            await enrichWithCategories(data || []);
-            const vendors = (data || []).map(dbVendor => fromDbVendor(dbVendor));
+            let rows = data || [];
+            if (excludeVendorIds && excludeVendorIds.size > 0) {
+                rows = rows.filter(v => !excludeVendorIds!.has(v.id));
+            }
 
-            // Cache for 5 minutes
-            await cache.set(cacheKey, vendors, CACHE_TTL.VENDOR_LIST);
+            await enrichWithCategories(rows);
+            const vendors = rows.map(dbVendor => fromDbVendor(dbVendor));
+
+            // Only cache unfiltered results
+            if (!excludeEventId) {
+                await cache.set(cacheKey, vendors, CACHE_TTL.VENDOR_LIST);
+            }
 
             return vendors;
         } catch (error) {

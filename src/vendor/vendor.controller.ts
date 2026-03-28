@@ -22,7 +22,8 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
     // Get all vendors
     fastify.get("/", { schema: getVendorsSchema }, async (request, reply) => {
         try {
-            const vendors = await vendorService.getAllVendors();
+            const { excludeEventId } = request.query as { excludeEventId?: string };
+            const vendors = await vendorService.getAllVendors(excludeEventId);
             return { vendors };
         } catch (err) {
             fastify.log.error(err);

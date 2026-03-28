@@ -44,16 +44,28 @@ function extractWebhookData(event: StitchWebhookEvent): { orderId: string | null
 const paymentController: FastifyPluginAsync = async (fastify) => {
   const paymentService = new PaymentService();
 
+  // Register redirect URL with Stitch on startup (fire-and-forget)
+  paymentService.registerRedirectUrl().catch(err => {
+    fastify.log.warn({ err }, 'Failed to register Stitch redirect URL on startup');
+  });
+
   /**
    * POST /payment/webhook
    * Receives Stitch webhook events. Source of truth for payment status.
    */
   fastify.post('/webhook', { schema: webhookSchema }, async (request, reply) => {
-    const signature = request.headers['x-stitch-signature'] as string;
+    const svixId = request.headers['svix-id'] as string;
+    const svixTimestamp = request.headers['svix-timestamp'] as string;
+    const svixSignature = request.headers['svix-signature'] as string;
     const rawBody = JSON.stringify(request.body);
 
-    // Verify webhook signature
-    const isValid = await paymentService.verifyWebhookSignature(rawBody, signature);
+    if (!svixId || !svixTimestamp || !svixSignature) {
+      fastify.log.warn('Missing Svix webhook headers');
+      return reply.status(401).send({ error: 'Invalid signature' });
+    }
+
+    // Verify Svix webhook signature
+    const isValid = await paymentService.verifyWebhookSignature(rawBody, svixId, svixTimestamp, svixSignature);
     if (!isValid) {
       fastify.log.warn('Invalid Stitch webhook signature');
       return reply.status(401).send({ error: 'Invalid signature' });

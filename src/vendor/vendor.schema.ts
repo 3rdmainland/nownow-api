@@ -70,6 +70,12 @@ const menuPreviewProperties = {
 export const getVendorsSchema = {
     description: 'Get all active vendors',
     tags: ['vendors'],
+    querystring: {
+        type: 'object',
+        properties: {
+            excludeEventId: { type: 'string', description: 'Exclude vendors already assigned to this event' }
+        }
+    },
     response: {
         200: {
             type: 'object',
