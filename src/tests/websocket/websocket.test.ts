@@ -81,7 +81,12 @@ async function simulateConnection(subscriptions: {
   eventId?: string;
   vendorId?: string;
   phone?: string;
-} = {}): Promise<{ socket: ReturnType<typeof makeMockSocket>; cleanup: () => void }> {
+  admin?: boolean;
+} = {}, auth?: {
+  userId?: string;
+  role?: 'vendor' | 'organizer' | 'admin' | 'customer';
+  vendorId?: string;
+}): Promise<{ socket: ReturnType<typeof makeMockSocket>; cleanup: () => void }> {
   const mod = await import('../../websocket/websocket.controller.js');
   const websocketController = mod.default as (...args: any[]) => Promise<void>;
 
@@ -100,14 +105,27 @@ async function simulateConnection(subscriptions: {
   const fakeLog = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
   const fakeWsPlugin: any = {
-    get: vi.fn((path: string, opts: any, handler: (socket: any, req: any) => void) => {
-      if (path === '/ws') routeHandler = handler;
+    get: vi.fn((path: string, opts: any, handler?: (socket: any, req: any) => void) => {
+      // The /ws route is registered with { websocket: true } as opts
+      if (path === '/ws' && handler) routeHandler = handler;
     }),
     register: vi.fn().mockImplementation(async (_plugin: any, _opts?: any) => {
       // Simulate @fastify/websocket doing nothing in the test
     }),
     log: fakeLog,
-    // REST endpoint registration is a plain `get`; capture it too
+    jwt: {
+      verify: vi.fn((token: string) => {
+        // Return the auth payload if token matches our test token
+        if (token === 'test-jwt-token' && auth) {
+          return {
+            userId: auth.userId || 'test-user-id',
+            role: auth.role || 'vendor',
+            vendorId: auth.vendorId,
+          };
+        }
+        throw new Error('Invalid token');
+      }),
+    },
   };
 
   // Execute the controller to register handlers
@@ -117,8 +135,14 @@ async function simulateConnection(subscriptions: {
     throw new Error('websocketController did not register a /ws route handler');
   }
 
+  // Build a fake request with optional auth token
+  const fakeReq: any = {
+    url: auth ? '/ws?token=test-jwt-token' : '/ws',
+    headers: { host: 'localhost:3002' },
+  };
+
   // Simulate the client connecting (this adds the socket to `clients`)
-  (routeHandler as (socket: any, req: any) => void)(socket, {});
+  (routeHandler as (socket: any, req: any) => void)(socket, fakeReq);
 
   // Simulate sending a SUBSCRIBE message if subscriptions are provided
   if (Object.keys(subscriptions).length > 0) {
@@ -285,8 +309,8 @@ describe('WebSocket controller – broadcast functions', () => {
 
   describe('broadcastToVendor()', () => {
     it('sends only to clients subscribed to the given vendorId', async () => {
-      const { socket: vendor1, cleanup: c1 } = await simulateConnection({ vendorId: 'vendor-abc' });
-      const { socket: vendor2, cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-xyz' });
+      const { socket: vendor1, cleanup: c1 } = await simulateConnection({ vendorId: 'vendor-abc' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-abc' });
+      const { socket: vendor2, cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-xyz' }, { userId: 'u2', role: 'vendor', vendorId: 'vendor-xyz' });
 
       vendor1.send.mockClear();
       vendor2.send.mockClear();
@@ -307,7 +331,7 @@ describe('WebSocket controller – broadcast functions', () => {
 
     it('sends to clients with no vendorId (global listeners)', async () => {
       const { socket: global, cleanup: c1 } = await simulateConnection({});
-      const { socket: targeted, cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-abc' });
+      const { socket: targeted, cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-abc' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-abc' });
 
       global.send.mockClear();
       targeted.send.mockClear();
@@ -424,7 +448,7 @@ describe('WebSocket controller – broadcast functions', () => {
 
   describe('broadcastNewOrder()', () => {
     it('builds a NEW_ORDER message and routes it to the vendor subscriber', async () => {
-      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-new' });
+      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-new' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-new' });
 
       socket.send.mockClear();
 
@@ -447,7 +471,7 @@ describe('WebSocket controller – broadcast functions', () => {
     });
 
     it('does not send NEW_ORDER to a vendor subscriber for a different vendorId', async () => {
-      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-other' });
+      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-other' }, { userId: 'u2', role: 'vendor', vendorId: 'vendor-other' });
 
       socket.send.mockClear();
 
@@ -565,7 +589,7 @@ describe('WebSocket controller – broadcast functions', () => {
 
   describe('broadcastVendorStatus()', () => {
     it('builds a VENDOR_STATUS_UPDATE message and routes it via broadcastToVendor', async () => {
-      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-paused' });
+      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-paused' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-paused' });
 
       socket.send.mockClear();
 
@@ -587,7 +611,7 @@ describe('WebSocket controller – broadcast functions', () => {
     });
 
     it('does not send VENDOR_STATUS_UPDATE to an unrelated vendor subscriber', async () => {
-      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-other' });
+      const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-other' }, { userId: 'u2', role: 'vendor', vendorId: 'vendor-other' });
 
       socket.send.mockClear();
 
@@ -634,12 +658,12 @@ describe('WebSocket controller – broadcast functions', () => {
       const before = getConnectionStats().totalConnections;
 
       const { cleanup: c1 } = await simulateConnection({ eventId: 'event-stats' });
-      const { cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-stats' });
+      const { cleanup: c2 } = await simulateConnection({ vendorId: 'vendor-stats' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-stats' });
 
       const stats = getConnectionStats();
 
       expect(stats.totalConnections).toBe(before + 2);
-      expect(stats.connections).toHaveLength(before + 2);
+      expect(stats.byRole).toBeDefined();
 
       c1(); c2();
 
@@ -647,19 +671,14 @@ describe('WebSocket controller – broadcast functions', () => {
       expect(after.totalConnections).toBe(before);
     });
 
-    it('includes subscription metadata in each connection entry', async () => {
+    it('returns role breakdown in byRole field', async () => {
+      const before = getConnectionStats().totalConnections;
       const { cleanup } = await simulateConnection({ eventId: 'event-meta', phone: '+27820000001' });
 
       const stats = getConnectionStats();
-      const entry = stats.connections.find(
-        (c) => c.subscriptions.eventId === 'event-meta'
-      );
-
-      expect(entry).toBeDefined();
-      expect(entry?.subscriptions).toMatchObject({
-        eventId: 'event-meta',
-        phone: '+27820000001',
-      });
+      expect(stats.totalConnections).toBe(before + 1);
+      // Unauthenticated connections show as 'anonymous'
+      expect(stats.byRole).toBeDefined();
 
       cleanup();
     });
@@ -699,7 +718,7 @@ describe('WebSocket controller – subscription message handling', () => {
   });
 
   it('SUBSCRIBE with vendorId adds client to vendor subscription set', async () => {
-    const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-sub-test' });
+    const { socket, cleanup } = await simulateConnection({ vendorId: 'vendor-sub-test' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-sub-test' });
 
     socket.send.mockClear();
 
@@ -735,7 +754,7 @@ describe('WebSocket controller – subscription message handling', () => {
   });
 
   it('client disconnect removes the client from all subscription sets', async () => {
-    const { socket, cleanup } = await simulateConnection({ eventId: 'event-disco', vendorId: 'vendor-disco' });
+    const { socket, cleanup } = await simulateConnection({ eventId: 'event-disco', vendorId: 'vendor-disco' }, { userId: 'u1', role: 'vendor', vendorId: 'vendor-disco' });
 
     // Client is connected
     const statsBefore = getConnectionStats().totalConnections;
@@ -799,7 +818,7 @@ describe('GET /ws/stats', () => {
     vi.clearAllMocks();
   });
 
-  it('returns 200 with { totalConnections, connections }', async () => {
+  it('returns 200 with { totalConnections, byRole }', async () => {
     const app = await buildApp(async (fastify) => {
       // Register only the REST stats route (not the full WS plugin which needs
       // the @fastify/websocket upgrade handshake that inject() cannot do).
@@ -812,9 +831,9 @@ describe('GET /ws/stats', () => {
 
     const body = res.json();
     expect(body).toHaveProperty('totalConnections');
-    expect(body).toHaveProperty('connections');
+    expect(body).toHaveProperty('byRole');
     expect(typeof body.totalConnections).toBe('number');
-    expect(Array.isArray(body.connections)).toBe(true);
+    expect(typeof body.byRole).toBe('object');
 
     await app.close();
   });

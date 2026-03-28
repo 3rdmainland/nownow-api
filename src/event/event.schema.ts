@@ -235,9 +235,9 @@ export const deleteEventSchema = {
     }
 };
 
-// ADD vendors to event
+// INVITE vendors to event (with commission rates)
 export const addVendorsToEventSchema = {
-    description: "Add vendors to an event",
+    description: "Invite vendors to an event with commission terms",
     tags: ['events'],
     params: {
         type: "object",
@@ -247,12 +247,54 @@ export const addVendorsToEventSchema = {
     body: {
         type: "object",
         properties: {
-            vendorIds: { type: "array", items: { type: "string" } }
+            invites: {
+                type: "array",
+                items: {
+                    type: "object",
+                    properties: {
+                        vendorId: { type: "string" },
+                        commissionRate: { type: "number", minimum: 0, maximum: 50 },
+                    },
+                    required: ["vendorId", "commissionRate"],
+                },
+            },
         },
-        required: ["vendorIds"]
+        required: ["invites"]
     },
     response: {
         204: { type: "null" },
+        400: { type: "object", properties: { error: { type: "string" } } },
+        500: { type: "object", properties: { error: { type: "string" } } }
+    }
+};
+
+// GET vendor invite statuses for an event
+export const getEventVendorStatusesSchema = {
+    description: "Get vendor invite statuses for an event",
+    tags: ['events'],
+    params: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"]
+    },
+    response: {
+        200: {
+            type: "object",
+            properties: {
+                statuses: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            vendorId: { type: "string" },
+                            status: { type: "string", enum: ["invited", "accepted", "declined"] },
+                            createdAt: { type: "string" },
+                        },
+                    },
+                },
+            },
+            required: ["statuses"],
+        },
         500: { type: "object", properties: { error: { type: "string" } } }
     }
 };

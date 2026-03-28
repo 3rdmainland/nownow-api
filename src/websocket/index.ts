@@ -3,6 +3,7 @@ export {
   broadcast,
   broadcastToEvent,
   broadcastToVendor,
+  broadcastToOrganizer,
   broadcastToPhone,
   broadcastToAdmins,
   broadcastPriceUpdate,
@@ -14,6 +15,8 @@ export {
   broadcastAdminOrderFeed,
   broadcastPaymentFailed,
   broadcastTicketUpdate,
+  broadcastNotification,
+  broadcastNotificationToOrganizer,
   getConnectionStats,
 } from './websocket.controller';
 export * from './websocket.types';

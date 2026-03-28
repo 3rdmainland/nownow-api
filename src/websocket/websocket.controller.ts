@@ -13,14 +13,20 @@ import type {
   AdminOrderFeedPayload,
   PaymentFailedPayload,
   TicketUpdatePayload,
+  NotificationPayload,
+  WebSocketUser,
 } from './websocket.types';
 
 const MAX_CONNECTIONS = 1000;
+
+// Allowed subscription keys to prevent arbitrary payload injection
+const ALLOWED_SUBSCRIPTION_KEYS = new Set(['eventId', 'vendorId', 'organizerId', 'phone', 'admin']);
 
 // Store connected clients with their subscriptions
 interface ConnectedClient {
   socket: WebSocket;
   subscriptions: ClientSubscription;
+  user: WebSocketUser | null; // null = unauthenticated (limited access)
 }
 
 const clients: Map<WebSocket, ConnectedClient> = new Map();
@@ -219,15 +225,98 @@ export function broadcastTicketUpdate(payload: TicketUpdatePayload): void {
 }
 
 /**
- * Get connection stats
+ * Broadcast to clients subscribed to a specific organizer
+ */
+export function broadcastToOrganizer<T>(organizerId: string, message: WebSocketMessage<T>): void {
+  const messageStr = JSON.stringify(message);
+
+  for (const [socket, client] of clients) {
+    if (socket.readyState === socket.OPEN) {
+      if (client.subscriptions.organizerId === organizerId) {
+        socket.send(messageStr);
+      }
+    }
+  }
+}
+
+/**
+ * Broadcast a notification to a specific vendor
+ */
+export function broadcastNotification(vendorId: string, payload: NotificationPayload): void {
+  broadcastToVendor(vendorId, {
+    type: 'NOTIFICATION',
+    payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Broadcast a notification to a specific organizer
+ */
+export function broadcastNotificationToOrganizer(organizerId: string, payload: NotificationPayload): void {
+  broadcastToOrganizer(organizerId, {
+    type: 'NOTIFICATION',
+    payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Get connection stats (sanitized — no user details)
  */
 export function getConnectionStats() {
+  const roleBreakdown: Record<string, number> = {};
+  for (const [, client] of clients) {
+    const role = client.user?.role || 'anonymous';
+    roleBreakdown[role] = (roleBreakdown[role] || 0) + 1;
+  }
+
   return {
     totalConnections: clients.size,
-    connections: Array.from(clients.values()).map(c => ({
-      subscriptions: c.subscriptions,
-    })),
+    byRole: roleBreakdown,
   };
+}
+
+/**
+ * Validate that a SUBSCRIBE payload only contains allowed keys
+ * and that the user is authorized to subscribe to the requested resources.
+ */
+function validateSubscription(
+  payload: Record<string, unknown>,
+  user: WebSocketUser | null,
+): { valid: boolean; sanitized: Partial<ClientSubscription>; error?: string } {
+  const sanitized: Partial<ClientSubscription> = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (!ALLOWED_SUBSCRIPTION_KEYS.has(key)) continue;
+
+    if (key === 'admin') {
+      if (!user || user.role !== 'admin') {
+        return { valid: false, sanitized, error: 'Admin subscription requires admin role' };
+      }
+      sanitized.admin = Boolean(value);
+    } else if (key === 'vendorId') {
+      if (!user || (user.role !== 'admin' && user.vendorId !== value)) {
+        return { valid: false, sanitized, error: 'Cannot subscribe to a vendor you do not belong to' };
+      }
+      sanitized.vendorId = value as string;
+    } else if (key === 'organizerId') {
+      if (!user || (user.role !== 'admin' && user.role !== 'organizer')) {
+        return { valid: false, sanitized, error: 'Organizer subscription requires organizer or admin role' };
+      }
+      if (user.role === 'organizer' && user.userId !== value) {
+        return { valid: false, sanitized, error: 'Cannot subscribe to another organizer' };
+      }
+      sanitized.organizerId = value as string;
+    } else if (key === 'phone') {
+      // Phone subscriptions are for customer order tracking — allow for any authenticated user or anonymous
+      sanitized.phone = value as string;
+    } else if (key === 'eventId') {
+      sanitized.eventId = value as string;
+    }
+  }
+
+  return { valid: true, sanitized };
 }
 
 /**
@@ -241,6 +330,7 @@ async function websocketController(
   await fastify.register(websocket);
 
   // WebSocket connection endpoint
+  // Clients pass JWT via ?token=<jwt> query parameter
   fastify.get('/ws', { websocket: true }, (socket, req) => {
     // Reject if at capacity
     if (clients.size >= MAX_CONNECTIONS) {
@@ -248,19 +338,40 @@ async function websocketController(
       return;
     }
 
-    fastify.log.info('New WebSocket connection');
+    // Authenticate via query-string token
+    let wsUser: WebSocketUser | null = null;
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const token = url.searchParams.get('token');
+      if (token) {
+        const decoded = fastify.jwt.verify<{ userId: string; role: string; vendorId?: string }>(token);
+        wsUser = {
+          userId: decoded.userId,
+          role: decoded.role as WebSocketUser['role'],
+          vendorId: decoded.vendorId,
+        };
+      }
+    } catch {
+      // Invalid token — continue as unauthenticated (limited access)
+    }
+
+    fastify.log.info({ authenticated: !!wsUser, role: wsUser?.role }, 'New WebSocket connection');
 
     // Initialize client with empty subscriptions
     const client: ConnectedClient = {
       socket,
       subscriptions: {},
+      user: wsUser,
     };
     clients.set(socket, client);
 
     // Send welcome message
     socket.send(JSON.stringify({
       type: 'CONNECTED',
-      payload: { message: 'Connected to NowNow real-time updates' },
+      payload: {
+        message: 'Connected to NowNow real-time updates',
+        authenticated: !!wsUser,
+      },
       timestamp: new Date().toISOString(),
     }));
 
@@ -272,10 +383,21 @@ async function websocketController(
         // Handle subscription requests
         if (message.type === 'SUBSCRIBE') {
           const existingClient = clients.get(socket);
-          if (existingClient) {
+          if (existingClient && message.payload && typeof message.payload === 'object') {
+            const { valid, sanitized, error } = validateSubscription(message.payload, existingClient.user);
+
+            if (!valid) {
+              socket.send(JSON.stringify({
+                type: 'ERROR',
+                payload: { message: error },
+                timestamp: new Date().toISOString(),
+              }));
+              return;
+            }
+
             existingClient.subscriptions = {
               ...existingClient.subscriptions,
-              ...message.payload,
+              ...sanitized,
             };
             fastify.log.info({ subscriptions: existingClient.subscriptions }, 'Client subscribed');
 
@@ -313,8 +435,18 @@ async function websocketController(
     });
   });
 
-  // REST endpoint to check WebSocket stats (for monitoring)
-  fastify.get('/ws/stats', async () => {
+  // REST endpoint to check WebSocket stats (admin only)
+  fastify.get('/ws/stats', { preHandler: [async (request) => {
+    try {
+      await request.jwtVerify();
+      const payload = request.user as { role?: string };
+      if (payload.role !== 'admin') {
+        throw new Error('Forbidden');
+      }
+    } catch {
+      throw { statusCode: 403, message: 'Admin access required' };
+    }
+  }] }, async () => {
     return getConnectionStats();
   });
 }

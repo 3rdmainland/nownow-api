@@ -330,21 +330,17 @@ describe('Event Controller (integration)', () => {
   // ── POST /event/:id/vendors ───────────────────────────────────────────────────
 
   describe('POST /event/:id/vendors', () => {
-    it('returns 204 after adding vendors to the event', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: null }),
-      );
-
+    it('returns 401 without authentication', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/event/ev-abc/vendors',
-        payload: { vendorIds: ['v-1', 'v-2'] },
+        payload: { invites: [{ vendorId: 'v-1', commissionRate: 10 }] },
       });
 
-      expect(res.statusCode).toBe(204);
+      expect(res.statusCode).toBe(401);
     });
 
-    it('returns 400 when vendorIds is missing from the request body', async () => {
+    it('returns 400 when invites is missing from the request body', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/event/ev-abc/vendors',
@@ -354,18 +350,14 @@ describe('Event Controller (integration)', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('returns 500 when the upsert fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'upsert error' } }),
-      );
-
+    it('returns 400 when commission rate exceeds 50', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/event/ev-abc/vendors',
-        payload: { vendorIds: ['v-broken'] },
+        payload: { invites: [{ vendorId: 'v-1', commissionRate: 60 }] },
       });
 
-      expect(res.statusCode).toBe(500);
+      expect(res.statusCode).toBe(400);
     });
   });
 

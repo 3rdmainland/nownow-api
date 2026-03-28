@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { authenticate } from '../lib/auth.js';
 import { SettlementService } from './settlement.service.js';
 import { OrganizerService } from '../organizer/organizer.service.js';
+import { notifyOrganizer } from '../notifications/notify-helpers.js';
 import { UpsertBankDetailsPayload } from './settlement.types.js';
 import {
   vendorGetBankDetailsSchema,
@@ -10,6 +11,7 @@ import {
   vendorSummarySchema,
   vendorAgreementsSchema,
   vendorAcceptAgreementSchema,
+  vendorDeclineAgreementSchema,
 } from './vendor-settlement.schema.js';
 
 const vendorSettlementController: FastifyPluginAsync = async (fastify) => {
@@ -91,7 +93,69 @@ const vendorSettlementController: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { vendorId, id } = request.params as { vendorId: string; id: string };
       if (!assertOwnership(request, reply, vendorId)) return;
-      return organizerService.acceptAgreement(vendorId, id, { ip: request.ip });
+      const result = await organizerService.acceptAgreement(vendorId, id, { ip: request.ip });
+
+      // Fire-and-forget notification to organizer
+      (async () => {
+        try {
+          const { supabase } = await import('../lib/supabase.js');
+          const { data: agreement } = await supabase
+            .from('organizer_vendor_agreements')
+            .select('organizer_id, event_id, events(name), vendors(business_name)')
+            .eq('id', id)
+            .single();
+
+          if (agreement) {
+            const vendorName = (agreement as any).vendors?.business_name || 'A vendor';
+            const eventName = (agreement as any).events?.name || 'your event';
+            notifyOrganizer(agreement.organizer_id, {
+              title: 'Vendor Accepted Invitation',
+              message: `${vendorName} accepted the invitation to "${eventName}".`,
+              type: 'success',
+              actionUrl: `/events/${agreement.event_id}`,
+            });
+          }
+        } catch { /* don't fail accept on notification error */ }
+      })();
+
+      return result;
+    },
+  );
+
+  // POST /vendor/:vendorId/agreements/:id/decline
+  fastify.post(
+    '/:vendorId/agreements/:id/decline',
+    { schema: vendorDeclineAgreementSchema, preHandler: [authenticate] },
+    async (request, reply) => {
+      const { vendorId, id } = request.params as { vendorId: string; id: string };
+      if (!assertOwnership(request, reply, vendorId)) return;
+
+      const result = await organizerService.declineAgreement(vendorId, id);
+
+      // Fire-and-forget notification to organizer
+      (async () => {
+        try {
+          const { supabase } = await import('../lib/supabase.js');
+          const { data: agreement } = await supabase
+            .from('organizer_vendor_agreements')
+            .select('organizer_id, event_id, events(name), vendors(business_name)')
+            .eq('id', id)
+            .single();
+
+          if (agreement) {
+            const vendorName = (agreement as any).vendors?.business_name || 'A vendor';
+            const eventName = (agreement as any).events?.name || 'your event';
+            notifyOrganizer(agreement.organizer_id, {
+              title: 'Vendor Declined Invitation',
+              message: `${vendorName} declined the invitation to "${eventName}".`,
+              type: 'warning',
+              actionUrl: `/events/${agreement.event_id}`,
+            });
+          }
+        } catch { /* don't fail decline on notification error */ }
+      })();
+
+      return result;
     },
   );
 };

@@ -8,9 +8,12 @@ import {
     deleteEventSchema,
     getEventsByVendorSchema,
     addVendorsToEventSchema,
-    removeVendorFromEventSchema
+    removeVendorFromEventSchema,
+    getEventVendorStatusesSchema,
 } from "./event.schema";
 import { EventService } from "./event.service";
+import { supabase } from "../lib/supabase.js";
+import { notifyVendorUser, notifyOrganizer } from "../notifications/notify-helpers.js";
 
 const eventController: FastifyPluginAsync = async (fastify) => {
     const eventService = new EventService();
@@ -93,9 +96,69 @@ const eventController: FastifyPluginAsync = async (fastify) => {
     fastify.post<{ Params: { id: string } }>("/:id/vendors", { schema: addVendorsToEventSchema }, async (request, reply) => {
         try {
             const { id } = request.params;
-            const { vendorIds } = request.body as { vendorIds: string[] };
-            await eventService.addVendorsToEvent(id, vendorIds);
+            const { invites } = request.body as { invites: { vendorId: string; commissionRate: number }[] };
+            // Get organizer ID from JWT
+            let organizerId: string | undefined;
+            try {
+                await request.jwtVerify();
+                const user = request.user as { userId?: string; role?: string };
+                if (user?.role === 'organizer' && user.userId) {
+                    organizerId = user.userId;
+                }
+            } catch {
+                // no JWT
+            }
+            if (!organizerId) {
+                return reply.status(401).send({ error: 'Authentication required' });
+            }
+            await eventService.inviteVendorsToEvent(id, organizerId, invites);
+
+            // Fire-and-forget notifications (don't block the response)
+            const vendorIds = invites.map(inv => inv.vendorId);
+            (async () => {
+                try {
+                    const [event, { data: vendorUsers }] = await Promise.all([
+                        eventService.getEventById(id),
+                        supabase
+                            .from('vendor_users')
+                            .select('id, vendor_id')
+                            .in('vendor_id', vendorIds)
+                            .eq('is_active', true),
+                    ]);
+                    const eventName = event?.name || 'an event';
+
+                    for (const vu of vendorUsers || []) {
+                        notifyVendorUser(vu.vendor_id, vu.id, {
+                            title: 'New Event Invitation',
+                            message: `You've been invited to "${eventName}". Check your agreements to accept.`,
+                            type: 'action',
+                            actionUrl: '/account/agreements',
+                        });
+                    }
+
+                    notifyOrganizer(organizerId!, {
+                        title: 'Vendor Invitations Sent',
+                        message: `${invites.length} vendor(s) invited to "${eventName}".`,
+                        type: 'success',
+                        actionUrl: `/events/${id}`,
+                    });
+                } catch { /* notification errors should never fail the request */ }
+            })();
+
             return reply.status(204).send();
+        } catch (err: any) {
+            fastify.log.error(err);
+            if (err.statusCode === 400 || err.name === 'ValidationError') {
+                return reply.status(400).send({ error: err.message });
+            }
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+
+    fastify.get<{ Params: { id: string } }>("/:id/vendors/statuses", { schema: getEventVendorStatusesSchema }, async (request, reply) => {
+        try {
+            const statuses = await eventService.getEventVendorStatuses(request.params.id);
+            return { statuses };
         } catch (err) {
             fastify.log.error(err);
             return reply.status(500).send({ error: "Internal server error" });

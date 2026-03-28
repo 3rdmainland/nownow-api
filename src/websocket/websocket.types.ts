@@ -1,3 +1,5 @@
+import type { NotificationType } from '../notifications/notifications.types.js';
+
 /**
  * WebSocket event types for real-time updates
  */
@@ -11,7 +13,8 @@ export type WebSocketEventType =
   | 'NEW_ORDER'
   | 'ADMIN_ORDER_FEED'
   | 'PAYMENT_FAILED'
-  | 'TICKET_UPDATE';
+  | 'TICKET_UPDATE'
+  | 'NOTIFICATION';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;
@@ -104,10 +107,25 @@ export interface TicketUpdatePayload {
   subject?: string;
 }
 
+export interface NotificationPayload {
+  title: string;
+  message: string;
+  type: NotificationType;
+  actionUrl?: string;
+}
+
 // Client subscription tracking
 export interface ClientSubscription {
   eventId?: string;
   vendorId?: string;
+  organizerId?: string;
   phone?: string; // For order tracking
   admin?: boolean; // For admin dashboard subscriptions
+}
+
+// Authenticated user info attached to a WebSocket client
+export interface WebSocketUser {
+  userId: string;
+  role: 'vendor' | 'organizer' | 'admin' | 'customer';
+  vendorId?: string; // For vendor users — the vendor they belong to
 }

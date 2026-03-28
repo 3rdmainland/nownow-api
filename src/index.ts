@@ -32,6 +32,8 @@ import whatsappWebhook from "./whatsapp/whatsapp.webhook";
 import legalController from "./legal/legal.controller";
 import settlementController from "./settlement/settlement.controller";
 import vendorSettlementController from "./settlement/vendor-settlement.controller";
+import adminNotificationController from "./notifications/notifications.controller";
+import recipientNotificationController from "./notifications/recipient-notification.controller";
 import { AppError } from "./lib/errors";
 import { getFeatureFlags } from "./lib/feature-flags";
 
@@ -152,6 +154,8 @@ fastify.register(whatsappWebhook, { prefix: "/whatsapp/webhook" });
 fastify.register(legalController, { prefix: "/legal" });
 fastify.register(settlementController, { prefix: "/settlement" });
 fastify.register(vendorSettlementController, { prefix: "/vendor" });
+fastify.register(adminNotificationController, { prefix: "/admin/notifications" });
+fastify.register(recipientNotificationController, { prefix: "/notifications" });
 
 // Public feature flags endpoint (no auth required)
 fastify.get('/config/flags', async () => {

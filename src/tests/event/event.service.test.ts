@@ -351,55 +351,59 @@ describe('EventService', () => {
 
   // ── addVendorsToEvent ─────────────────────────────────────────────────────────
 
-  describe('addVendorsToEvent', () => {
-    it('upserts junction records and invalidates the vendor cache on success', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: null }),
-      );
+  describe('inviteVendorsToEvent', () => {
+    const fakeEvent = { id: 'event-abc', organizer_id: 'org-1', start_date: '2026-04-01' };
+
+    it('upserts junction and agreement records on success', async () => {
+      let callCount = 0;
+      supabaseMock.from.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // fetch event
+          return createSupabaseMock({ data: fakeEvent, error: null });
+        }
+        return createSupabaseMock({ data: null, error: null });
+      });
 
       await expect(
-        service.addVendorsToEvent('event-abc', ['vendor-1', 'vendor-2', 'vendor-3']),
+        service.inviteVendorsToEvent('event-abc', 'org-1', [
+          { vendorId: 'vendor-1', commissionRate: 10 },
+        ]),
       ).resolves.toBeUndefined();
 
-      // The supabase.from call should have targeted event_vendors
+      expect(supabaseMock.from).toHaveBeenCalledWith('events');
       expect(supabaseMock.from).toHaveBeenCalledWith('event_vendors');
-      // Cache invalidation should have been attempted
+      expect(supabaseMock.from).toHaveBeenCalledWith('organizer_vendor_agreements');
       expect(cacheMock.del).toHaveBeenCalled();
     });
 
-    it('invalidates multiple paginated cache keys for the given eventId', async () => {
+    it('throws when commission rate is out of range', async () => {
       supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: null }),
-      );
-
-      await service.addVendorsToEvent('ev-xyz', ['v-1']);
-
-      // 3 pages × 3 sizes = 9 cache keys should be deleted
-      const delArgs: string[] = (cacheMock.del as any).mock.calls[0];
-      expect(delArgs).toHaveLength(9);
-      expect(delArgs.every((k: string) => k.startsWith('vendors:event:ev-xyz:'))).toBe(true);
-    });
-
-    it('does not throw when cache invalidation silently fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: null }),
-      );
-      cacheMock.del.mockRejectedValueOnce(new Error('redis unavailable'));
-
-      // Service should swallow the cache error
-      await expect(
-        service.addVendorsToEvent('ev-id', ['vendor-id']),
-      ).resolves.toBeUndefined();
-    });
-
-    it('throws when the upsert fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'upsert failed' } }),
+        createSupabaseMock({ data: fakeEvent, error: null }),
       );
 
       await expect(
-        service.addVendorsToEvent('event-id', ['vendor-id']),
-      ).rejects.toThrow('Failed to add vendors to event: upsert failed');
+        service.inviteVendorsToEvent('event-abc', 'org-1', [
+          { vendorId: 'vendor-1', commissionRate: 60 },
+        ]),
+      ).rejects.toThrow('Commission rate must be between 0% and 50%');
+    });
+
+    it('throws when the event_vendors upsert fails', async () => {
+      let callCount = 0;
+      supabaseMock.from.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return createSupabaseMock({ data: fakeEvent, error: null });
+        }
+        return createSupabaseMock({ data: null, error: { message: 'upsert failed' } });
+      });
+
+      await expect(
+        service.inviteVendorsToEvent('event-abc', 'org-1', [
+          { vendorId: 'vendor-id', commissionRate: 5 },
+        ]),
+      ).rejects.toThrow('Failed to invite vendors to event: upsert failed');
     });
   });
 

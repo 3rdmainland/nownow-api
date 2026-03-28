@@ -315,21 +315,17 @@ describe('Event Controller — Extended Coverage', () => {
   // ── POST /event/:id/vendors — Edge Cases ──────────────────────────────────
 
   describe('POST /event/:id/vendors — edge cases', () => {
-    it('returns 204 on successfully adding vendors', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: null }),
-      );
-
+    it('returns 401 without authentication', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/event/evt-1/vendors',
-        payload: { vendorIds: ['v1', 'v2'] },
+        payload: { invites: [{ vendorId: 'v1', commissionRate: 10 }] },
       });
 
-      expect(res.statusCode).toBe(204);
+      expect(res.statusCode).toBe(401);
     });
 
-    it('returns 400 when vendorIds is missing from body', async () => {
+    it('returns 400 when invites is missing from body', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/event/evt-1/vendors',
@@ -339,34 +335,14 @@ describe('Event Controller — Extended Coverage', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('coerces a string vendorIds to an array (Fastify Ajv coercion)', async () => {
-      // Fastify's Ajv coerces 'not-an-array' string to ['not-an-array'] for array types
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: null }),
-      );
-
+    it('returns 400 when commission rate exceeds 50', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/event/evt-1/vendors',
-        payload: { vendorIds: 'not-an-array' },
+        payload: { invites: [{ vendorId: 'v1', commissionRate: 60 }] },
       });
 
-      // Ajv coerces the string to an array, so the request passes schema validation
-      expect([204, 500]).toContain(res.statusCode);
-    });
-
-    it('returns 500 when the add operation fails', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'Insert failed' } }),
-      );
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/event/evt-1/vendors',
-        payload: { vendorIds: ['v1'] },
-      });
-
-      expect(res.statusCode).toBe(500);
+      expect(res.statusCode).toBe(400);
     });
   });
 

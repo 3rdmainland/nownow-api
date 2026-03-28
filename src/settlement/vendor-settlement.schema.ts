@@ -109,6 +109,25 @@ export const vendorAcceptAgreementSchema = {
   },
 };
 
+export const vendorDeclineAgreementSchema = {
+  description: 'Decline a draft agreement',
+  tags: ['vendor-settlement'],
+  params: {
+    type: 'object',
+    required: ['vendorId', 'id'],
+    properties: {
+      vendorId: { type: 'string' },
+      id: { type: 'string' },
+    },
+  },
+  response: {
+    200: { type: 'object', additionalProperties: true },
+    400: errorResponse,
+    403: errorResponse,
+    404: errorResponse,
+  },
+};
+
 export const vendorSummarySchema = {
   description: 'Get own settlement summary',
   tags: ['vendor-settlement'],

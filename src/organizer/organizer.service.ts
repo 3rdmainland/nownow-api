@@ -558,6 +558,20 @@ export class OrganizerService {
 
     if (updateError) throw new Error(`Failed to accept agreement: ${updateError.message}`);
 
+    // Also update event_vendors status to 'accepted'
+    await supabase
+      .from('event_vendors')
+      .update({ status: 'accepted' })
+      .eq('event_id', row.event_id)
+      .eq('vendor_id', vendorId);
+
+    // Invalidate event caches so vendor shows up in event vendor lists
+    const eventCacheKeys = [
+      `events:all`,
+      `events:id:${row.event_id}`,
+    ];
+    try { await (await import('../lib/redis.js')).cache.del(...eventCacheKeys); } catch {}
+
     const [vendorResult, eventResult] = await Promise.all([
       supabase.from('vendors').select('name').eq('id', row.vendor_id).single(),
       supabase.from('events').select('name').eq('id', row.event_id).single(),
@@ -570,6 +584,56 @@ export class OrganizerService {
       commissionRate: Number(row.commission_rate),
       acceptedAt: new Date().toISOString(),
       ip: metadata?.ip,
+    });
+
+    return toAgreement(row, vendorResult.data?.name, eventResult.data?.name);
+  }
+
+  async declineAgreement(vendorId: string, agreementId: string): Promise<OrganizerVendorAgreement> {
+    const { data: existing, error } = await supabase
+      .from('organizer_vendor_agreements')
+      .select('*')
+      .eq('id', agreementId)
+      .single();
+
+    if (error || !existing) throw new NotFoundError('Agreement not found');
+    if (existing.vendor_id !== vendorId) throw new ForbiddenError('Access denied');
+    if (existing.status !== 'draft') throw new ValidationError('Only draft agreements can be declined');
+
+    const { data: row, error: updateError } = await supabase
+      .from('organizer_vendor_agreements')
+      .update({ status: 'expired', updated_at: new Date().toISOString() })
+      .eq('id', agreementId)
+      .select()
+      .single();
+
+    if (updateError) throw new Error(`Failed to decline agreement: ${updateError.message}`);
+
+    // Update event_vendors status to 'declined'
+    await supabase
+      .from('event_vendors')
+      .update({ status: 'declined' })
+      .eq('event_id', row.event_id)
+      .eq('vendor_id', vendorId);
+
+    // Invalidate event caches
+    const eventCacheKeys = [
+      `events:all`,
+      `events:id:${row.event_id}`,
+    ];
+    try { await (await import('../lib/redis.js')).cache.del(...eventCacheKeys); } catch {}
+
+    const [vendorResult, eventResult] = await Promise.all([
+      supabase.from('vendors').select('name').eq('id', row.vendor_id).single(),
+      supabase.from('events').select('name').eq('id', row.event_id).single(),
+    ]);
+
+    captureServerEvent(vendorId, 'agreement_declined', {
+      agreementId,
+      eventId: row.event_id,
+      eventName: eventResult.data?.name,
+      commissionRate: Number(row.commission_rate),
+      declinedAt: new Date().toISOString(),
     });
 
     return toAgreement(row, vendorResult.data?.name, eventResult.data?.name);

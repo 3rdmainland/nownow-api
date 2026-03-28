@@ -358,7 +358,8 @@ export class VendorService {
                 const { data: eventVendors } = await supabase
                     .from('event_vendors')
                     .select('vendor_id')
-                    .eq('event_id', eventId);
+                    .eq('event_id', eventId)
+                    .eq('status', 'accepted');
                 allowedVendorIds = (eventVendors || []).map((ev: any) => ev.vendor_id);
                 if (allowedVendorIds.length === 0) {
                     return [];
@@ -435,11 +436,12 @@ export class VendorService {
             const cached = await cache.get<{ slug: string; name: string; vendorCount: number; imageUrl?: string }[]>(cacheKey);
             if (cached) return cached;
 
-            // Get vendor IDs for this event
+            // Get vendor IDs for this event (only accepted vendors)
             const { data: eventVendors, error: junctionError } = await supabase
                 .from('event_vendors')
                 .select('vendor_id')
-                .eq('event_id', eventId);
+                .eq('event_id', eventId)
+                .eq('status', 'accepted');
 
             if (junctionError) {
                 throw new Error(`Failed to fetch event vendors: ${junctionError.message}`);
@@ -565,11 +567,12 @@ export class VendorService {
             }
 
 
-            // Get vendor IDs + display_order from the event_vendors junction table
+            // Get vendor IDs + display_order from the event_vendors junction table (only accepted)
             const { data: eventVendors, error: junctionError } = await supabase
                 .from('event_vendors')
                 .select('vendor_id, display_order')
-                .eq('event_id', eventId);
+                .eq('event_id', eventId)
+                .eq('status', 'accepted');
 
             if (junctionError) {
                 throw new Error(`Failed to fetch event vendors: ${junctionError.message}`);
@@ -767,11 +770,12 @@ export class VendorService {
                     throw new Error('Event not found');
                 }
 
-                // Get vendor IDs from junction table
+                // Get vendor IDs from junction table (only accepted vendors)
                 const { data: eventVendors, error: junctionError } = await supabase
                     .from('event_vendors')
                     .select('vendor_id')
-                    .eq('event_id', eventId);
+                    .eq('event_id', eventId)
+                    .eq('status', 'accepted');
 
                 if (junctionError) {
                     throw new Error(`Failed to fetch event for vendor search: ${junctionError.message}`);
