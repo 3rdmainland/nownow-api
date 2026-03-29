@@ -70,7 +70,7 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
    * POST /payment/webhook
    * Receives Stitch webhook events. Source of truth for payment status.
    */
-  fastify.post('/webhook', { schema: webhookSchema }, async (request, reply) => {
+  fastify.post('/webhook', { schema: webhookSchema, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const svixId = request.headers['svix-id'] as string;
     const svixTimestamp = request.headers['svix-timestamp'] as string;
     const svixSignature = request.headers['svix-signature'] as string;

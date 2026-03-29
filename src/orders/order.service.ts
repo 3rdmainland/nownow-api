@@ -391,18 +391,33 @@ export class OrderService {
             throw new Error(`Failed to create order: ${error.message}`);
         }
 
-        const { qr_code, qr_image } = await qrHelper.generateAndUploadQRCode(createdOrder.id);
-
-        // Update order with QR code data
-        const { data: updatedOrder, error: updateError } = await supabase
-            .from('orders')
-            .update({ qr_code, qr_image })
-            .eq('id', createdOrder.id)
-            .select()
-            .single();
-
-        if (updateError) {
-            throw new Error(`Failed to update order with QR code: ${updateError.message}`);
+        // Defer QR generation to QStash background job (saves ~50-100ms from critical path)
+        let updatedOrder = createdOrder;
+        try {
+            const { qstash, getCallbackBaseUrl } = await import('../lib/qstash.js');
+            const callbackUrl = getCallbackBaseUrl();
+            if (qstash && callbackUrl) {
+                void qstash.publishJSON({
+                    url: `${callbackUrl}/internal/order-qr/generate`,
+                    body: { orderId: createdOrder.id },
+                }).catch(err => console.error('Failed to enqueue QR generation:', err?.message || err));
+            } else {
+                // Fallback: generate inline if QStash not available (dev/test)
+                const { qr_code, qr_image } = await qrHelper.generateAndUploadQRCode(createdOrder.id);
+                const { data: qrUpdated, error: updateError } = await supabase
+                    .from('orders')
+                    .update({ qr_code, qr_image })
+                    .eq('id', createdOrder.id)
+                    .select()
+                    .single();
+                if (updateError) {
+                    throw new Error(`Failed to update order with QR code: ${updateError.message}`);
+                }
+                updatedOrder = qrUpdated;
+            }
+        } catch (qrErr: any) {
+            // Non-fatal: order is created, QR can be generated later
+            console.error('QR generation error (non-fatal):', qrErr?.message || qrErr);
         }
 
         // Fire-and-forget: update queue positions for other pending orders

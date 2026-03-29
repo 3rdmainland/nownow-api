@@ -179,7 +179,7 @@ const adminController: FastifyPluginAsync = async (fastify) => {
   });
 
   // GET /admin/revenue-report
-  fastify.get('/revenue-report', { schema: revenueReportSchema }, async (request, reply) => {
+  fastify.get('/revenue-report', { schema: revenueReportSchema, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { startDate, endDate } = request.query as { startDate?: string; endDate?: string };
     return adminService.getRevenueReport(startDate, endDate);
   });
@@ -216,19 +216,19 @@ const adminController: FastifyPluginAsync = async (fastify) => {
   });
 
   // GET /admin/reconciliation
-  fastify.get('/reconciliation', { schema: reconciliationSchema }, async (request, reply) => {
+  fastify.get('/reconciliation', { schema: reconciliationSchema, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { startDate, endDate } = request.query as { startDate?: string; endDate?: string };
     return adminService.getReconciliationReport(startDate, endDate);
   });
 
   // GET /admin/analytics/peak-hours
-  fastify.get('/analytics/peak-hours', { schema: peakHoursSchema }, async (request, reply) => {
+  fastify.get('/analytics/peak-hours', { schema: peakHoursSchema, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { startDate, endDate, eventId } = request.query as { startDate?: string; endDate?: string; eventId?: string };
     return adminService.getPeakHoursAnalysis(startDate, endDate, eventId);
   });
 
   // GET /admin/analytics/vendor-performance
-  fastify.get('/analytics/vendor-performance', { schema: vendorPerformanceSchema }, async (request, reply) => {
+  fastify.get('/analytics/vendor-performance', { schema: vendorPerformanceSchema, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { startDate, endDate, eventId } = request.query as { startDate?: string; endDate?: string; eventId?: string };
     return adminService.getVendorPerformance(startDate, endDate, eventId);
   });

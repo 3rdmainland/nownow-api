@@ -17,64 +17,60 @@ export class EventService {
 
     async getAllEvents(): Promise<Event[]> {
         const cacheKey = eventCacheKeys.all();
-        const cached = await cache.get<Event[]>(cacheKey);
-        if (cached) return cached;
+        return cache.getOrFetch<Event[]>(cacheKey, async () => {
+            const { data, error } = await supabase
+                .from("events")
+                .select("*")
+                .order('created_at', { ascending: false })
+                .limit(200);
 
-        const { data, error } = await supabase
-            .from("events")
-            .select("*");
+            if (error) {
+                throw new Error(`Failed to fetch events: ${error.message}`);
+            }
 
-        if (error) {
-            throw new Error(`Failed to fetch events: ${error.message}`);
-        }
-
-        const events = (data || []).map(dbEvent => fromDbEvent(dbEvent));
-        await this.populateVendorIds(events);
-        await cache.set(cacheKey, events, EVENT_CACHE_TTL);
-        return events;
+            const events = (data || []).map(dbEvent => fromDbEvent(dbEvent));
+            await this.populateVendorIds(events);
+            return events;
+        }, EVENT_CACHE_TTL);
     }
 
     async getEventById(id: string): Promise<Event | null> {
         const cacheKey = eventCacheKeys.byId(id);
-        const cached = await cache.get<Event>(cacheKey);
-        if (cached) return cached;
+        return cache.getOrFetch<Event | null>(cacheKey, async () => {
+            const { data, error } = await supabase
+                .from('events')
+                .select('*')
+                .eq("id", id)
+                .single();
 
-        const { data, error } = await supabase
-            .from('events')
-            .select('*')
-            .eq("id", id)
-            .single();
+            if (error) {
+                throw new Error(`Failed to fetch event: ${error.message}`);
+            }
 
-        if (error) {
-            throw new Error(`Failed to fetch event: ${error.message}`);
-        }
-
-        const event = data ? fromDbEvent(data) : null;
-        if (event) {
-            await this.populateVendorIds([event]);
-            await cache.set(cacheKey, event, EVENT_CACHE_TTL);
-        }
-        return event;
+            const event = data ? fromDbEvent(data) : null;
+            if (event) {
+                await this.populateVendorIds([event]);
+            }
+            return event;
+        }, EVENT_CACHE_TTL);
     }
 
     async getEventByCode(code: string): Promise<Event | null> {
         const cacheKey = eventCacheKeys.byCode(code);
-        const cached = await cache.get<Event>(cacheKey);
-        if (cached) return cached;
+        return cache.getOrFetch<Event | null>(cacheKey, async () => {
+            const { data, error } = await supabase
+                .from('events')
+                .select('*')
+                .eq('code', code)
+                .single();
 
-        const { data, error } = await supabase
-            .from('events')
-            .select('*')
-            .eq('code', code)
-            .single();
-
-        if (error) return null;
-        const event = data ? fromDbEvent(data) : null;
-        if (event) {
-            await this.populateVendorIds([event]);
-            await cache.set(cacheKey, event, EVENT_CACHE_TTL);
-        }
-        return event;
+            if (error) return null;
+            const event = data ? fromDbEvent(data) : null;
+            if (event) {
+                await this.populateVendorIds([event]);
+            }
+            return event;
+        }, EVENT_CACHE_TTL);
     }
 
     // Add a helper method to get event by ID or code

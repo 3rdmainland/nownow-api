@@ -5,6 +5,12 @@ export const cacheMock = {
   set: vi.fn().mockResolvedValue(undefined),
   del: vi.fn().mockResolvedValue(undefined),
   exists: vi.fn().mockResolvedValue(false),
+  mget: vi.fn().mockResolvedValue([]),
+  mset: vi.fn().mockResolvedValue(undefined),
+  // getOrFetch: cache miss → run fetchFn, cache the result, return it
+  getOrFetch: vi.fn().mockImplementation(async (_key: string, fetchFn: () => Promise<unknown>, _ttl: number) => {
+    return fetchFn();
+  }),
 };
 
 export const redisMock = {

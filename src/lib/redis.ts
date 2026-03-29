@@ -45,6 +45,9 @@ export const CACHE_TTL = {
     ACTIVE_ORDERS: 5,          // 5 seconds
 } as const
 
+// Singleflight map: prevents cache stampede by deduplicating concurrent fetches
+const inflight = new Map<string, Promise<unknown>>();
+
 // Type-safe cache helpers
 export const cache = {
     // Get with automatic JSON parsing
@@ -84,6 +87,47 @@ export const cache = {
         for (const key of keys) pipeline.get(key)
         const results = await pipeline.exec<(T | null)[]>()
         return results
+    },
+
+    /**
+     * Get-or-fetch with singleflight dedup.
+     * On cache miss, only one caller runs fetchFn; others await the same promise.
+     * Options:
+     *   - allowStale: if true and fetchFn throws, return expired cache value instead of throwing
+     */
+    async getOrFetch<T>(
+        key: string,
+        fetchFn: () => Promise<T>,
+        ttl: number,
+        opts?: { allowStale?: boolean },
+    ): Promise<T> {
+        // 1. Try cache
+        const cached = await cache.get<T>(key);
+        if (cached !== null) return cached;
+
+        // 2. Deduplicate concurrent fetches
+        const existing = inflight.get(key);
+        if (existing) return existing as Promise<T>;
+
+        const promise = (async () => {
+            try {
+                const value = await fetchFn();
+                await cache.set(key, value, ttl);
+                return value;
+            } catch (err) {
+                // Stale-while-revalidate: return expired cache value if available
+                if (opts?.allowStale) {
+                    const stale = await cache.get<T>(key);
+                    if (stale !== null) return stale;
+                }
+                throw err;
+            } finally {
+                inflight.delete(key);
+            }
+        })();
+
+        inflight.set(key, promise);
+        return promise;
     },
 
     // Batch set multiple key-value pairs in a single round-trip

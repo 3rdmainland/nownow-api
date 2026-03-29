@@ -17,24 +17,21 @@ const categoryCacheKeys = {
 export class CategoryService {
     async getAllCategories(type?: CategoryType): Promise<Category[]> {
         const cacheKey = categoryCacheKeys.all(type);
-        const cached = await cache.get<Category[]>(cacheKey);
-        if (cached) return cached;
+        return cache.getOrFetch<Category[]>(cacheKey, async () => {
+            let query = supabase.from('categories').select('*');
 
-        let query = supabase.from('categories').select('*');
+            if (type) {
+                query = query.eq('type', type);
+            }
 
-        if (type) {
-            query = query.eq('type', type);
-        }
+            const { data, error } = await query;
 
-        const { data, error } = await query;
+            if (error) {
+                throw new Error(`Failed to fetch categories: ${error.message}`);
+            }
 
-        if (error) {
-            throw new Error(`Failed to fetch categories: ${error.message}`);
-        }
-
-        const categories = (data || []).map(fromDbCategory);
-        await cache.set(cacheKey, categories, CATEGORY_CACHE_TTL);
-        return categories;
+            return (data || []).map(fromDbCategory);
+        }, CATEGORY_CACHE_TTL);
     }
 
     async getCategoryById(id: string): Promise<Category | null> {

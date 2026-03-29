@@ -20,3 +20,5 @@ export {
   getConnectionStats,
 } from './websocket.controller';
 export * from './websocket.types';
+export { adapter, channels } from './broadcast';
+export type { BroadcastAdapter } from './broadcast';

@@ -14,7 +14,8 @@ export type WebSocketEventType =
   | 'ADMIN_ORDER_FEED'
   | 'PAYMENT_FAILED'
   | 'TICKET_UPDATE'
-  | 'NOTIFICATION';
+  | 'NOTIFICATION'
+  | 'QR_READY';
 
 export interface WebSocketMessage<T = unknown> {
   type: WebSocketEventType;

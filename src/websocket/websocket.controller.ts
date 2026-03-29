@@ -16,6 +16,7 @@ import type {
   NotificationPayload,
   WebSocketUser,
 } from './websocket.types';
+import { adapter, channels } from './broadcast';
 
 const MAX_CONNECTIONS = 1000;
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s ping interval
@@ -34,59 +35,26 @@ interface ConnectedClient {
 
 const clients: Map<WebSocket, ConnectedClient> = new Map();
 
-// Subscription indexes for O(1) targeted broadcasting
-const eventIndex: Map<string, Set<WebSocket>> = new Map();
-const vendorIndex: Map<string, Set<WebSocket>> = new Map();
-const organizerIndex: Map<string, Set<WebSocket>> = new Map();
-const phoneIndex: Map<string, Set<WebSocket>> = new Map();
-const adminSet: Set<WebSocket> = new Set();
-
-/** Add a socket to an index map */
-function addToIndex(index: Map<string, Set<WebSocket>>, key: string, socket: WebSocket): void {
-  let set = index.get(key);
-  if (!set) { set = new Set(); index.set(key, set); }
-  set.add(socket);
-}
-
-/** Remove a socket from an index map */
-function removeFromIndex(index: Map<string, Set<WebSocket>>, key: string, socket: WebSocket): void {
-  const set = index.get(key);
-  if (set) { set.delete(socket); if (set.size === 0) index.delete(key); }
-}
-
-/** Remove socket from ALL indexes (used on disconnect) */
+/** Remove socket from adapter channels based on subscriptions (used on disconnect) */
 function removeFromAllIndexes(socket: WebSocket, subs: ClientSubscription): void {
-  if (subs.eventId) removeFromIndex(eventIndex, subs.eventId, socket);
-  if (subs.vendorId) removeFromIndex(vendorIndex, subs.vendorId, socket);
-  if (subs.organizerId) removeFromIndex(organizerIndex, subs.organizerId, socket);
-  if (subs.phone) removeFromIndex(phoneIndex, subs.phone, socket);
-  if (subs.admin) adminSet.delete(socket);
+  adapter.unsubscribeAll(socket);
 }
 
-/** Update indexes when subscriptions change */
+/** Update adapter channels when subscriptions change */
 function updateIndexes(socket: WebSocket, oldSubs: ClientSubscription, newSubs: ClientSubscription): void {
   // Remove old entries that changed
-  if (oldSubs.eventId && oldSubs.eventId !== newSubs.eventId) removeFromIndex(eventIndex, oldSubs.eventId, socket);
-  if (oldSubs.vendorId && oldSubs.vendorId !== newSubs.vendorId) removeFromIndex(vendorIndex, oldSubs.vendorId, socket);
-  if (oldSubs.organizerId && oldSubs.organizerId !== newSubs.organizerId) removeFromIndex(organizerIndex, oldSubs.organizerId, socket);
-  if (oldSubs.phone && oldSubs.phone !== newSubs.phone) removeFromIndex(phoneIndex, oldSubs.phone, socket);
-  if (oldSubs.admin && !newSubs.admin) adminSet.delete(socket);
+  if (oldSubs.eventId && oldSubs.eventId !== newSubs.eventId) adapter.unsubscribe(channels.event(oldSubs.eventId), socket);
+  if (oldSubs.vendorId && oldSubs.vendorId !== newSubs.vendorId) adapter.unsubscribe(channels.vendor(oldSubs.vendorId), socket);
+  if (oldSubs.organizerId && oldSubs.organizerId !== newSubs.organizerId) adapter.unsubscribe(channels.organizer(oldSubs.organizerId), socket);
+  if (oldSubs.phone && oldSubs.phone !== newSubs.phone) adapter.unsubscribe(channels.phone(oldSubs.phone), socket);
+  if (oldSubs.admin && !newSubs.admin) adapter.unsubscribe(channels.admin(), socket);
 
   // Add new entries
-  if (newSubs.eventId) addToIndex(eventIndex, newSubs.eventId, socket);
-  if (newSubs.vendorId) addToIndex(vendorIndex, newSubs.vendorId, socket);
-  if (newSubs.organizerId) addToIndex(organizerIndex, newSubs.organizerId, socket);
-  if (newSubs.phone) addToIndex(phoneIndex, newSubs.phone, socket);
-  if (newSubs.admin) adminSet.add(socket);
-}
-
-/** Send to a set of sockets, cleaning up dead connections */
-function sendToSockets(sockets: Set<WebSocket> | WebSocket[], messageStr: string): void {
-  for (const socket of sockets) {
-    if (socket.readyState === socket.OPEN) {
-      socket.send(messageStr);
-    }
-  }
+  if (newSubs.eventId) adapter.subscribe(channels.event(newSubs.eventId), socket);
+  if (newSubs.vendorId) adapter.subscribe(channels.vendor(newSubs.vendorId), socket);
+  if (newSubs.organizerId) adapter.subscribe(channels.organizer(newSubs.organizerId), socket);
+  if (newSubs.phone) adapter.subscribe(channels.phone(newSubs.phone), socket);
+  if (newSubs.admin) adapter.subscribe(channels.admin(), socket);
 }
 
 /**
@@ -94,33 +62,32 @@ function sendToSockets(sockets: Set<WebSocket> | WebSocket[], messageStr: string
  */
 export function broadcast<T>(message: WebSocketMessage<T>): void {
   const messageStr = JSON.stringify(message);
-  sendToSockets([...clients.keys()], messageStr);
+  for (const socket of clients.keys()) {
+    if (socket.readyState === socket.OPEN) {
+      socket.send(messageStr);
+    }
+  }
 }
 
 /**
  * Broadcast to clients subscribed to a specific event
  */
 export function broadcastToEvent<T>(eventId: string, message: WebSocketMessage<T>): void {
-  const messageStr = JSON.stringify(message);
-  const sockets = eventIndex.get(eventId);
-  if (sockets) sendToSockets(sockets, messageStr);
+  adapter.publish(channels.event(eventId), JSON.stringify(message));
 }
 
 /**
  * Broadcast to clients subscribed to a specific vendor
  */
 export function broadcastToVendor<T>(vendorId: string, message: WebSocketMessage<T>): void {
-  const messageStr = JSON.stringify(message);
-  const sockets = vendorIndex.get(vendorId);
-  if (sockets) sendToSockets(sockets, messageStr);
+  adapter.publish(channels.vendor(vendorId), JSON.stringify(message));
 }
 
 /**
  * Broadcast to all admin-subscribed clients
  */
 export function broadcastToAdmins<T>(message: WebSocketMessage<T>): void {
-  const messageStr = JSON.stringify(message);
-  sendToSockets(adminSet, messageStr);
+  adapter.publish(channels.admin(), JSON.stringify(message));
 }
 
 /**
@@ -201,9 +168,7 @@ export function broadcastVendorStatus(payload: VendorStatusPayload): void {
  * Broadcast to clients subscribed to a specific phone number (for order tracking)
  */
 export function broadcastToPhone<T>(phone: string, message: WebSocketMessage<T>): void {
-  const messageStr = JSON.stringify(message);
-  const sockets = phoneIndex.get(phone);
-  if (sockets) sendToSockets(sockets, messageStr);
+  adapter.publish(channels.phone(phone), JSON.stringify(message));
 }
 
 /**
@@ -255,9 +220,7 @@ export function broadcastTicketUpdate(payload: TicketUpdatePayload): void {
  * Broadcast to clients subscribed to a specific organizer
  */
 export function broadcastToOrganizer<T>(organizerId: string, message: WebSocketMessage<T>): void {
-  const messageStr = JSON.stringify(message);
-  const sockets = organizerIndex.get(organizerId);
-  if (sockets) sendToSockets(sockets, messageStr);
+  adapter.publish(channels.organizer(organizerId), JSON.stringify(message));
 }
 
 /**

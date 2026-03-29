@@ -59,27 +59,32 @@ export class VendorService {
         const cacheKey = cacheKeys.allVendors();
 
         try {
-            // Try cache first (only for unfiltered requests)
+            // For unfiltered requests, use getOrFetch with singleflight
             if (!excludeEventId) {
-                const cached = await cache.get<Vendor[]>(cacheKey);
-                if (cached) {
-                    return cached;
-                }
+                return await cache.getOrFetch<Vendor[]>(cacheKey, async () => {
+                    const { data, error } = await supabase
+                        .from('vendors')
+                        .select('*');
+
+                    if (error) {
+                        throw new Error(`Failed to fetch vendors: ${error.message}`);
+                    }
+
+                    await enrichWithCategories(data || []);
+                    return (data || []).map(dbVendor => fromDbVendor(dbVendor));
+                }, CACHE_TTL.VENDOR_LIST);
             }
 
             // If excluding an event's vendors, look up their IDs first
-            let excludeVendorIds: Set<string> | null = null;
-            if (excludeEventId) {
-                const { data: eventVendors, error: evError } = await supabase
-                    .from('event_vendors')
-                    .select('vendor_id')
-                    .eq('event_id', excludeEventId);
+            const { data: eventVendors, error: evError } = await supabase
+                .from('event_vendors')
+                .select('vendor_id')
+                .eq('event_id', excludeEventId);
 
-                if (evError) {
-                    throw new Error(`Failed to fetch event vendors: ${evError.message}`);
-                }
-                excludeVendorIds = new Set((eventVendors || []).map(ev => ev.vendor_id));
+            if (evError) {
+                throw new Error(`Failed to fetch event vendors: ${evError.message}`);
             }
+            const excludeVendorIds = new Set((eventVendors || []).map(ev => ev.vendor_id));
 
             // Fetch from Supabase
             const { data, error } = await supabase
@@ -91,19 +96,12 @@ export class VendorService {
             }
 
             let rows = data || [];
-            if (excludeVendorIds && excludeVendorIds.size > 0) {
-                rows = rows.filter(v => !excludeVendorIds!.has(v.id));
+            if (excludeVendorIds.size > 0) {
+                rows = rows.filter(v => !excludeVendorIds.has(v.id));
             }
 
             await enrichWithCategories(rows);
-            const vendors = rows.map(dbVendor => fromDbVendor(dbVendor));
-
-            // Only cache unfiltered results
-            if (!excludeEventId) {
-                await cache.set(cacheKey, vendors, CACHE_TTL.VENDOR_LIST);
-            }
-
-            return vendors;
+            return rows.map(dbVendor => fromDbVendor(dbVendor));
         } catch (error) {
             console.error('Error in getAllVendors:', error);
             throw error;
@@ -324,7 +322,8 @@ export class VendorService {
                 .from('vendors')
                 .select('*')
                 .contains('cuisineType', [cuisineType])
-                .eq('isActive', true);
+                .eq('isActive', true)
+                .limit(200);
 
             if (error) {
                 throw new Error(`Failed to fetch vendors by cuisine: ${error.message}`);
@@ -405,7 +404,8 @@ export class VendorService {
                 .from('vendors')
                 .select('*')
                 .in('id', vendorIds)
-                .eq('is_active', true);
+                .eq('is_active', true)
+                .limit(200);
 
             if (vendorsError) {
                 throw new Error(`Failed to fetch vendors for category items: ${vendorsError.message}`);
@@ -543,7 +543,6 @@ export class VendorService {
         const categoryId = opts?.categoryId;
         const menuCategorySlug = opts?.menuCategorySlug;
         const from = (page - 1) * pageSize;
-        const to = from + pageSize - 1;
 
         // Get the actual event ID (works with both ID and code)
         const eventId = await this.getEventByIdOrCode(eventIdOrCode);
@@ -554,187 +553,207 @@ export class VendorService {
         const cacheKey = cacheKeys.vendorsByEvent(eventId, page, pageSize, categoryId, menuCategorySlug);
 
         try {
-            // Try cache first
-            const cached = await cache.get<{ id: string, vendors: (Vendor & { menu: any[] })[]; page: number; pageSize: number; total: number; totalPages: number; }>(cacheKey);
-            if (cached) {
-                return cached;
-            }
+            return await cache.getOrFetch(cacheKey, async () => {
+                // Try single RPC call first (requires migration to be applied)
+                const rpcResult = await supabase.rpc('get_vendors_by_event', {
+                    p_event_id: eventId,
+                });
 
-
-            // Get vendor IDs + display_order from the event_vendors junction table (only accepted)
-            const { data: eventVendors, error: junctionError } = await supabase
-                .from('event_vendors')
-                .select('vendor_id, display_order')
-                .eq('event_id', eventId)
-                .eq('status', 'accepted');
-
-            if (junctionError) {
-                throw new Error(`Failed to fetch event vendors: ${junctionError.message}`);
-            }
-
-            // Build display_order lookup
-            const displayOrderMap = new Map<string, number | null>();
-            for (const ev of eventVendors || []) {
-                displayOrderMap.set(ev.vendor_id, ev.display_order ?? null);
-            }
-
-            let vendorIds = (eventVendors || []).map(ev => ev.vendor_id);
-
-            if (vendorIds.length === 0) {
-                return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
-            }
-
-            // Filter by category if provided
-            if (categoryId) {
-                const { data: vcRows, error: vcError } = await supabase
-                    .from('vendor_categories')
-                    .select('vendor_id')
-                    .eq('category_id', categoryId)
-                    .in('vendor_id', vendorIds);
-
-                if (vcError) {
-                    throw new Error(`Failed to filter vendors by category: ${vcError.message}`);
+                // If RPC exists, use its data; otherwise fall back to multi-query path
+                const useRpc = !rpcResult.error;
+                if (rpcResult.error && !rpcResult.error.message?.includes('Could not find the function')) {
+                    throw new Error(`Failed to fetch vendors by event: ${rpcResult.error.message}`);
                 }
 
-                const categoryVendorIds = new Set((vcRows || []).map((r: any) => r.vendor_id));
-                vendorIds = vendorIds.filter(id => categoryVendorIds.has(id));
+                let displayOrderMap: Map<string, number | null>;
+                let menuByVendor: Map<string, any[]>;
+                let vendorData: { vendor: Vendor; eventConfig: any; orderCount: number }[];
 
-                if (vendorIds.length === 0) {
+                if (useRpc) {
+                    // ── Fast path: single RPC returned all data ──────────────
+                    const allVendors: any[] = rpcResult.data || [];
+                    if (allVendors.length === 0) {
+                        return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+                    }
+
+                    displayOrderMap = new Map();
+                    menuByVendor = new Map();
+
+                    vendorData = allVendors.map((row: any) => {
+                        displayOrderMap.set(row.id, row.display_order ?? null);
+                        const menuItems = (row.menu_items || []).map((mi: any) => ({
+                            id: mi.id, vendorId: mi.vendor_id, categoryId: mi.category_id,
+                            name: mi.name, description: mi.description, price: mi.base_price,
+                            imageUrl: mi.image_url, type: mi.type, prepTime: mi.prep_time,
+                            available: true, isAlcohol: mi.is_alcohol ?? false,
+                            createdAt: mi.created_at, updatedAt: mi.updated_at,
+                        }));
+                        menuByVendor.set(row.id, menuItems);
+                        const dbRow = { ...row, vendor_categories: row.vendor_categories || [] };
+                        return { vendor: fromDbVendor(dbRow), eventConfig: row.event_config, orderCount: row.order_count || 0 };
+                    });
+                } else {
+                    // ── Fallback: multi-query path (RPC not deployed yet) ────
+                    const { data: eventVendors, error: junctionError } = await supabase
+                        .from('event_vendors')
+                        .select('vendor_id, display_order')
+                        .eq('event_id', eventId)
+                        .eq('status', 'accepted');
+                    if (junctionError) throw new Error(`Failed to fetch event vendors: ${junctionError.message}`);
+
+                    displayOrderMap = new Map();
+                    for (const ev of eventVendors || []) displayOrderMap.set(ev.vendor_id, ev.display_order ?? null);
+
+                    let vendorIds = (eventVendors || []).map((ev: any) => ev.vendor_id);
+                    if (vendorIds.length === 0) {
+                        return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+                    }
+
+                    if (categoryId) {
+                        const { data: vcRows } = await supabase.from('vendor_categories').select('vendor_id').eq('category_id', categoryId).in('vendor_id', vendorIds);
+                        const catSet = new Set((vcRows || []).map((r: any) => r.vendor_id));
+                        vendorIds = vendorIds.filter((id: string) => catSet.has(id));
+                        if (vendorIds.length === 0) return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+                    }
+
+                    if (menuCategorySlug) {
+                        const { data: mcRows } = await supabase.from('menu_categories').select('vendor_id').eq('slug', menuCategorySlug).eq('is_active', true).in('vendor_id', vendorIds);
+                        const mcSet = new Set((mcRows || []).map((r: any) => r.vendor_id));
+                        vendorIds = vendorIds.filter((id: string) => mcSet.has(id));
+                        if (vendorIds.length === 0) return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
+                    }
+
+                    const { data: vendorRows, error: vendorError } = await supabase
+                        .from('vendors')
+                        .select('id, name, description, phone, email, image_url, logo_url, category_id, cuisine_type, rating, total_reviews, location, hours, is_active, is_paused, minimum_order, delivery_fee, service_fee_percent, estimated_prep_time, payment_methods, created_at, updated_at')
+                        .in('id', vendorIds)
+                        .eq('is_active', true);
+                    if (vendorError) throw new Error(`Failed to fetch vendors for event: ${vendorError.message}`);
+
+                    await enrichWithCategories(vendorRows || []);
+                    const vendors = (vendorRows || []).map(fromDbVendor);
+                    const allVendorIds = vendors.map(v => v.id);
+
+                    menuByVendor = new Map();
+                    if (allVendorIds.length > 0) {
+                        const { data: menuRows } = await supabase
+                            .from('default_menu_items')
+                            .select('id, vendor_id, category_id, name, description, base_price, image_url, type, prep_time, is_alcohol, created_at, updated_at')
+                            .in('vendor_id', allVendorIds).eq('is_active', true).eq('availability_status', 'AVAILABLE');
+                        for (const row of menuRows || []) {
+                            const item = { id: row.id, vendorId: row.vendor_id, categoryId: row.category_id, name: row.name, description: row.description, price: row.base_price, imageUrl: row.image_url, type: row.type, prepTime: row.prep_time, available: true, isAlcohol: row.is_alcohol ?? false, createdAt: row.created_at, updatedAt: row.updated_at };
+                            const list = menuByVendor.get(item.vendorId) || [];
+                            list.push(item);
+                            menuByVendor.set(item.vendorId, list);
+                        }
+                    }
+
+                    const [eventStatuses, orderCountMap] = await Promise.all([
+                        this.getVendorEventStatuses(allVendorIds, eventId),
+                        this.getVendorOrderCounts(allVendorIds, eventId),
+                    ]);
+
+                    vendorData = vendors.map(v => ({
+                        vendor: v,
+                        eventConfig: null, // statuses computed by helper
+                        orderCount: orderCountMap.get(v.id) || 0,
+                    }));
+
+                    // Patch in pre-computed event statuses for the sort below
+                    for (const vd of vendorData) {
+                        (vd as any)._eventStatus = eventStatuses.get(vd.vendor.id) || 'OPEN';
+                    }
+                }
+
+                // ── RPC path: filter by category/menuCategorySlug ────────
+                if (useRpc && categoryId) {
+                    vendorData = vendorData.filter(({ vendor }) => {
+                        const cats = (vendor as any).categoryIds || [];
+                        return cats.includes(categoryId) ||
+                            (rpcResult.data || []).find((r: any) => r.id === vendor.id)?.vendor_categories?.some((vc: any) => vc.category_id === categoryId);
+                    });
+                }
+                if (useRpc && menuCategorySlug) {
+                    const vIds = vendorData.map(({ vendor }) => vendor.id);
+                    const { data: menuCatRows } = await supabase.from('menu_categories').select('vendor_id').eq('slug', menuCategorySlug).eq('is_active', true).in('vendor_id', vIds);
+                    const menuCatVendorIds = new Set((menuCatRows || []).map((r: any) => r.vendor_id));
+                    vendorData = vendorData.filter(({ vendor }) => menuCatVendorIds.has(vendor.id));
+                }
+
+                if (vendorData.length === 0) {
                     return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
                 }
-            }
 
-            // Filter by menu category slug if provided
-            if (menuCategorySlug) {
-                const { data: menuCatRows } = await supabase
-                    .from('menu_categories')
-                    .select('vendor_id')
-                    .eq('slug', menuCategorySlug)
-                    .eq('is_active', true)
-                    .in('vendor_id', vendorIds);
-                const menuCatVendorIds = new Set((menuCatRows || []).map((r: any) => r.vendor_id));
-                vendorIds = vendorIds.filter(id => menuCatVendorIds.has(id));
+                // ── Compute event statuses (RPC path only; fallback already has them) ──
+                const now = new Date();
+                const pad = (n: number) => n.toString().padStart(2, '0');
+                const saTime = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Johannesburg' }));
+                const currentHHMM = `${pad(saTime.getHours())}:${pad(saTime.getMinutes())}`;
+                const todayDate = `${saTime.getFullYear()}-${pad(saTime.getMonth() + 1)}-${pad(saTime.getDate())}`;
 
-                if (vendorIds.length === 0) {
-                    return { id: eventId, vendors: [], page, pageSize, total: 0, totalPages: 0 };
-                }
-            }
+                const vendorsWithMenu = vendorData.map(({ vendor, eventConfig, orderCount, ...rest }) => {
+                    // For fallback path, use pre-computed status
+                    let eventStatus: 'OPEN' | 'CLOSED' = (rest as any)._eventStatus || 'OPEN';
 
-            // Fetch ALL active vendors (no pagination — sort in JS, select only listing fields)
-            const { data: vendorRows, error: vendorError } = await supabase
-                .from('vendors')
-                .select('id, name, description, phone, email, image_url, logo_url, category_id, cuisine_type, rating, total_reviews, location, hours, is_active, is_paused, minimum_order, delivery_fee, service_fee_percent, estimated_prep_time, payment_methods, created_at, updated_at')
-                .in('id', vendorIds)
-                .eq('is_active', true);
+                    if (useRpc && eventConfig) {
+                        eventStatus = 'OPEN';
+                        if (!eventConfig.is_accepting_orders) {
+                            eventStatus = 'CLOSED';
+                        } else if (eventConfig.status === 'PAUSED' || eventConfig.status === 'CLOSED') {
+                            eventStatus = 'CLOSED';
+                        } else {
+                            const schedule = eventConfig.operating_schedule as any[] | null;
+                            const todaySchedule = schedule?.find((s: any) => s.date === todayDate);
+                            if (todaySchedule) {
+                                if (todaySchedule.isClosed) {
+                                    eventStatus = 'CLOSED';
+                                } else if (todaySchedule.openTime && todaySchedule.closeTime && todaySchedule.openTime !== todaySchedule.closeTime) {
+                                    const effectiveClose = todaySchedule.closeTime === '00:00' ? '24:00' : todaySchedule.closeTime;
+                                    if (currentHHMM < todaySchedule.openTime || currentHHMM >= effectiveClose) eventStatus = 'CLOSED';
+                                }
+                            } else if (eventConfig.event_open_time && eventConfig.event_close_time && eventConfig.event_open_time !== eventConfig.event_close_time) {
+                                const effectiveClose = eventConfig.event_close_time === '00:00' ? '24:00' : eventConfig.event_close_time;
+                                if (currentHHMM < eventConfig.event_open_time || currentHHMM >= effectiveClose) eventStatus = 'CLOSED';
+                            }
+                        }
+                    }
 
-            if (vendorError) {
-                throw new Error(`Failed to fetch vendors for event: ${vendorError.message}`);
-            }
-
-            await enrichWithCategories(vendorRows || []);
-            const vendors = (vendorRows || []).map(fromDbVendor);
-            const allVendorIds = vendors.map(v => v.id);
-
-            // Fetch available menu items for ALL vendors (only preview columns)
-            let menuByVendor = new Map<string, any[]>();
-            if (allVendorIds.length > 0) {
-                const { data: menuRows, error: menuError } = await supabase
-                    .from('default_menu_items')
-                    .select('id, vendor_id, category_id, name, description, base_price, image_url, type, prep_time, is_alcohol, created_at, updated_at')
-                    .in('vendor_id', allVendorIds)
-                    .eq('is_active', true)
-                    .eq('availability_status', 'AVAILABLE');
-
-                if (menuError) {
-                    throw new Error(`Failed to fetch vendor menus: ${menuError.message}`);
-                }
-
-                for (const row of menuRows || []) {
-                    const item = {
-                        id: row.id,
-                        vendorId: row.vendor_id,
-                        categoryId: row.category_id,
-                        name: row.name,
-                        description: row.description,
-                        price: row.base_price,
-                        imageUrl: row.image_url,
-                        type: row.type,
-                        prepTime: row.prep_time,
-                        available: true,
-                        isAlcohol: row.is_alcohol ?? false,
-                        createdAt: row.created_at,
-                        updatedAt: row.updated_at,
+                    return {
+                        ...vendor,
+                        menu: (menuByVendor.get(vendor.id) || []).slice(0, 3),
+                        eventStatus,
+                        orderCount,
                     };
-                    const list = menuByVendor.get(item.vendorId) || [];
-                    list.push(item);
-                    menuByVendor.set(item.vendorId, list);
-                }
-            }
+                });
 
-            // Fetch event statuses and order counts for all vendors
-            const [eventStatuses, orderCountMap] = await Promise.all([
-                this.getVendorEventStatuses(allVendorIds, eventId),
-                this.getVendorOrderCounts(allVendorIds, eventId),
-            ]);
+                // 5-tier smart sort
+                vendorsWithMenu.sort((a, b) => {
+                    const aPin = displayOrderMap.get(a.id);
+                    const bPin = displayOrderMap.get(b.id);
+                    const aPinned = aPin != null;
+                    const bPinned = bPin != null;
+                    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+                    if (aPinned && bPinned && aPin! !== bPin!) return aPin! - bPin!;
 
-            // Enrich vendors with menu (sliced to 3), eventStatus, and orderCount
-            const vendorsWithMenu = vendors.map(v => ({
-                ...v,
-                menu: (menuByVendor.get(v.id) || []).slice(0, 3),
-                eventStatus: eventStatuses.get(v.id) || 'OPEN',
-                orderCount: orderCountMap.get(v.id) || 0,
-            }));
+                    const aOpen = a.eventStatus === 'OPEN' ? 0 : 1;
+                    const bOpen = b.eventStatus === 'OPEN' ? 0 : 1;
+                    if (aOpen !== bOpen) return aOpen - bOpen;
 
-            // 5-tier smart sort — surfaces the most relevant vendors first.
-            //
-            // Priority (highest → lowest):
-            //   1. Pinned by organizer  — event_vendors.display_order (lower = higher)
-            //   2. Currently open       — OPEN vendors above CLOSED
-            //   3. Has menu items       — vendors with ≥1 available item above empty
-            //   4. Popularity           — non-cancelled order count for this event (desc)
-            //   5. Alphabetical name    — stable tiebreaker
-            //
-            // All data is fetched for every vendor in the event, then sorted and
-            // paginated in JS (events have <50 vendors, so this is efficient).
-            vendorsWithMenu.sort((a, b) => {
-                // 1. Organizer-pinned vendors first (lower display_order = higher priority)
-                const aPin = displayOrderMap.get(a.id);
-                const bPin = displayOrderMap.get(b.id);
-                const aPinned = aPin != null;
-                const bPinned = bPin != null;
-                if (aPinned !== bPinned) return aPinned ? -1 : 1;
-                if (aPinned && bPinned) {
-                    if (aPin! !== bPin!) return aPin! - bPin!;
-                }
+                    const aHasMenu = (menuByVendor.get(a.id) || []).length > 0 ? 0 : 1;
+                    const bHasMenu = (menuByVendor.get(b.id) || []).length > 0 ? 0 : 1;
+                    if (aHasMenu !== bHasMenu) return aHasMenu - bHasMenu;
 
-                // 2. Open > Closed
-                const aOpen = a.eventStatus === 'OPEN' ? 0 : 1;
-                const bOpen = b.eventStatus === 'OPEN' ? 0 : 1;
-                if (aOpen !== bOpen) return aOpen - bOpen;
+                    if (a.orderCount !== b.orderCount) return b.orderCount - a.orderCount;
 
-                // 3. Has menu > Empty menu
-                const aHasMenu = (menuByVendor.get(a.id) || []).length > 0 ? 0 : 1;
-                const bHasMenu = (menuByVendor.get(b.id) || []).length > 0 ? 0 : 1;
-                if (aHasMenu !== bHasMenu) return aHasMenu - bHasMenu;
+                    return a.name.localeCompare(b.name);
+                });
 
-                // 4. Popularity (higher order count first)
-                if (a.orderCount !== b.orderCount) return b.orderCount - a.orderCount;
+                const total = vendorsWithMenu.length;
+                const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+                const pagedVendors = vendorsWithMenu.slice(from, from + pageSize);
 
-                // 5. Alphabetical tiebreaker
-                return a.name.localeCompare(b.name);
-            });
-
-            // Paginate the sorted array in JS
-            const total = vendorsWithMenu.length;
-            const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-            const pagedVendors = vendorsWithMenu.slice(from, from + pageSize);
-
-            const result = { id: eventId, vendors: pagedVendors, page, pageSize, total, totalPages };
-
-            // Cache for 1 minute (event vendor lists change less frequently)
-            await cache.set(cacheKey, result, CACHE_TTL.VENDOR_DETAILS);
-
-            return result;
+                return { id: eventId, vendors: pagedVendors, page, pageSize, total, totalPages };
+            }, CACHE_TTL.VENDOR_DETAILS);
         } catch (error) {
             console.error('Error in getVendorsByEvent:', error);
             throw error;
@@ -790,7 +809,8 @@ export class VendorService {
             }
 
             const { data, error } = await query
-                .or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
+                .or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`)
+                .limit(100);
 
             if (error) {
                 throw new Error(`Failed to search vendors: ${error.message}`);

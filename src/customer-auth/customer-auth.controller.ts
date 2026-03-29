@@ -27,7 +27,7 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
   const smsProvider = new ConsoleSmsProvider();
 
   // POST /customer/auth/request-otp — Send OTP to phone
-  fastify.post('/request-otp', { schema: requestOtpSchema }, async (request, reply) => {
+  fastify.post('/request-otp', { schema: requestOtpSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { phone } = request.body as RequestOtpPayload;
     const normalized = normalizePhone(phone);
 
@@ -46,7 +46,7 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /customer/auth/verify-otp — Verify OTP, issue JWT, auto-create customer
-  fastify.post('/verify-otp', { schema: verifyOtpSchema }, async (request, reply) => {
+  fastify.post('/verify-otp', { schema: verifyOtpSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { phone, code, name } = request.body as VerifyOtpPayload;
     const normalized = normalizePhone(phone);
 

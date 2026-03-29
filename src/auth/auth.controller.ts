@@ -35,7 +35,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /auth/register — Register via invite token
-  fastify.post('/register', { schema: registerSchema }, async (request, reply) => {
+  fastify.post('/register', { schema: registerSchema, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const payload = request.body as RegisterPayload;
     const user = await authService.register(payload);
 
@@ -61,7 +61,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /auth/login — Login with email + password
-  fastify.post('/login', { schema: loginSchema }, async (request, reply) => {
+  fastify.post('/login', { schema: loginSchema, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const payload = request.body as LoginPayload;
     const user = await authService.login(payload);
 
@@ -104,7 +104,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /auth/forgot-password — Request a reset token
-  fastify.post('/forgot-password', { schema: forgotPasswordSchema }, async (request, reply) => {
+  fastify.post('/forgot-password', { schema: forgotPasswordSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { email } = request.body as { email: string };
     const { token } = await authService.createPasswordReset(email);
 
@@ -119,7 +119,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /auth/reset-password — Set new password via token
-  fastify.post('/reset-password', { schema: resetPasswordSchema }, async (request, reply) => {
+  fastify.post('/reset-password', { schema: resetPasswordSchema, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { token, newPassword } = request.body as { token: string; newPassword: string };
     await authService.resetPassword(token, newPassword);
     return { message: 'Password reset successfully' };

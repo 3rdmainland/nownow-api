@@ -434,6 +434,29 @@ export class AdminService {
   }
 
   async getRevenueReport(startDate?: string, endDate?: string): Promise<RevenueReport> {
+    // Try server-side RPC first (much more efficient than pulling all rows)
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_revenue_by_day', {
+        p_start_date: startDate || null,
+        p_end_date: endDate || null,
+      });
+
+      if (!rpcError && rpcData) {
+        const byDay = (rpcData as any[]).map((row: any) => ({
+          date: row.day,
+          revenue: Number(row.revenue) || 0,
+          orders: Number(row.order_count) || 0,
+        }));
+        const totalRevenue = byDay.reduce((sum, d) => sum + d.revenue, 0);
+        const orderCount = byDay.reduce((sum, d) => sum + d.orders, 0);
+        const averageOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+        return { totalRevenue, orderCount, averageOrderValue, byDay };
+      }
+    } catch {
+      // RPC not available yet — fall through to client-side aggregation
+    }
+
+    // Fallback: client-side aggregation with safety limit
     let query = supabase
       .from('orders')
       .select('total, created_at')
@@ -442,7 +465,7 @@ export class AdminService {
     if (startDate) query = query.gte('created_at', startDate);
     if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
 
-    const { data, error } = await query.order('created_at', { ascending: true });
+    const { data, error } = await query.order('created_at', { ascending: true }).limit(10000);
 
     if (error) throw new Error(`Failed to fetch revenue: ${error.message}`);
 
@@ -707,12 +730,38 @@ export class AdminService {
   }
 
   async getPeakHoursAnalysis(startDate?: string, endDate?: string, eventId?: string): Promise<PeakHoursAnalysis> {
+    // Try server-side RPC first
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_peak_hours', {
+        p_start_date: startDate || null,
+        p_end_date: endDate || null,
+        p_event_id: eventId || null,
+      });
+
+      if (!rpcError && rpcData) {
+        const hourly = new Array(24).fill(null).map((_, h) => ({ hour: h, orderCount: 0, revenue: 0 }));
+        for (const row of rpcData as any[]) {
+          const h = Number(row.hour);
+          hourly[h].orderCount = Number(row.order_count) || 0;
+          hourly[h].revenue = Number(row.revenue) || 0;
+        }
+        const maxOrders = Math.max(...hourly.map(h => h.orderCount));
+        const minOrders = Math.min(...hourly.map(h => h.orderCount));
+        const peakHour = hourly.find(h => h.orderCount === maxOrders)?.hour ?? 0;
+        const quietHour = hourly.find(h => h.orderCount === minOrders)?.hour ?? 0;
+        return { hourlyDistribution: hourly, peakHour, quietHour };
+      }
+    } catch {
+      // RPC not available yet — fall through
+    }
+
+    // Fallback: client-side aggregation with safety limit
     let query = supabase.from('orders').select('created_at, total').eq('payment_status', 'complete');
     if (startDate) query = query.gte('created_at', startDate);
     if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
     if (eventId) query = query.eq('event_id', eventId);
 
-    const { data } = await query;
+    const { data } = await query.limit(10000);
     const orders = data || [];
 
     const hourly = new Array(24).fill(null).map((_, h) => ({ hour: h, orderCount: 0, revenue: 0 }));
@@ -736,7 +785,7 @@ export class AdminService {
     if (endDate) query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
     if (eventId) query = query.eq('event_id', eventId);
 
-    const { data } = await query;
+    const { data } = await query.limit(10000);
     const orders = data || [];
 
     const vendorIds = [...new Set(orders.map((o: any) => o.vendor_id).filter(Boolean))];

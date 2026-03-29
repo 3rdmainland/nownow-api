@@ -20,7 +20,7 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
     const vendorService = new VendorService();
 
     // Get all vendors
-    fastify.get("/", { schema: getVendorsSchema }, async (request, reply) => {
+    fastify.get("/", { schema: getVendorsSchema, config: { rateLimit: { max: 200, timeWindow: '1 minute' } } }, async (request, reply) => {
         try {
             const { excludeEventId } = request.query as { excludeEventId?: string };
             const vendors = await vendorService.getAllVendors(excludeEventId);
@@ -56,7 +56,7 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
     });
 
     // List vendors assigned to an event (paginated, with menu)
-    fastify.get("/event/:eventId", { schema: getVendorsByEventSchema }, async (request, reply) => {
+    fastify.get("/event/:eventId", { schema: getVendorsByEventSchema, config: { rateLimit: { max: 200, timeWindow: '1 minute' } } }, async (request, reply) => {
         try {
             const { eventId } = request.params as { eventId: string };
             const { page, pageSize, categoryId, menuCategorySlug } = request.query as { page?: number; pageSize?: number; categoryId?: string; menuCategorySlug?: string };
