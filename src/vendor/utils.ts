@@ -71,6 +71,8 @@ export function fromDbVendor(dbVendor: any): Vendor {
         serviceFeePercent: dbVendor.service_fee_percent,
         estimatedPrepTime: dbVendor.estimated_prep_time,
         paymentMethods: dbVendor.payment_methods,
+        canCreateEvents: dbVendor.can_create_events ?? false,
+        vendorTier: dbVendor.vendor_tier ?? 'standard',
         createdAt: dbVendor.created_at,
         updatedAt: dbVendor.updated_at
     };

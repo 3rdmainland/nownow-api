@@ -33,6 +33,7 @@ import whatsappWebhook from "./whatsapp/whatsapp.webhook";
 import legalController from "./legal/legal.controller";
 import settlementController from "./settlement/settlement.controller";
 import vendorSettlementController from "./settlement/vendor-settlement.controller";
+import vendorEventController from "./vendor-event/vendor-event.controller";
 import adminNotificationController from "./notifications/notifications.controller";
 import recipientNotificationController from "./notifications/recipient-notification.controller";
 import { AppError } from "./lib/errors";
@@ -184,6 +185,7 @@ fastify.register(whatsappWebhook, { prefix: "/whatsapp/webhook" });
 fastify.register(legalController, { prefix: "/legal" });
 fastify.register(settlementController, { prefix: "/settlement" });
 fastify.register(vendorSettlementController, { prefix: "/vendor" });
+fastify.register(vendorEventController, { prefix: "/vendor-events" });
 fastify.register(adminNotificationController, { prefix: "/admin/notifications" });
 fastify.register(recipientNotificationController, { prefix: "/notifications" });
 

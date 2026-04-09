@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { authenticateAdmin } from '../lib/auth.js';
 import { AdminService } from './admin.service.js';
 import { AdminJwtPayload } from '../admin-auth/admin-auth.types.js';
+import { supabase } from '../lib/supabase.js';
 import {
   platformStatsSchema,
   userListSchema,
@@ -260,6 +261,90 @@ const adminController: FastifyPluginAsync = async (fastify) => {
   // GET /admin/health
   fastify.get('/health', { schema: systemHealthSchema }, async (request, reply) => {
     return adminService.getSystemHealth();
+  });
+
+  // PATCH /admin/vendors/:id/features — toggle vendor feature flags
+  fastify.patch<{ Params: { id: string } }>('/vendors/:id/features', async (request, reply) => {
+    try {
+      const { id } = request.params;
+      const { canCreateEvents, vendorTier } = request.body as {
+        canCreateEvents?: boolean;
+        vendorTier?: 'standard' | 'lite' | 'lite_only';
+      };
+
+      const updates: Record<string, any> = {};
+      if (canCreateEvents !== undefined) updates.can_create_events = canCreateEvents;
+      if (vendorTier !== undefined) {
+        if (!['standard', 'lite', 'lite_only'].includes(vendorTier)) {
+          return reply.status(400).send({ error: 'vendorTier must be "standard", "lite", or "lite_only"' });
+        }
+        updates.vendor_tier = vendorTier;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return reply.status(400).send({ error: 'No valid fields to update' });
+      }
+
+      const { data, error } = await supabase
+        .from('vendors')
+        .update(updates)
+        .eq('id', id)
+        .select('id, can_create_events, vendor_tier')
+        .single();
+
+      if (error) throw new Error(`Failed to update vendor features: ${error.message}`);
+
+      return { vendor: data };
+    } catch (err: any) {
+      fastify.log.error(err);
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /admin/vendor-events — list all vendor-created events
+  fastify.get('/vendor-events', async (request, reply) => {
+    try {
+      const { data, error } = await supabase
+        .from('vendor_events')
+        .select('*, events(name, code, start_date, end_date, status), vendors(name)')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (error) throw new Error(`Failed to fetch vendor events: ${error.message}`);
+
+      return { vendorEvents: data || [] };
+    } catch (err: any) {
+      fastify.log.error(err);
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // PATCH /admin/vendor-events/:id/status — deactivate a vendor event
+  fastify.patch<{ Params: { id: string } }>('/vendor-events/:id/status', async (request, reply) => {
+    try {
+      const { status } = request.body as { status: string };
+      const { id } = request.params;
+
+      const { data: ve, error: veError } = await supabase
+        .from('vendor_events')
+        .select('event_id')
+        .eq('id', id)
+        .single();
+
+      if (veError || !ve) return reply.status(404).send({ error: 'Vendor event not found' });
+
+      const { error } = await supabase
+        .from('events')
+        .update({ status })
+        .eq('id', ve.event_id);
+
+      if (error) throw new Error(`Failed to update event status: ${error.message}`);
+
+      return { success: true };
+    } catch (err: any) {
+      fastify.log.error(err);
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 };
 

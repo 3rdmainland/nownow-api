@@ -17,14 +17,21 @@ export class QRHelper {
     private bucketName = 'order-qrcodes';
 
     /**
+     * HMAC-SHA256 sign an arbitrary payload, truncated to 16 hex chars
+     */
+    private signPayload(payload: string): string {
+        const secret = process.env.QR_SIGN_SECRET || process.env.JWT_SECRET || 'default-dev-secret';
+        return createHmac('sha256', secret)
+            .update(payload)
+            .digest('hex')
+            .slice(0, 16);
+    }
+
+    /**
      * HMAC-SHA256 sign an order ID, truncated to 16 hex chars
      */
     signOrderId(orderId: string): string {
-        const secret = process.env.QR_SIGN_SECRET || process.env.JWT_SECRET || 'default-dev-secret';
-        return createHmac('sha256', secret)
-            .update(orderId)
-            .digest('hex')
-            .slice(0, 16);
+        return this.signPayload(orderId);
     }
 
     /**
@@ -123,5 +130,86 @@ export class QRHelper {
             qr_code: qrCode,
             qr_image: qrImageUrl,
         };
+    }
+
+    /**
+     * Generates a signed QR code string for a vendor at a specific event:
+     * VENDOR_EVENT:{eventId}:{vendorId}:{signature}
+     */
+    generateVendorEventQR(eventId: string, vendorId: string): string {
+        const payload = `VENDOR_EVENT:${eventId}:${vendorId}`;
+        const signature = this.signPayload(payload);
+        return `${payload}:${signature}`;
+    }
+
+    /**
+     * Generates a signed QR code string for a vendor (not event-specific):
+     * VENDOR_DIRECT:{vendorId}:{signature}
+     */
+    generateVendorDirectQR(vendorId: string): string {
+        const payload = `VENDOR_DIRECT:${vendorId}`;
+        const signature = this.signPayload(payload);
+        return `${payload}:${signature}`;
+    }
+
+    /**
+     * Verifies a vendor-event QR code signature
+     */
+    verifyVendorEventQR(qrCode: string): { valid: boolean; eventId: string | null; vendorId: string | null } {
+        if (!qrCode.startsWith('VENDOR_EVENT:')) {
+            return { valid: false, eventId: null, vendorId: null };
+        }
+        const parts = qrCode.split(':');
+        if (parts.length !== 4) {
+            return { valid: false, eventId: null, vendorId: null };
+        }
+        const [, eventId, vendorId, signature] = parts;
+        const expectedPayload = `VENDOR_EVENT:${eventId}:${vendorId}`;
+        const expectedSig = this.signPayload(expectedPayload);
+        const valid = signature === expectedSig;
+        return { valid, eventId: valid ? eventId : null, vendorId: valid ? vendorId : null };
+    }
+
+    /**
+     * Verifies a vendor-direct QR code signature
+     */
+    verifyVendorDirectQR(qrCode: string): { valid: boolean; vendorId: string | null } {
+        if (!qrCode.startsWith('VENDOR_DIRECT:')) {
+            return { valid: false, vendorId: null };
+        }
+        const parts = qrCode.split(':');
+        if (parts.length !== 3) {
+            return { valid: false, vendorId: null };
+        }
+        const [, vendorId, signature] = parts;
+        const expectedPayload = `VENDOR_DIRECT:${vendorId}`;
+        const expectedSig = this.signPayload(expectedPayload);
+        const valid = signature === expectedSig;
+        return { valid, vendorId: valid ? vendorId : null };
+    }
+
+    /**
+     * Uploads a vendor-event QR code image to Supabase Storage and returns the public URL
+     */
+    async uploadVendorEventQRImage(buffer: Buffer, identifier: string): Promise<string> {
+        const fileName = `vendor-event-qr-${identifier}-${Date.now()}.png`;
+        const filePath = `vendor-events/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+            .from(this.bucketName)
+            .upload(filePath, buffer, {
+                contentType: 'image/png',
+                upsert: true,
+            });
+
+        if (uploadError) {
+            throw new Error(`Failed to upload vendor event QR image: ${uploadError.message}`);
+        }
+
+        const { data: urlData } = supabase.storage
+            .from(this.bucketName)
+            .getPublicUrl(filePath);
+
+        return urlData.publicUrl;
     }
 }

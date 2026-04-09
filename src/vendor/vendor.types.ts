@@ -38,6 +38,8 @@ export interface Vendor {
     estimatedPrepTime?: number;
     paymentMethods: string[];
     orderCount?: number;
+    canCreateEvents: boolean;
+    vendorTier: 'standard' | 'lite' | 'lite_only';
     createdAt: string;
     updatedAt?: string;
 }

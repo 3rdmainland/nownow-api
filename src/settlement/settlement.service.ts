@@ -129,8 +129,23 @@ export class SettlementService {
       : { data: [] };
     const vendorMap = new Map((vendors || []).map((v: any) => [v.id, v.name]));
 
-    // 5. Fetch active commission agreements for all vendor+event combos
+    // 5. Fetch event origin types to skip commission for vendor-created events
     const eventIds = [...new Set(unsettledOrders.map((o: any) => o.event_id).filter(Boolean))];
+    const vendorOriginEventIds = new Set<string>();
+    if (eventIds.length > 0) {
+      const { data: events } = await supabase
+        .from('events')
+        .select('id, origin_type')
+        .in('id', eventIds);
+
+      for (const e of (events || [])) {
+        if (e.origin_type === 'vendor' || e.origin_type === 'vendor_direct') {
+          vendorOriginEventIds.add(e.id);
+        }
+      }
+    }
+
+    // 6. Fetch active commission agreements for all vendor+event combos
     const agreementMap = new Map<string, { commissionRate: number; organizerId: string }>();
     if (vendorIds.length > 0 && eventIds.length > 0) {
       const { data: agreements } = await supabase
@@ -180,8 +195,9 @@ export class SettlementService {
     for (const [, agg] of groupEntries) {
       const platformFee = Math.round(agg.gross * platformFeePercent * 100) / 100;
 
-      // Look up commission agreement
-      const agreement = agg.eventId ? agreementMap.get(`${agg.vendorId}:${agg.eventId}`) : undefined;
+      // Look up commission agreement (skip for vendor-origin events)
+      const isVendorEvent = agg.eventId ? vendorOriginEventIds.has(agg.eventId) : false;
+      const agreement = (!isVendorEvent && agg.eventId) ? agreementMap.get(`${agg.vendorId}:${agg.eventId}`) : undefined;
       const commissionRate = agreement?.commissionRate ?? 0;
       const organizerId = agreement?.organizerId ?? null;
       const commissionFee = Math.round(agg.gross * commissionRate / 100 * 100) / 100;
@@ -221,7 +237,8 @@ export class SettlementService {
     const orderRows = unsettledOrders
       .filter((o: any) => o.vendor_id)
       .map((o: any) => {
-        const agreement = o.event_id ? agreementMap.get(`${o.vendor_id}:${o.event_id}`) : undefined;
+        const isVendorOrigin = o.event_id ? vendorOriginEventIds.has(o.event_id) : false;
+        const agreement = (!isVendorOrigin && o.event_id) ? agreementMap.get(`${o.vendor_id}:${o.event_id}`) : undefined;
         const rate = agreement?.commissionRate ?? 0;
         const orderCommission = Math.round(Number(o.total) * rate / 100 * 100) / 100;
         return {

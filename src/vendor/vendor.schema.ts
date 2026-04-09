@@ -46,6 +46,8 @@ const vendorProperties = {
     deliveryFee: { type: 'number' },
     estimatedPrepTime: { type: 'number' },
     paymentMethods: { type: 'array', items: { type: 'string' } },
+    canCreateEvents: { type: 'boolean' },
+    vendorTier: { type: 'string', enum: ['standard', 'lite', 'lite_only'] },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' }
 };
