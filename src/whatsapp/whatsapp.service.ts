@@ -456,3 +456,9 @@ export class WhatsappService {
         this.logSend(data, to, 'event_nearby', 'marketing', nudgeId);
     }
 }
+
+let _instance: WhatsappService | null = null;
+export function getWhatsappService(): WhatsappService {
+    if (!_instance) _instance = new WhatsappService();
+    return _instance;
+}

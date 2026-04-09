@@ -7,8 +7,8 @@ import type { FastifyInstance } from 'fastify';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
-vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
+vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('../../lib/redis.js', () => ({
   cache: cacheMock,

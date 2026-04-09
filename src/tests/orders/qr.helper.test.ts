@@ -10,6 +10,8 @@ vi.mock('../../lib/supabase.js', () => ({
             }),
         },
     },
+    safeQuery: (fn: any) => fn(),
+    CircuitOpenError: class CircuitOpenError extends Error {},
 }));
 
 import { QRHelper } from '../../lib/qr.helper.js';

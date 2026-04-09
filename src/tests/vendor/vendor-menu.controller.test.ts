@@ -6,7 +6,7 @@ import { buildApp } from '../helpers/app.js';
 
 // ── Module mocks (must be at top level) ──────────────────────────────────────
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('../../lib/redis.js', () => ({
   cache: cacheMock,

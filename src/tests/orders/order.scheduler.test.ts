@@ -7,8 +7,8 @@ import { OrderStatus } from '../../orders/order.types.js';
 
 import { redisMock, cacheMock, CACHE_TTL_MOCK } from '../mocks/redis.js';
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
-vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
+vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('../../lib/redis.js', () => ({
   default: redisMock,
@@ -254,48 +254,30 @@ describe('OrderScheduler', () => {
   // ── updateQueuePositions ──────────────────────────────────────────────────
 
   describe('updateQueuePositions', () => {
-    it('should update queue positions for pending orders', async () => {
-      const orders = [
-        makeOrder({ id: 'order-1', status: OrderStatus.PENDING }),
-        makeOrder({ id: 'order-2', status: OrderStatus.PENDING }),
-        makeOrder({ id: 'order-3', status: OrderStatus.PENDING }),
-      ];
-
-      // First call: fetch pending orders, then 3 update calls
-      let callCount = 0;
-      supabaseMock.from.mockImplementation(() => {
-        if (callCount === 0) {
-          callCount++;
-          return createSupabaseMock({ data: orders, error: null });
-        }
-        callCount++;
-        return createSupabaseMock({ data: null, error: null });
-      });
+    it('should call batch RPC to update queue positions', async () => {
+      supabaseMock.rpc.mockResolvedValue({ data: null, error: null });
 
       await scheduler.updateQueuePositions('vendor-1');
 
-      // Should have called from() for the query + 3 updates
-      expect(supabaseMock.from).toHaveBeenCalledTimes(4);
+      expect(supabaseMock.rpc).toHaveBeenCalledWith('batch_update_queue_positions', {
+        p_vendor_id: 'vendor-1',
+      });
     });
 
-    it('should not throw when fetch returns an error (logs and returns)', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: null, error: { message: 'DB error' } }),
-      );
+    it('should not throw when RPC returns an error (logs and returns)', async () => {
+      supabaseMock.rpc.mockResolvedValue({ data: null, error: { message: 'DB error' } });
 
       // updateQueuePositions catches the error and logs it - should not throw
       await expect(scheduler.updateQueuePositions('vendor-1')).resolves.toBeUndefined();
     });
 
-    it('should handle empty pending orders gracefully', async () => {
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: [], error: null }),
-      );
+    it('should handle successful RPC call gracefully', async () => {
+      supabaseMock.rpc.mockResolvedValue({ data: null, error: null });
 
       await scheduler.updateQueuePositions('vendor-1');
 
-      // Only the initial query call - no updates
-      expect(supabaseMock.from).toHaveBeenCalledTimes(1);
+      // Should use a single RPC call instead of N individual updates
+      expect(supabaseMock.rpc).toHaveBeenCalledTimes(1);
     });
   });
 });

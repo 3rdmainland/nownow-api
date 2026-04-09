@@ -6,8 +6,8 @@ import { makeEvent } from '../fixtures/index.js';
 // ── Module mocks (must be declared before any imports that use them) ──────────
 
 // event.service.ts imports without .js extension; mock both forms for safety
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
-vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
+vi.mock('../../lib/supabase', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('../../lib/redis', () => ({
   default: redisMock,

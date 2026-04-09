@@ -194,24 +194,25 @@ export class NudgeScheduler {
       return;
     }
 
-    // Publish each nudge to QStash with the correct delay
+    // Publish all nudges to QStash in parallel
     const endpoint = `${callbackUrl}/internal/nudge/send`;
-    let published = 0;
 
-    for (const row of inserted) {
-      const delaySec = Math.max(0, Math.floor((new Date(row.scheduled_for).getTime() - Date.now()) / 1000));
-
-      try {
-        await qstash.publishJSON({
+    const results = await Promise.allSettled(
+      inserted.map(row => {
+        const delaySec = Math.max(0, Math.floor((new Date(row.scheduled_for).getTime() - Date.now()) / 1000));
+        return qstash.publishJSON({
           url: endpoint,
           body: { nudgeId: row.id },
           delay: delaySec,
           retries: 3,
-          deduplicationId: row.id, // prevents double-publish
+          deduplicationId: row.id,
         });
-        published++;
-      } catch (err) {
-        console.error(`NudgeScheduler: QStash publish failed for ${row.id}`, (err as Error).message);
+      })
+    );
+    const published = results.filter(r => r.status === 'fulfilled').length;
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        console.error('NudgeScheduler: QStash publish failed', r.reason?.message || r.reason);
       }
     }
 

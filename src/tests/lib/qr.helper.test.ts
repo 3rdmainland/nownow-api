@@ -7,7 +7,7 @@ const { mockToBuffer } = vi.hoisted(() => ({
   mockToBuffer: vi.fn().mockResolvedValue(Buffer.from('fake-png-data')),
 }));
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('qrcode', () => ({
   default: {

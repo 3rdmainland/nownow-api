@@ -1,8 +1,11 @@
 import { Vendor } from "./vendor.types";
-import { supabase } from "../lib/supabase";
+import { supabase, safeQuery, CircuitOpenError } from "../lib/supabase";
 import { fromDbVendor, toDbVendor } from "./utils";
+import { EventService } from "../event/event.service";
 
 import { redis, cache, CACHE_TTL } from "../lib/redis";
+
+const eventService = new EventService();
 
 // Cache key generator for vendors
 const cacheKeys = {
@@ -75,7 +78,21 @@ export class VendorService {
                 }, CACHE_TTL.VENDOR_LIST);
             }
 
-            // If excluding an event's vendors, look up their IDs first
+            // Reuse cached vendor list and filter in JS to avoid extra DB call
+            const allVendors = await cache.getOrFetch<Vendor[]>(cacheKey, async () => {
+                const { data, error } = await supabase
+                    .from('vendors')
+                    .select('*');
+
+                if (error) {
+                    throw new Error(`Failed to fetch vendors: ${error.message}`);
+                }
+
+                await enrichWithCategories(data || []);
+                return (data || []).map(dbVendor => fromDbVendor(dbVendor));
+            }, CACHE_TTL.VENDOR_LIST);
+
+            // Look up excluded vendor IDs and filter in JS
             const { data: eventVendors, error: evError } = await supabase
                 .from('event_vendors')
                 .select('vendor_id')
@@ -86,22 +103,9 @@ export class VendorService {
             }
             const excludeVendorIds = new Set((eventVendors || []).map(ev => ev.vendor_id));
 
-            // Fetch from Supabase
-            const { data, error } = await supabase
-                .from('vendors')
-                .select('*');
-
-            if (error) {
-                throw new Error(`Failed to fetch vendors: ${error.message}`);
-            }
-
-            let rows = data || [];
-            if (excludeVendorIds.size > 0) {
-                rows = rows.filter(v => !excludeVendorIds.has(v.id));
-            }
-
-            await enrichWithCategories(rows);
-            return rows.map(dbVendor => fromDbVendor(dbVendor));
+            return excludeVendorIds.size > 0
+                ? allVendors.filter(v => !excludeVendorIds.has(v.id))
+                : allVendors;
         } catch (error) {
             console.error('Error in getAllVendors:', error);
             throw error;
@@ -514,23 +518,7 @@ export class VendorService {
     }
 
     private async getEventByIdOrCode(eventIdOrCode: string): Promise<string | null> {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventIdOrCode);
-
-        if (isUuid) {
-            const { data, error } = await supabase
-                .from('events')
-                .select('id')
-                .eq('id', eventIdOrCode)
-                .single();
-            return (!error && data) ? data.id : null;
-        }
-
-        const { data, error } = await supabase
-            .from('events')
-            .select('id')
-            .eq('code', eventIdOrCode)
-            .single();
-        return (!error && data) ? data.id : null;
+        return eventService.getEventByIdOrCode(eventIdOrCode);
     }
 
     async getVendorsByEvent(
@@ -555,9 +543,9 @@ export class VendorService {
         try {
             return await cache.getOrFetch(cacheKey, async () => {
                 // Try single RPC call first (requires migration to be applied)
-                const rpcResult = await supabase.rpc('get_vendors_by_event', {
+                const rpcResult = await safeQuery<any>(() => Promise.resolve(supabase.rpc('get_vendors_by_event', {
                     p_event_id: eventId,
-                });
+                })));
 
                 // If RPC exists, use its data; otherwise fall back to multi-query path
                 const useRpc = !rpcResult.error;
@@ -955,7 +943,8 @@ export class VendorService {
             .select('vendor_id')
             .eq('event_id', eventId)
             .in('vendor_id', vendorIds)
-            .neq('status', 'CANCELLED');
+            .neq('status', 'CANCELLED')
+            .limit(10000);
 
         if (error) {
             // Non-fatal: degrade to zero counts rather than breaking the listing

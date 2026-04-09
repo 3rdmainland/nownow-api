@@ -4,7 +4,7 @@ import { StitchWebhookEvent } from './payment.types.js';
 import { webhookSchema, paymentStatusSchema } from './payment.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import { supabase } from '../lib/supabase.js';
-import { WhatsappService } from '../whatsapp/whatsapp.service.js';
+import { getWhatsappService } from '../whatsapp/whatsapp.service.js';
 import { broadcastNewOrder, broadcastAdminOrderFeed, broadcastPaymentFailed } from '../websocket/index.js';
 
 /**
@@ -211,14 +211,9 @@ async function completeOrder(order: any, orderId: string, fastify: any) {
     .select('id')
     .maybeSingle();
 
-  // If the status guard didn't match (e.g. order was already moved past PAYMENT_PENDING),
-  // still mark payment as complete so it appears in financials.
+  // If the status guard didn't match, another caller already completed this order — skip notifications
   if (!updateError && !updated) {
-    await supabase
-      .from('orders')
-      .update({ payment_status: 'complete', paid_at: new Date().toISOString() })
-      .eq('id', orderId)
-      .in('payment_status', ['pending']);
+    return;
   }
 
   if (!updateError) {
@@ -226,7 +221,7 @@ async function completeOrder(order: any, orderId: string, fastify: any) {
     try {
       const token = process.env.WA_ACCESS_TOKEN;
       if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order.phone) {
-        const whatsapp = new WhatsappService();
+        const whatsapp = getWhatsappService();
 
         void whatsapp
           .sendOrderPlacedTemplate(order.phone, {

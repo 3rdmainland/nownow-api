@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from "fastify";
-import { WhatsappService } from "./whatsapp.service";
+import { getWhatsappService } from "./whatsapp.service";
 import {
     sendWhatsAppMessageSchema,
     orderPlacedSchema,
@@ -10,7 +10,7 @@ import {
 } from "./whatsapp.schema";
 
 const whatsappController: FastifyPluginAsync = async (fastify) => {
-    const whatsappService = new WhatsappService();
+    const whatsappService = getWhatsappService();
 
     fastify.post<{ Body: SendWhatsAppMessageBody }>(
         "/test",

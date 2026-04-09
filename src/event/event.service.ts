@@ -1,4 +1,4 @@
-import { supabase } from "../lib/supabase";
+import { supabase, safeQuery } from "../lib/supabase";
 import { Event } from "./event.types";
 import {OrderStatus} from "../orders/order.types";
 import {fromDbEvent, toDbEvent} from "./util";
@@ -37,11 +37,9 @@ export class EventService {
     async getEventById(id: string): Promise<Event | null> {
         const cacheKey = eventCacheKeys.byId(id);
         return cache.getOrFetch<Event | null>(cacheKey, async () => {
-            const { data, error } = await supabase
-                .from('events')
-                .select('*')
-                .eq("id", id)
-                .single();
+            const { data, error } = await safeQuery(() => Promise.resolve(
+                supabase.from('events').select('*').eq("id", id).single()
+            ));
 
             if (error) {
                 throw new Error(`Failed to fetch event: ${error.message}`);
@@ -73,25 +71,22 @@ export class EventService {
         }, EVENT_CACHE_TTL);
     }
 
-    // Add a helper method to get event by ID or code
     async getEventByIdOrCode(eventIdOrCode: string): Promise<string | null> {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventIdOrCode);
+        return cache.getOrFetch(`event:resolve:${eventIdOrCode}`, async () => {
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventIdOrCode);
 
-        if (isUuid) {
-            const { data, error } = await supabase
-                .from('events')
-                .select('id')
-                .eq('id', eventIdOrCode)
-                .single();
+            if (isUuid) {
+                const { data, error } = await safeQuery(() => Promise.resolve(
+                    supabase.from('events').select('id').eq('id', eventIdOrCode).single()
+                ));
+                return (!error && data) ? data.id : null;
+            }
+
+            const { data, error } = await safeQuery(() => Promise.resolve(
+                supabase.from('events').select('id').eq('code', eventIdOrCode).single()
+            ));
             return (!error && data) ? data.id : null;
-        }
-
-        const { data, error } = await supabase
-            .from('events')
-            .select('id')
-            .eq('code', eventIdOrCode)
-            .single();
-        return (!error && data) ? data.id : null;
+        }, 300);
     }
 
     async createEvent(event: Omit<Event, "id" | "created_at" | "status">): Promise<Event> {

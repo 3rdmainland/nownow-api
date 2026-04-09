@@ -12,6 +12,8 @@ vi.mock('@fastify/websocket', () => ({
 
 vi.mock('../../lib/supabase.js', () => ({
   supabase: { from: vi.fn() },
+  safeQuery: (fn: any) => fn(),
+  CircuitOpenError: class CircuitOpenError extends Error {},
 }));
 
 import { redisMock, cacheMock } from '../mocks/redis.js';

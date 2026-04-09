@@ -8,7 +8,7 @@ import { redisMock, cacheMock, CACHE_TTL_MOCK } from '../mocks/redis.js';
 
 // ── Module-level mocks (hoisted before any imports that pull these deps) ──────
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('../../lib/redis.js', () => ({
     cache: cacheMock,
@@ -29,14 +29,17 @@ const mockSendOrderPlacedTemplate = vi.fn().mockResolvedValue(undefined);
 const mockSendOrderReadyTemplate = vi.fn().mockResolvedValue(undefined);
 const mockSendOrderCollectedTemplate = vi.fn().mockResolvedValue(undefined);
 
+const mockWhatsappInstance = {
+    sendOrderPlacedTemplate: mockSendOrderPlacedTemplate,
+    sendOrderReadyTemplate: mockSendOrderReadyTemplate,
+    sendOrderCollectedTemplate: mockSendOrderCollectedTemplate,
+};
+
 vi.mock('../../whatsapp/whatsapp.service.js', () => ({
     WhatsappService: vi.fn(function() {
-        return {
-            sendOrderPlacedTemplate: mockSendOrderPlacedTemplate,
-            sendOrderReadyTemplate: mockSendOrderReadyTemplate,
-            sendOrderCollectedTemplate: mockSendOrderCollectedTemplate,
-        };
+        return mockWhatsappInstance;
     }),
+    getWhatsappService: vi.fn(() => mockWhatsappInstance),
 }));
 
 vi.mock('qrcode', () => ({
@@ -86,16 +89,18 @@ vi.mock('../../lib/qr.helper.js', () => ({
     }),
 }));
 
-vi.mock('../../payment/payment.service.js', () => ({
-    PaymentService: vi.fn(function() {
-        return {
-            createPaymentRequest: vi.fn().mockResolvedValue({
-                paymentId: 'pay_test_123',
-                paymentUrl: 'https://stitch.test/pay/pay_test_123',
-            }),
-        };
-    }),
-}));
+vi.mock('../../payment/payment.service.js', () => {
+    const instance = {
+        createPaymentRequest: vi.fn().mockResolvedValue({
+            paymentId: 'pay_test_123',
+            paymentUrl: 'https://stitch.test/pay/pay_test_123',
+        }),
+    };
+    return {
+        PaymentService: vi.fn(() => instance),
+        paymentService: instance,
+    };
+});
 
 // ── Import OrderService AFTER mocks are registered ───────────────────────────
 import { OrderService } from '../../orders/order.service.js';
@@ -1219,9 +1224,10 @@ describe('OrderService', () => {
                 events: [{ data: eventData, error: null }],
                 event_menu_configurations: [{ data: menuConfigWithCash, error: null }],
                 orders: [
-                    { data: createdOrder, error: null }, // insert
-                    { data: createdOrder, error: null }, // update QR
-                    { data: null, error: null },         // queue positions
+                    { data: null, error: null },         // dedup check
+                    { data: createdOrder, error: null },  // insert
+                    { data: createdOrder, error: null },  // update QR
+                    { data: null, error: null },          // queue positions
                 ],
             });
 
@@ -1253,16 +1259,18 @@ describe('OrderService', () => {
                 vendors: [{ data: vendorData, error: null }],
                 events: [{ data: eventData, error: null }],
                 event_menu_configurations: [{ data: menuConfigWithCash, error: null }],
+                customers: [{ data: { name: 'Test Customer' }, error: null }],
                 orders: [
+                    { data: null, error: null },         // dedup check
                     { data: onlineOrder, error: null },  // insert
                     { data: onlineOrder, error: null },  // update QR
-                    { data: null, error: null },         // queue positions
                     { data: null, error: null },         // store stitch payment id
                 ],
             });
 
             const result = await service.createOrder({
                 ...baseOrderInput,
+                customer_id: 'customer-1',
                 paymentMethod: 'ONLINE',
             } as any);
 

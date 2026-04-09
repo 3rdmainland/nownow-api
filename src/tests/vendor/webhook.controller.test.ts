@@ -26,6 +26,8 @@ vi.mock('../../lib/redis.js', () => ({
 
 vi.mock('../../lib/supabase.js', () => ({
   supabase: { from: vi.fn() },
+  safeQuery: (fn: any) => fn(),
+  CircuitOpenError: class CircuitOpenError extends Error {},
 }));
 
 // ── Import after mocks ──────────────────────────────────────────────────────

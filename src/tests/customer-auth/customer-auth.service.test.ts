@@ -3,7 +3,7 @@ import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 import { CustomerAuthService } from '../../customer-auth/customer-auth.service.js';
 

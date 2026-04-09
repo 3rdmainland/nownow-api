@@ -28,6 +28,8 @@ vi.mock('../../lib/supabase', () => ({
             insert: vi.fn().mockReturnThis(),
         })),
     },
+    safeQuery: (fn: any) => fn(),
+    CircuitOpenError: class CircuitOpenError extends Error {},
 }));
 
 vi.mock('../../lib/redis', () => ({
@@ -82,10 +84,8 @@ describe('Performance Pattern Verification', () => {
             const statsMethod = source.slice(statsMethodStart, statsMethodEnd);
 
             expect(statsMethod).not.toContain("select('*')");
-            // getOrderStats now uses 2 parallel queries:
-            // summaryQuery with select('total, status, payment_method')
-            // itemsQuery with select('items, status')
-            expect(statsMethod).toContain("select('total, status, payment_method')");
+            // getOrderStats now uses 2 parallel queries with specific columns
+            expect(statsMethod).toMatch(/select\('total, status, payment_method/);
             expect(statsMethod).toContain("select('items, status')");
         });
 
@@ -111,7 +111,7 @@ describe('Performance Pattern Verification', () => {
     });
 
     describe('N+1 Query Prevention', () => {
-        it('updateQueuePositions should use Promise.all for parallel execution', async () => {
+        it('updateQueuePositions should use batch RPC instead of N individual updates', async () => {
             const { readFileSync } = await import('fs');
             const source = readFileSync(
                 new URL('../../orders/order.scheduler.ts', import.meta.url),
@@ -119,12 +119,13 @@ describe('Performance Pattern Verification', () => {
             );
 
             const methodStart = source.indexOf('async updateQueuePositions');
-            const methodEnd = source.indexOf('}', source.indexOf('Promise.all', methodStart) + 50);
+            const methodEnd = source.indexOf('\n    }', methodStart) + 6;
             const method = source.slice(methodStart, methodEnd);
 
-            // Should use Promise.all, NOT a sequential for loop with await
-            expect(method).toContain('Promise.all');
-            // Should NOT contain sequential await inside a for loop
+            // Should use a single RPC call, NOT N individual updates
+            expect(method).toContain("rpc('batch_update_queue_positions'");
+            // Should NOT contain Promise.all of individual updates
+            expect(method).not.toContain('Promise.all');
             expect(method).not.toMatch(/for\s*\(let\s+i.*\)\s*\{[\s\S]*?await\s+supabase/);
         });
 

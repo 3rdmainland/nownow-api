@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase.js';
-import { WhatsappService } from '../whatsapp/whatsapp.service.js';
+import { getWhatsappService } from '../whatsapp/whatsapp.service.js';
 import { ConsentService } from './consent.service.js';
 import { formatToCurrency } from './format-helper.js';
 import { redis } from '../lib/redis.js';
@@ -102,7 +102,7 @@ async function sendNudge(nudge: RetentionNudge): Promise<void> {
     return;
   }
 
-  const whatsapp = new WhatsappService();
+  const whatsapp = getWhatsappService();
   const payload = nudge.payload;
 
   switch (payload.type) {

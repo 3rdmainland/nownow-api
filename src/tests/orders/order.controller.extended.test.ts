@@ -8,7 +8,7 @@ import { OrderStatus } from '../../orders/order.types.js';
 
 // ── Module-level mocks ────────────────────────────────────────────────────────
 
-vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock }));
+vi.mock('../../lib/supabase.js', () => ({ supabase: supabaseMock, safeQuery: (fn: any) => fn(), CircuitOpenError: class CircuitOpenError extends Error {} }));
 
 vi.mock('../../lib/redis.js', () => ({
   cache: cacheMock,
@@ -25,14 +25,14 @@ vi.mock('../../websocket/index.js', () => ({
   broadcastToAdmins: vi.fn(),
 }));
 
+const _waInst = {
+  sendOrderPlacedTemplate: vi.fn().mockResolvedValue(undefined),
+  sendOrderReadyTemplate: vi.fn().mockResolvedValue(undefined),
+  sendOrderCollectedTemplate: vi.fn().mockResolvedValue(undefined),
+};
 vi.mock('../../whatsapp/whatsapp.service.js', () => ({
-  WhatsappService: vi.fn(function () {
-    return {
-      sendOrderPlacedTemplate: vi.fn().mockResolvedValue(undefined),
-      sendOrderReadyTemplate: vi.fn().mockResolvedValue(undefined),
-      sendOrderCollectedTemplate: vi.fn().mockResolvedValue(undefined),
-    };
-  }),
+  WhatsappService: vi.fn(function () { return _waInst; }),
+  getWhatsappService: vi.fn(() => _waInst),
 }));
 
 vi.mock('qrcode', () => ({

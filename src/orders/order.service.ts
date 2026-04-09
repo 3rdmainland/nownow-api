@@ -1,6 +1,6 @@
 import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats, TimeSeriesGranularity, TimeSeriesStats, TimeSeriesBucket, TimeSeriesSummary, PreviousPeriodSummary, RefundOrderDto} from "./order.types";
-import {supabase} from "../lib/supabase";
-import { WhatsappService } from "../whatsapp/whatsapp.service";
+import {supabase, safeQuery} from "../lib/supabase";
+import { getWhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
 import { OrderScheduler } from './order.scheduler';
 import { broadcastOrderStatusUpdate, broadcastNewOrder, broadcastToVendor, broadcastAdminOrderFeed, broadcastToAdmins } from "../websocket";
@@ -362,6 +362,24 @@ export class OrderService {
             age_verified_at: cleanOrder.age_verified ? new Date().toISOString() : null,
         };
 
+        // Pre-fetch customer name for online payment before inserting order
+        // This ensures we don't create orphan orders if the name lookup fails
+        let payerName: string | null = null;
+        if (!isCashOrder) {
+            if (order.customer_id) {
+                const { data: customer } = await supabase
+                    .from('customers')
+                    .select('name')
+                    .eq('id', order.customer_id)
+                    .single();
+                if (customer?.name) payerName = customer.name;
+            }
+            if (!payerName) payerName = (order as any).customer_name || null;
+            if (!payerName) {
+                throw new ValidationError('Customer name is required for online payment. Please update your profile.');
+            }
+        }
+
         // Dedup guard: reject if an identical order was created in the last 30 seconds
         if (orderWithDefaults.phone && orderWithDefaults.vendor_id) {
             const cutoff = new Date(Date.now() - 30_000).toISOString();
@@ -433,20 +451,6 @@ export class OrderService {
             return { ...updatedOrder, paymentUrl: '' };
         }
 
-        // Online order: look up customer name for payment (required by Stitch)
-        let payerName: string | null = null;
-        if (order.customer_id) {
-            const { data: customer } = await supabase
-                .from('customers')
-                .select('name')
-                .eq('id', order.customer_id)
-                .single();
-            if (customer?.name) payerName = customer.name;
-        }
-        if (!payerName) {
-            throw new ValidationError('Customer name is required for online payment. Please update your profile.');
-        }
-
         const { paymentId, paymentUrl } = await paymentService.createPaymentRequest(
             updatedOrder.id,
             Math.round(validatedTotal * 100), // Convert rands to cents
@@ -472,7 +476,7 @@ export class OrderService {
             // Fire-and-forget WhatsApp notification
             const token = process.env.WA_ACCESS_TOKEN;
             if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order?.phone) {
-                const whatsapp = new WhatsappService();
+                const whatsapp = getWhatsappService();
 
                 void whatsapp
                     .sendOrderPlacedTemplate(order.phone, {
@@ -585,7 +589,7 @@ export class OrderService {
                             .eq('id', order.vendor_id)
                             .single();
 
-                        const whatsapp = new WhatsappService();
+                        const whatsapp = getWhatsappService();
                         await whatsapp.sendOrderCollectedTemplate(order.phone, {
                             orderId: String(orderId),
                             vendorName: vendor?.name || 'the vendor',
@@ -699,7 +703,7 @@ export class OrderService {
                         .eq('id', data.vendor_id)
                         .single();
 
-                    const whatsapp = new WhatsappService();
+                    const whatsapp = getWhatsappService();
 
                     void whatsapp
                         .sendOrderReadyTemplate(data.phone, {
@@ -755,12 +759,14 @@ export class OrderService {
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
-        const { data, error, count } = await supabase
-            .from('orders')
-            .select('*', { count: 'exact' })
-            .eq('vendor_id', vendorId)
-            .order('created_at', { ascending: false })
-            .range(from, to);
+        const { data, error, count } = await safeQuery(() => Promise.resolve(
+            supabase
+                .from('orders')
+                .select('*', { count: 'exact' })
+                .eq('vendor_id', vendorId)
+                .order('created_at', { ascending: false })
+                .range(from, to)
+        )) as any;
 
         if (error) {
             throw new Error(`Failed to fetch vendor orders: ${error.message}`);
@@ -1021,16 +1027,16 @@ export class OrderService {
             throw new Error(`Failed to refund order: ${updateError.message}`);
         }
 
-        // Invalidate cached stats
-        const patterns = [
-            `order:stats:${order.vendor_id}:`,
-            `order:stats:all:`,
-            `order:timeseries:${order.vendor_id}:`,
-            `order:timeseries:all:`,
+        // Invalidate cached stats with explicit keys (Upstash doesn't support glob DELETE)
+        const statsKeys = [
+            `order:stats:${order.vendor_id}:all`,
+            `order:stats:${order.vendor_id}:${order.event_id || 'all'}`,
+            `order:stats:all:all`,
+            `order:stats:all:${order.event_id || 'all'}`,
+            `order:timeseries:${order.vendor_id}:all`,
+            `order:timeseries:all:all`,
         ];
-        for (const prefix of patterns) {
-            await cache.del(prefix + '*').catch(() => {});
-        }
+        await Promise.all(statsKeys.map(k => cache.del(k).catch(() => {})));
 
         return updated;
     }

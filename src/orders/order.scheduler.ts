@@ -311,7 +311,7 @@ export class OrderScheduler {
         // Get all pending and preparing orders for this vendor
         const { data: existingOrders, error } = await supabase
             .from('orders')
-            .select('*')
+            .select('id, scheduled_pickup_time, created_at, estimated_prep_time')
             .eq('vendor_id', vendorId)
             .in('status', [OrderStatus.PENDING, OrderStatus.PREPARING])
             .order('created_at', { ascending: true });
@@ -320,7 +320,7 @@ export class OrderScheduler {
             throw new Error(`Failed to fetch vendor orders: ${error.message}`);
         }
 
-        const orders = (existingOrders || []) as Order[];
+        const orders = (existingOrders || []) as Pick<Order, 'id' | 'scheduled_pickup_time' | 'created_at' | 'estimated_prep_time'>[];
 
         // Filter orders that will be processed before the requested pickup time
         const ordersBeforePickup = orders.filter(order => {
@@ -332,7 +332,7 @@ export class OrderScheduler {
 
         // Calculate total prep time for orders in queue
         const totalPrepTimeInQueue = ordersBeforePickup.reduce((sum, order) => {
-            return sum + (order.estimatedPrepTime || 0);
+            return sum + (order.estimated_prep_time || 0);
         }, 0);
 
         // Calculate estimated ready time
@@ -479,32 +479,17 @@ export class OrderScheduler {
     }
 
     /**
-     * Updates queue positions for pending orders after an order status change
+     * Updates queue positions for pending orders after an order status change.
+     * Uses a single RPC call instead of N individual UPDATEs.
      */
     async updateQueuePositions(vendorId: string): Promise<void> {
-        const { data: pendingOrders, error } = await supabase
-            .from('orders')
-            .select('id')
-            .eq('vendor_id', vendorId)
-            .eq('status', OrderStatus.PENDING)
-            .order('scheduled_pickup_time', { ascending: true });
+        const { error } = await supabase.rpc('batch_update_queue_positions', {
+            p_vendor_id: vendorId,
+        });
 
         if (error) {
-            console.error('Failed to update queue positions:', error.message);
-            return;
+            console.error('Failed to batch-update queue positions:', error.message);
         }
-
-        const orders = (pendingOrders || []) as { id: string }[];
-
-        // Update queue positions in parallel (each targets a different row)
-        await Promise.all(
-            orders.map((order, i) =>
-                supabase
-                    .from('orders')
-                    .update({ queue_position: i + 1 })
-                    .eq('id', order.id)
-            )
-        );
     }
 
     /**
