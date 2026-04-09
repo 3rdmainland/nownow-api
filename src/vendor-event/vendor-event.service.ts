@@ -302,14 +302,19 @@ export class VendorEventService {
     const offset = (page - 1) * limit;
 
     // 1. Get all event IDs for this vendor's events (single query, cached)
-    const { data: veRows, error: veError } = await supabase
-      .from('vendor_events')
-      .select('event_id')
-      .eq('vendor_id', vendorId);
+    const eventIds = await cache.getOrFetch<string[]>(
+      vendorEventCacheKeys.byVendor(vendorId) + ':event-ids',
+      async () => {
+        const { data: veRows, error: veError } = await supabase
+          .from('vendor_events')
+          .select('event_id')
+          .eq('vendor_id', vendorId);
+        if (veError) throw new Error(`Failed to fetch vendor events: ${veError.message}`);
+        return (veRows || []).map((r: any) => r.event_id);
+      },
+      VENDOR_EVENT_CACHE_TTL
+    );
 
-    if (veError) throw new Error(`Failed to fetch vendor events: ${veError.message}`);
-
-    const eventIds = (veRows || []).map((r: any) => r.event_id);
     if (eventIds.length === 0) {
       return { orders: [], total: 0, stats: { totalOrders: 0, totalRevenue: 0, activeOrders: 0 } };
     }
