@@ -454,7 +454,7 @@ export class OrderService {
         const { paymentId, paymentUrl } = await paymentService.createPaymentRequest(
             updatedOrder.id,
             Math.round(validatedTotal * 100), // Convert rands to cents
-            payerName,
+            payerName ?? 'Customer',
             order.phone
         );
 

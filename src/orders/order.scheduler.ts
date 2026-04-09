@@ -320,7 +320,7 @@ export class OrderScheduler {
             throw new Error(`Failed to fetch vendor orders: ${error.message}`);
         }
 
-        const orders = (existingOrders || []) as Pick<Order, 'id' | 'scheduled_pickup_time' | 'created_at' | 'estimated_prep_time'>[];
+        const orders = (existingOrders || []) as { id: string; scheduled_pickup_time: string | null; created_at: string; estimated_prep_time: number | null }[];
 
         // Filter orders that will be processed before the requested pickup time
         const ordersBeforePickup = orders.filter(order => {

@@ -200,7 +200,7 @@ export class NudgeScheduler {
     const results = await Promise.allSettled(
       inserted.map(row => {
         const delaySec = Math.max(0, Math.floor((new Date(row.scheduled_for).getTime() - Date.now()) / 1000));
-        return qstash.publishJSON({
+        return qstash!.publishJSON({
           url: endpoint,
           body: { nudgeId: row.id },
           delay: delaySec,
