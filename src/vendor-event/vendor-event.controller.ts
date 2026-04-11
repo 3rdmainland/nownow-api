@@ -34,7 +34,7 @@ const vendorEventController: FastifyPluginAsync = async (fastify) => {
   fastify.post('/', { schema: createVendorEventSchema }, async (request, reply) => {
     try {
       const vendorId = await getVendorId(request, reply);
-      const payload = request.body as { name: string; startDate: string; endDate: string; menuTemplateId?: string };
+      const payload = request.body as { name: string; startDate: string; endDate: string; menuTemplateId?: string; allowPayAtStall?: boolean };
       const vendorEvent = await service.createVendorEvent(vendorId, payload);
       return reply.status(201).send({ vendorEvent });
     } catch (err: any) {

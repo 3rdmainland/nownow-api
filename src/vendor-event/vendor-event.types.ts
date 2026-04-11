@@ -25,4 +25,5 @@ export interface CreateVendorEventPayload {
   startDate: string;
   endDate: string;
   menuTemplateId?: string;
+  allowPayAtStall?: boolean;
 }

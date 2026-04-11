@@ -6,6 +6,8 @@ import { VendorEvent, VendorEventWithDetails, CreateVendorEventPayload } from '.
 import { fromDbVendorEvent, fromDbVendorEventWithDetails } from './vendor-event.utils.js';
 import { nanoid } from 'nanoid';
 
+if (!process.env.CUSTOMER_APP_URL) throw new Error('CUSTOMER_APP_URL environment variable is required');
+const CUSTOMER_APP_URL = process.env.CUSTOMER_APP_URL;
 const VENDOR_EVENT_CACHE_TTL = 60;
 
 const vendorEventCacheKeys = {
@@ -33,7 +35,7 @@ export class VendorEventService {
       .replace(/[^a-zA-Z0-9]/g, '')
       .slice(0, 4)
       .toUpperCase();
-    return `${prefix}-${nanoid(6)}`;
+    return `${prefix}-${nanoid(6).toUpperCase()}`;
   }
 
   async createVendorEvent(vendorId: string, payload: CreateVendorEventPayload): Promise<VendorEvent> {
@@ -51,7 +53,7 @@ export class VendorEventService {
         status: 'ACTIVE',
         code: eventCode,
         origin_type: 'vendor',
-        is_public: false,
+        is_public: true,
         location: { latitude: 0, longitude: 0, address: 'N/A', city: 'N/A', state: 'N/A', zipCode: '0000' },
       })
       .select()
@@ -74,6 +76,7 @@ export class VendorEventService {
       current_active_orders: 0,
       status: 'DRAFT',
       category_configurations: [],
+      allow_pay_at_stall: payload.allowPayAtStall ?? false,
     };
     if (payload.menuTemplateId) {
       menuConfig.template_id = payload.menuTemplateId;
@@ -84,9 +87,10 @@ export class VendorEventService {
 
     if (menuError) throw new Error(`Failed to create menu config: ${menuError.message}`);
 
-    // 4. Generate QR code
+    // 4. Generate QR code — image encodes customer URL, qr_code stores HMAC for verification
     const qrString = this.qrHelper.generateVendorEventQR(event.id, vendorId);
-    const qrBuffer = await this.qrHelper.generateQRCodeBuffer(qrString);
+    const customerUrl = `${CUSTOMER_APP_URL}/e/${eventCode}/v/${vendorId}`;
+    const qrBuffer = await this.qrHelper.generateQRCodeBuffer(customerUrl);
     const qrImageUrl = await this.qrHelper.uploadVendorEventQRImage(qrBuffer, `${event.id}-${vendorId}`);
 
     // 5. Create vendor_events record
@@ -135,7 +139,7 @@ export class VendorEventService {
         status: 'ACTIVE',
         code: eventCode,
         origin_type: 'vendor_direct',
-        is_public: false,
+        is_public: true,
         location: { latitude: 0, longitude: 0, address: 'N/A', city: 'N/A', state: 'N/A', zipCode: '0000' },
       })
       .select()
@@ -164,9 +168,10 @@ export class VendorEventService {
 
     if (menuError) throw new Error(`Failed to create direct menu config: ${menuError.message}`);
 
-    // Generate direct QR
+    // Generate direct QR — image encodes customer URL with eventId for instant redirect
     const qrString = this.qrHelper.generateVendorDirectQR(vendorId);
-    const qrBuffer = await this.qrHelper.generateQRCodeBuffer(qrString);
+    const customerUrl = `${CUSTOMER_APP_URL}/e/${eventCode}/v/${vendorId}?eventId=${event.id}`;
+    const qrBuffer = await this.qrHelper.generateQRCodeBuffer(customerUrl);
     const qrImageUrl = await this.qrHelper.uploadVendorEventQRImage(qrBuffer, `direct-${vendorId}`);
 
     const { data: vendorEvent, error: veError } = await supabase

@@ -36,6 +36,7 @@ export const createVendorEventSchema = {
       startDate: { type: 'string', format: 'date-time' },
       endDate: { type: 'string', format: 'date-time' },
       menuTemplateId: { type: 'string' },
+      allowPayAtStall: { type: 'boolean' },
     },
     required: ['name', 'startDate', 'endDate'],
   },
