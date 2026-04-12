@@ -68,7 +68,7 @@ export const adminChangePasswordSchema = {
     required: ['currentPassword', 'newPassword'],
     properties: {
       currentPassword: { type: 'string' },
-      newPassword: { type: 'string', minLength: 8 },
+      newPassword: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {

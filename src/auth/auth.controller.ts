@@ -13,6 +13,7 @@ import {
 import { AuthService } from './auth.service.js';
 import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
 import { authenticate } from '../lib/auth.js';
+import { sendEmail } from '../lib/email.js';
 
 const COOKIE_NAME = 'token';
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
@@ -24,6 +25,20 @@ const authController: FastifyPluginAsync = async (fastify) => {
   fastify.post('/invite', { schema: inviteSchema }, async (request, reply) => {
     const payload = request.body as InvitePayload;
     const result = await authService.createInvite(payload);
+
+    const signupUrl = `${process.env.VENDOR_APP_URL || 'http://localhost:3001'}/auth/register?token=${result.inviteToken}`;
+    void sendEmail({
+      to: payload.email,
+      subject: 'You\'ve been invited to join NowNow',
+      html: `
+        <h2>You've been invited!</h2>
+        <p>You've been invited to manage a vendor on NowNow.</p>
+        <p><a href="${signupUrl}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:6px;">Accept Invite & Sign Up</a></p>
+        <p>This link expires in 7 days.</p>
+        <p style="color:#666;font-size:12px;">If you didn't expect this, ignore this email.</p>
+      `,
+    }).catch(err => fastify.log.error(err, 'Failed to send vendor invite email'));
+
     return reply.status(201).send(result);
   });
 
@@ -110,8 +125,17 @@ const authController: FastifyPluginAsync = async (fastify) => {
 
     if (token) {
       const resetUrl = `${process.env.VENDOR_APP_URL || 'http://localhost:3001'}/auth/reset-password?token=${token}`;
-      // TODO: replace with email provider (Resend, SendGrid, etc.)
-      fastify.log.info({ resetUrl }, 'Vendor password reset link generated');
+      void sendEmail({
+        to: email,
+        subject: 'Reset your NowNow password',
+        html: `
+          <h2>Password Reset</h2>
+          <p>We received a request to reset your password.</p>
+          <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:6px;">Reset Password</a></p>
+          <p>This link expires in 1 hour.</p>
+          <p style="color:#666;font-size:12px;">If you didn't request this, ignore this email.</p>
+        `,
+      }).catch(err => fastify.log.error(err, 'Failed to send vendor password reset email'));
     }
 
     // Always return the same message to prevent email enumeration

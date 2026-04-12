@@ -23,6 +23,7 @@ import {
 import { authenticateOrganizer } from '../lib/auth.js';
 import { UnauthorizedError, TooManyRequestsError } from '../lib/errors.js';
 import redis from '../lib/redis.js';
+import { sendEmail } from '../lib/email.js';
 
 const COOKIE_NAME = 'token';
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
@@ -54,6 +55,20 @@ const organizerAuthController: FastifyPluginAsync = async (fastify) => {
 
     const payload = request.body as OrganizerInvitePayload;
     const result = await authService.createInvite(payload);
+
+    const signupUrl = `${process.env.ORGANIZER_APP_URL || 'http://localhost:3003'}/auth/register?token=${result.inviteToken}`;
+    void sendEmail({
+      to: payload.email,
+      subject: 'You\'ve been invited to NowNow as an organizer',
+      html: `
+        <h2>You've been invited!</h2>
+        <p>You've been invited to join NowNow as an event organizer.</p>
+        <p><a href="${signupUrl}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:6px;">Accept Invite & Sign Up</a></p>
+        <p>This link expires in 7 days.</p>
+        <p style="color:#666;font-size:12px;">If you didn't expect this, ignore this email.</p>
+      `,
+    }).catch(err => fastify.log.error(err, 'Failed to send organizer invite email'));
+
     return reply.status(201).send(result);
   });
 
@@ -129,8 +144,17 @@ const organizerAuthController: FastifyPluginAsync = async (fastify) => {
 
     if (token) {
       const resetUrl = `${process.env.ORGANIZER_APP_URL || 'http://localhost:3003'}/auth/reset-password?token=${token}`;
-      // TODO: replace with email provider (Resend, SendGrid, etc.)
-      fastify.log.info({ resetUrl }, 'Password reset link generated');
+      void sendEmail({
+        to: email,
+        subject: 'Reset your NowNow password',
+        html: `
+          <h2>Password Reset</h2>
+          <p>We received a request to reset your password.</p>
+          <p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:6px;">Reset Password</a></p>
+          <p>This link expires in 1 hour.</p>
+          <p style="color:#666;font-size:12px;">If you didn't request this, ignore this email.</p>
+        `,
+      }).catch(err => fastify.log.error(err, 'Failed to send organizer password reset email'));
     }
 
     // Always return the same message to prevent email enumeration

@@ -8,6 +8,7 @@ import { DiscountService } from "../discount/discount.service.js";
 import { paymentService } from "../payment/payment.service.js";
 import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError, ConflictError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
+import { sendEmail } from "../lib/email.js";
 
 /**
  * Ensure order.items is a parsed array.
@@ -927,6 +928,25 @@ export class OrderService {
             `order:timeseries:all:all`,
         ];
         await Promise.all(statsKeys.map(k => cache.del(k).catch(() => {})));
+
+        // Send refund confirmation email to customer
+        if (order.customer_id) {
+            const { data: customer } = await supabase.from('customers').select('email, name').eq('id', order.customer_id).single();
+            if (customer?.email) {
+                void sendEmail({
+                    to: customer.email,
+                    subject: `Refund ${dto.type === 'full' ? 'Processed' : 'Partially Processed'} — Order #${orderId.slice(0, 8)}`,
+                    html: `
+                        <h2>Refund Confirmation</h2>
+                        <p>Hi ${customer.name || 'there'},</p>
+                        <p>Your ${dto.type} refund of <strong>R${refundAmount.toFixed(2)}</strong> has been processed for order #${orderId.slice(0, 8)}.</p>
+                        ${dto.reason ? `<p><strong>Reason:</strong> ${dto.reason}</p>` : ''}
+                        <p>Please allow 3-5 business days for the refund to reflect in your account.</p>
+                        <p style="color:#666;font-size:12px;">If you have questions, contact our support team.</p>
+                    `,
+                }).catch(err => console.error('Failed to send refund email:', err?.message || err));
+            }
+        }
 
         return updated;
     }

@@ -6,6 +6,7 @@ import { NotFoundError } from '../lib/errors.js';
 import { supabase } from '../lib/supabase.js';
 import { getWhatsappService } from '../whatsapp/whatsapp.service.js';
 import { broadcastNewOrder, broadcastAdminOrderFeed, broadcastPaymentFailed } from '../websocket/index.js';
+import { sendEmail } from '../lib/email.js';
 
 /**
  * Extract orderId and status from a Stitch webhook payload.
@@ -127,6 +128,23 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
         paymentStatus,
         timestamp: new Date().toISOString(),
       });
+
+      // Email customer about payment failure
+      if (order.customer_id) {
+        const { data: customer } = await supabase.from('customers').select('email, name').eq('id', order.customer_id).single();
+        if (customer?.email) {
+          void sendEmail({
+            to: customer.email,
+            subject: `Payment ${paymentStatus} — Order #${orderId.slice(0, 8)}`,
+            html: `
+              <h2>Payment Issue</h2>
+              <p>Hi ${customer.name || 'there'},</p>
+              <p>Your payment for order <strong>#${orderId.slice(0, 8)}</strong> has ${paymentStatus}.</p>
+              <p>Please try placing your order again. If you continue to experience issues, contact our support team.</p>
+            `,
+          }).catch(err => fastify.log.error(err, 'Failed to send payment failure email'));
+        }
+      }
     }
 
     return { received: true };

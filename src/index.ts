@@ -37,6 +37,7 @@ import settlementController from "./settlement/settlement.controller";
 import vendorSettlementController from "./settlement/vendor-settlement.controller";
 import vendorEventController from "./vendor-event/vendor-event.controller";
 import adminNotificationController from "./notifications/notifications.controller";
+import exportController from "./export/export.controller";
 import recipientNotificationController from "./notifications/recipient-notification.controller";
 import { AppError } from "./lib/errors";
 import { getFeatureFlags } from "./lib/feature-flags";
@@ -191,6 +192,7 @@ fastify.register(vendorSettlementController, { prefix: "/vendor" });
 fastify.register(vendorEventController, { prefix: "/vendor-events" });
 fastify.register(adminNotificationController, { prefix: "/admin/notifications" });
 fastify.register(recipientNotificationController, { prefix: "/notifications" });
+fastify.register(exportController, { prefix: "/export" });
 
 // Public feature flags endpoint (no auth required)
 fastify.get('/config/flags', async () => {
@@ -256,7 +258,12 @@ fastify.setErrorHandler((error, request, reply) => {
 
     // Fastify schema validation errors (FST_ERR_VALIDATION) — return 400
     if ((error as any)?.code === 'FST_ERR_VALIDATION') {
-        return reply.status(400).send({ error: error.message });
+        let msg = error.message;
+        // Make password pattern errors human-readable
+        if (msg.includes('password') && msg.includes('must match pattern')) {
+            msg = 'Password must be at least 8 characters with uppercase, lowercase, number, and special character';
+        }
+        return reply.status(400).send({ error: msg });
     }
 
     // Handle custom AppError subclasses (UnauthorizedError, ConflictError, etc.)

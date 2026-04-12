@@ -3,6 +3,7 @@ import { authenticateAdmin } from '../lib/auth.js';
 import { AdminService } from './admin.service.js';
 import { AdminJwtPayload } from '../admin-auth/admin-auth.types.js';
 import { supabase } from '../lib/supabase.js';
+import { sendEmail } from '../lib/email.js';
 import {
   platformStatsSchema,
   userListSchema,
@@ -72,6 +73,25 @@ const adminController: FastifyPluginAsync = async (fastify) => {
     const { userId } = request.user as AdminJwtPayload;
     await adminService.suspendUser(type, id);
     await adminService.logAction(userId, 'user_suspended', type, id, null, request.ip);
+
+    // Notify user of suspension
+    const table = type === 'vendor' ? 'vendor_users' : type === 'organizer' ? 'organizer_users' : null;
+    if (table) {
+      const { data: user } = await supabase.from(table).select('email, name').eq('id', id).single();
+      if (user?.email) {
+        void sendEmail({
+          to: user.email,
+          subject: 'Your NowNow account has been suspended',
+          html: `
+            <h2>Account Suspended</h2>
+            <p>Hi ${user.name || 'there'},</p>
+            <p>Your NowNow account has been suspended. You will not be able to access the platform until this is resolved.</p>
+            <p>If you believe this is a mistake, please contact our support team.</p>
+          `,
+        }).catch(err => fastify.log.error(err, 'Failed to send suspension email'));
+      }
+    }
+
     return { message: 'User suspended' };
   });
 

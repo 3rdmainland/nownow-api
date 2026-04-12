@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase.js';
 import { NotFoundError } from '../lib/errors.js';
 import { cache } from '../lib/redis.js';
 import { AdminService } from '../admin/admin.service.js';
+import { sendEmail } from '../lib/email.js';
 import { ticketFromDb, messageFromDb } from './support.utils.js';
 import { broadcastTicketUpdate } from '../websocket/websocket.controller.js';
 import {
@@ -298,6 +299,24 @@ export class SupportService {
       subject: ticket.subject,
     });
 
+    // Email resolution to customer
+    if (ticket.customerPhone) {
+      const { data: customer } = await supabase.from('customers').select('email, name').eq('phone', ticket.customerPhone).single();
+      if (customer?.email) {
+        void sendEmail({
+          to: customer.email,
+          subject: `Ticket #${ticket.ticketNumber} Resolved`,
+          html: `
+            <h2>Your ticket has been resolved</h2>
+            <p>Hi ${customer.name || 'there'},</p>
+            <p>Your support ticket <strong>#${ticket.ticketNumber}</strong> has been resolved.</p>
+            <p><strong>Resolution:</strong> ${message}</p>
+            <p>If you still need help, you can open a new ticket.</p>
+          `,
+        }).catch(err => console.error('Failed to send resolution email:', err?.message || err));
+      }
+    }
+
     return ticket;
   }
 
@@ -385,6 +404,25 @@ export class SupportService {
       status: ticket.status,
       subject: ticket.subject,
     });
+
+    // Email ticket confirmation to customer
+    if (customerId) {
+      const { data: customer } = await supabase.from('customers').select('email, name').eq('id', customerId).single();
+      if (customer?.email) {
+        void sendEmail({
+          to: customer.email,
+          subject: `Support Ticket #${ticket.ticketNumber} — ${ticket.subject}`,
+          html: `
+            <h2>We've received your request</h2>
+            <p>Hi ${customer.name || 'there'},</p>
+            <p>Your support ticket has been created.</p>
+            <p><strong>Ticket #:</strong> ${ticket.ticketNumber}</p>
+            <p><strong>Subject:</strong> ${ticket.subject}</p>
+            <p>We'll get back to you as soon as possible.</p>
+          `,
+        }).catch(err => console.error('Failed to send ticket confirmation email:', err?.message || err));
+      }
+    }
 
     return ticket;
   }

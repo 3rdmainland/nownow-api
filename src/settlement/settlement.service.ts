@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
 import { nanoid } from 'nanoid';
+import { sendEmail } from '../lib/email.js';
 import {
   SettlementBatch,
   SettlementBatchWithPayouts,
@@ -391,6 +392,33 @@ export class SettlementService {
       .from('settlement_batches')
       .update({ status: 'settled', settled_at: now, updated_at: now })
       .eq('id', batchId);
+
+    // 6. Email payout notifications to vendors
+    if (payouts && payouts.length > 0) {
+      const vendorIds = [...new Set(payouts.map((p: any) => p.vendor_id))];
+      const { data: vendors } = await supabase
+        .from('vendor_users')
+        .select('vendor_id, email, name')
+        .in('vendor_id', vendorIds);
+
+      for (const payout of payouts) {
+        const vendorUser = (vendors || []).find((v: any) => v.vendor_id === payout.vendor_id);
+        if (vendorUser?.email) {
+          void sendEmail({
+            to: vendorUser.email,
+            subject: `Payout Processed — R${Number(payout.vendor_amount || payout.amount || 0).toFixed(2)}`,
+            html: `
+              <h2>Payout Confirmation</h2>
+              <p>Hi ${vendorUser.name || 'there'},</p>
+              <p>Your payout of <strong>R${Number(payout.vendor_amount || payout.amount || 0).toFixed(2)}</strong> has been processed.</p>
+              <p><strong>Reference:</strong> ${payout.payment_reference || 'Pending'}</p>
+              <p><strong>Date:</strong> ${new Date().toLocaleDateString('en-ZA')}</p>
+              <p>Please allow 1-2 business days for the funds to reflect in your bank account.</p>
+            `,
+          }).catch(err => console.error('Failed to send payout email:', err?.message || err));
+        }
+      }
+    }
 
     return this.getBatch(batchId);
   }

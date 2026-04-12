@@ -39,7 +39,8 @@
     "fastify-bcrypt": "^1.0.1",
     "nanoid": "^5.1.5",
     "posthog-node": "^5.21.2",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "resend": "^6.10.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -65,7 +65,7 @@ export const organizerRegisterSchema = {
     required: ['token', 'password', 'name'],
     properties: {
       token: { type: 'string' },
-      password: { type: 'string', minLength: 8 },
+      password: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
       name: { type: 'string', minLength: 1 },
     },
   },
@@ -141,7 +141,7 @@ export const organizerResetPasswordSchema = {
     required: ['token', 'newPassword'],
     properties: {
       token: { type: 'string' },
-      newPassword: { type: 'string', minLength: 8 },
+      newPassword: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {
@@ -162,7 +162,7 @@ export const organizerChangePasswordSchema = {
     required: ['currentPassword', 'newPassword'],
     properties: {
       currentPassword: { type: 'string' },
-      newPassword: { type: 'string', minLength: 8 },
+      newPassword: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {
@@ -182,7 +182,7 @@ export const organizerAdminResetPasswordSchema = {
     required: ['email', 'newPassword'],
     properties: {
       email: { type: 'string', format: 'email' },
-      newPassword: { type: 'string', minLength: 8 },
+      newPassword: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {

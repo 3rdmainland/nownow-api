@@ -65,7 +65,7 @@ export const registerSchema = {
     required: ['token', 'password'],
     properties: {
       token: { type: 'string' },
-      password: { type: 'string', minLength: 8 },
+      password: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {
@@ -153,7 +153,7 @@ export const resetPasswordSchema = {
     required: ['token', 'newPassword'],
     properties: {
       token: { type: 'string' },
-      newPassword: { type: 'string', minLength: 8 },
+      newPassword: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {
@@ -174,7 +174,7 @@ export const changePasswordSchema = {
     required: ['currentPassword', 'newPassword'],
     properties: {
       currentPassword: { type: 'string' },
-      newPassword: { type: 'string', minLength: 8 },
+      newPassword: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
     },
   },
   response: {
