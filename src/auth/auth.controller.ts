@@ -12,7 +12,7 @@ import {
 } from './auth.schema.js';
 import { AuthService } from './auth.service.js';
 import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
-import { authenticate } from '../lib/auth.js';
+import { authenticate, authenticateAdmin } from '../lib/auth.js';
 import { sendEmail } from '../lib/email.js';
 
 const COOKIE_NAME = 'token';
@@ -21,8 +21,8 @@ const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
 const authController: FastifyPluginAsync = async (fastify) => {
   const authService = new AuthService();
 
-  // POST /auth/invite — Create invite for a vendor
-  fastify.post('/invite', { schema: inviteSchema }, async (request, reply) => {
+  // POST /auth/invite — Create invite for a vendor (admin only)
+  fastify.post('/invite', { schema: inviteSchema, preHandler: [authenticateAdmin] }, async (request, reply) => {
     const payload = request.body as InvitePayload;
     const result = await authService.createInvite(payload);
 

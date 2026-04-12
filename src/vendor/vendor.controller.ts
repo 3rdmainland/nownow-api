@@ -15,6 +15,7 @@ import {
     getEventMenuCategoriesSchema,
 } from "./vendor.schema";
 import { VendorService } from "./vendor.service";
+import { authenticate, authenticateAdmin, authenticateVendorOrAdmin, assertVendorOwnership } from "../lib/auth.js";
 
 const vendorController: FastifyPluginAsync = async (fastify) => {
     const vendorService = new VendorService();
@@ -106,8 +107,8 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get vendor statistics
-    fastify.get<{ Params: { id: string } }>("/:id/stats", { schema: getVendorStatsSchema }, async (request, reply) => {
+    // Get vendor statistics (vendor or admin)
+    fastify.get<{ Params: { id: string } }>("/:id/stats", { schema: getVendorStatsSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const stats = await vendorService.getVendorStats(request.params.id);
             return stats;
@@ -117,8 +118,8 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Create vendor
-    fastify.post("/", { schema: createVendorSchema }, async (request, reply) => {
+    // Create vendor (admin only)
+    fastify.post("/", { schema: createVendorSchema, preHandler: [authenticateAdmin] }, async (request, reply) => {
         try {
             const vendorData = request.body as any;
             const vendor = await vendorService.createVendor(vendorData);
@@ -129,9 +130,10 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Update vendor
-    fastify.put<{ Params: { id: string } }>("/:id", { schema: updateVendorSchema }, async (request, reply) => {
+    // Update vendor (vendor owner or admin)
+    fastify.put<{ Params: { id: string } }>("/:id", { schema: updateVendorSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            assertVendorOwnership(request, request.params.id);
             const updates = request.body as any;
             const vendor = await vendorService.updateVendor(request.params.id, updates);
             return { vendor };
@@ -141,9 +143,10 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Toggle vendor status
-    fastify.patch<{ Params: { id: string } }>("/:id/status", { schema: toggleVendorStatusSchema }, async (request, reply) => {
+    // Toggle vendor status (vendor owner or admin)
+    fastify.patch<{ Params: { id: string } }>("/:id/status", { schema: toggleVendorStatusSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            assertVendorOwnership(request, request.params.id);
             const { isActive } = request.body as { isActive: boolean };
             const vendor = await vendorService.toggleVendorStatus(request.params.id, isActive);
             return { vendor };
@@ -153,9 +156,10 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Pause/unpause vendor
-    fastify.patch<{ Params: { id: string } }>("/:id/pause", { schema: pauseVendorSchema }, async (request, reply) => {
+    // Pause/unpause vendor (vendor owner or admin)
+    fastify.patch<{ Params: { id: string } }>("/:id/pause", { schema: pauseVendorSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            assertVendorOwnership(request, request.params.id);
             const { isPaused } = request.body as { isPaused: boolean };
             const vendor = await vendorService.pauseVendor(request.params.id, isPaused);
             return { vendor };
@@ -165,8 +169,8 @@ const vendorController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Delete vendor
-    fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteVendorSchema }, async (request, reply) => {
+    // Delete vendor (admin only)
+    fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteVendorSchema, preHandler: [authenticateAdmin] }, async (request, reply) => {
         try {
             await vendorService.deleteVendor(request.params.id);
             return reply.status(204).send();

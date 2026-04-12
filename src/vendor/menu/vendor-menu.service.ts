@@ -98,36 +98,20 @@ export class VendorMenuService {
                 return cached;
             }
 
-            // Fetch vendor info
-            const { data: vendor, error: vendorError } = await supabase
-                .from('vendors')
-                .select('id, name')
-                .eq('id', vendorId)
-                .single();
+            // Fetch all menu data in parallel (was 5 sequential queries)
+            const [vendorResult, categoriesResult, itemsResult, modifierGroups, tags] = await Promise.all([
+                supabase.from('vendors').select('id, name').eq('id', vendorId).single(),
+                supabase.from('menu_categories').select('*').eq('vendor_id', vendorId).eq('is_active', true).order('display_order', { ascending: true }),
+                supabase.from('default_menu_items').select('*').eq('vendor_id', vendorId).eq('is_active', true).order('display_order', { ascending: true }),
+                this.getVendorModifierGroups(vendorId),
+                this.getAllTags(),
+            ]);
 
+            const { data: vendor, error: vendorError } = vendorResult;
             if (vendorError) throw new Error(`Failed to fetch vendor: ${vendorError.message}`);
 
-            // Fetch categories
-            const { data: categoriesData } = await supabase
-                .from('menu_categories')
-                .select('*')
-                .eq('vendor_id', vendorId)
-                .eq('is_active', true)
-                .order('display_order', { ascending: true });
-
-            const categories = (categoriesData || []).map(fromDbMenuCategory);
-
-            // Fetch default menu items
-            const { data: itemsData } = await supabase
-                .from('default_menu_items')
-                .select('*')
-                .eq('vendor_id', vendorId)
-                .eq('is_active', true)
-                .order('display_order', { ascending: true });
-
-            const menuItems = (itemsData || []).map(fromDbDefaultMenuItem);
-            const modifierGroups = await this.getVendorModifierGroups(vendorId);
-            const tags = await this.getAllTags();
+            const categories = (categoriesResult.data || []).map(fromDbMenuCategory);
+            const menuItems = (itemsResult.data || []).map(fromDbDefaultMenuItem);
 
             const response: GetDefaultMenuResponse = {
                 vendor: { id: vendor.id, name: vendor.name },
@@ -218,21 +202,60 @@ export class VendorMenuService {
 
         await this.invalidateMenuCaches(vendorId);
 
-        // Also invalidate ALL event menu caches for this vendor — event menus derive
-        // effectivePrice from basePrice when there's no priceOverride, so stale
-        // event caches would serve old prices.
-        if (input.basePrice !== undefined) {
-            const { data: events } = await supabase
-                .from('event_menu_items')
+        // Collect all event IDs this vendor is part of — needed for cache invalidation + broadcasts
+        // First check event_menu_items (event-specific overrides), then fall back to event_vendors
+        // (covers vendor lite where items are served from default menu without overrides)
+        const { data: linkedEvents } = await supabase
+            .from('event_menu_items')
+            .select('event_id')
+            .eq('vendor_id', vendorId)
+            .eq('default_menu_item_id', itemId);
+
+        let eventIds = [...new Set((linkedEvents || []).map(e => e.event_id))];
+
+        // If no event_menu_items (vendor lite / no overrides), get events from event_vendors
+        if (eventIds.length === 0) {
+            const { data: vendorEvents } = await supabase
+                .from('event_vendors')
                 .select('event_id')
                 .eq('vendor_id', vendorId)
-                .eq('default_menu_item_id', itemId);
+                .eq('status', 'accepted');
 
-            if (events) {
-                const eventIds = [...new Set(events.map(e => e.event_id))];
-                await Promise.all(
-                    eventIds.map(eid => this.invalidateEventMenuCaches(vendorId, eid))
-                );
+            eventIds = [...new Set((vendorEvents || []).map(e => e.event_id))];
+        }
+
+        if (eventIds.length > 0) {
+            await Promise.all(
+                eventIds.map(eid => this.invalidateEventMenuCaches(vendorId, eid))
+            );
+
+            // Broadcast price change to connected customers for each event
+            if (input.basePrice !== undefined) {
+                for (const eid of eventIds) {
+                    broadcastPriceUpdate({
+                        vendorId,
+                        eventId: eid,
+                        items: [{
+                            menuItemId: itemId,
+                            oldPrice: data.base_price ?? 0,
+                            newPrice: input.basePrice,
+                            name: data.name,
+                        }],
+                    });
+                }
+            }
+
+            // Broadcast availability change
+            if (input.isActive !== undefined) {
+                for (const eid of eventIds) {
+                    broadcastAvailabilityUpdate({
+                        vendorId,
+                        eventId: eid,
+                        menuItemId: itemId,
+                        available: input.isActive,
+                        availabilityStatus: input.isActive ? 'AVAILABLE' : 'OUT_OF_STOCK',
+                    });
+                }
             }
         }
 

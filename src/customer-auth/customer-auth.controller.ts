@@ -43,8 +43,8 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
       message: 'Verification code sent',
     };
 
-    // Only expose OTP in dev/test (console provider) — never in production
-    if (!process.env.BULKSMS_TOKEN_ID) {
+    // Only expose OTP in dev/test — never in production
+    if (process.env.NODE_ENV !== 'production') {
       response.otp = code;
     }
 

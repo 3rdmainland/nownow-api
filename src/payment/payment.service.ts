@@ -195,7 +195,14 @@ class PaymentService {
 
     // svix-signature can contain multiple signatures separated by spaces
     const expectedSignatures = svixSignature.split(' ');
-    return expectedSignatures.some(s => s === computed);
+    // Use constant-time comparison to prevent timing attacks
+    const { timingSafeEqual } = await import('node:crypto');
+    return expectedSignatures.some(s => {
+      const a = Buffer.from(s);
+      const b = Buffer.from(computed);
+      if (a.length !== b.length) return false;
+      return timingSafeEqual(a, b);
+    });
   }
 }
 

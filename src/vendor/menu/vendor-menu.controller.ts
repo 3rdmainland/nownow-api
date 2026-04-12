@@ -64,8 +64,21 @@ import {
     getMenuAnalyticsSchema,
 } from "./vendor-menu.schema";
 
+import { authenticateVendorOrAdmin, assertVendorOwnership } from "../../lib/auth.js";
+
 const vendorMenuController: FastifyPluginAsync = async (fastify) => {
     const menuService = new VendorMenuService();
+
+    // All non-GET requests require vendor or admin authentication + ownership check
+    fastify.addHook('preHandler', async (request, reply) => {
+        if (request.method !== 'GET') {
+            await authenticateVendorOrAdmin(request, reply);
+            const vendorId = (request.params as any)?.vendorId;
+            if (vendorId) {
+                assertVendorOwnership(request, vendorId);
+            }
+        }
+    });
 
     // ==================== DEFAULT MENU ENDPOINTS ====================
 

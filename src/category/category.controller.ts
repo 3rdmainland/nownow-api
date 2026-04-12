@@ -12,6 +12,7 @@ import {
     deleteCategorySchema
 } from './category.schema';
 import { CategoryType } from './category.types';
+import { authenticateAdmin } from '../lib/auth.js';
 
 const categoryController: FastifyPluginAsync = async (fastify) => {
     const categoryService = new CategoryService();
@@ -51,10 +52,10 @@ const categoryController: FastifyPluginAsync = async (fastify) => {
         }
     );
 
-    // POST create category
+    // POST create category (admin only)
     fastify.post(
         '/',
-        { schema: createCategorySchema },
+        { schema: createCategorySchema, preHandler: [authenticateAdmin] },
         async (request, reply) => {
             try {
                 const category = await categoryService.createCategory(request.body as any);
@@ -66,10 +67,10 @@ const categoryController: FastifyPluginAsync = async (fastify) => {
         }
     );
 
-    // PUT update category
+    // PUT update category (admin only)
     fastify.put<{ Params: { id: string } }>(
         '/:id',
-        { schema: updateCategorySchema },
+        { schema: updateCategorySchema, preHandler: [authenticateAdmin] },
         async (request, reply) => {
             try {
                 const category = await categoryService.updateCategory(
@@ -84,10 +85,10 @@ const categoryController: FastifyPluginAsync = async (fastify) => {
         }
     );
 
-    // DELETE category
+    // DELETE category (admin only)
     fastify.delete<{ Params: { id: string } }>(
         '/:id',
-        { schema: deleteCategorySchema },
+        { schema: deleteCategorySchema, preHandler: [authenticateAdmin] },
         async (request, reply) => {
             try {
                 await categoryService.deleteCategory(request.params.id);

@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { DiscountService } from './discount.service.js';
 import { CreateDiscountInput, UpdateDiscountInput } from './discount.types.js';
-import { authenticate } from '../lib/auth.js';
+import { authenticate, authenticateOrganizer, assertVendorOwnership } from '../lib/auth.js';
 import { JwtPayload } from '../auth/auth.types.js';
 import {
     createVendorDiscountSchema,
@@ -26,6 +26,7 @@ const discountController: FastifyPluginAsync = async (fastify) => {
         preHandler: [authenticate],
     }, async (request, reply) => {
         const { vendorId, eventId } = request.params as { vendorId: string; eventId: string };
+        assertVendorOwnership(request, vendorId);
         const body = request.body as { scope: string; targetItemIds?: string[]; type: string; value: number };
 
         const input: CreateDiscountInput = {
@@ -48,6 +49,7 @@ const discountController: FastifyPluginAsync = async (fastify) => {
         preHandler: [authenticate],
     }, async (request, reply) => {
         const { vendorId, eventId } = request.params as { vendorId: string; eventId: string };
+        assertVendorOwnership(request, vendorId);
         const discounts = await discountService.listVendorDiscounts(eventId, vendorId);
         return discounts;
     });
@@ -57,6 +59,7 @@ const discountController: FastifyPluginAsync = async (fastify) => {
     // POST /discount/organizer/events/:eventId — Create organizer discount
     fastify.post('/organizer/events/:eventId', {
         schema: createOrganizerDiscountSchema,
+        preHandler: [authenticateOrganizer],
     }, async (request, reply) => {
         const { eventId } = request.params as { eventId: string };
         const body = request.body as { type: string; value: number };
@@ -76,6 +79,7 @@ const discountController: FastifyPluginAsync = async (fastify) => {
     // GET /discount/organizer/events/:eventId — List all event discounts
     fastify.get('/organizer/events/:eventId', {
         schema: listOrganizerDiscountsSchema,
+        preHandler: [authenticateOrganizer],
     }, async (request, reply) => {
         const { eventId } = request.params as { eventId: string };
         const discounts = await discountService.listOrganizerDiscounts(eventId);
@@ -84,9 +88,10 @@ const discountController: FastifyPluginAsync = async (fastify) => {
 
     // ==================== SHARED ROUTES ====================
 
-    // PATCH /discount/:id — Update a discount
+    // PATCH /discount/:id — Update a discount (authenticated)
     fastify.patch('/:id', {
         schema: updateDiscountSchema,
+        preHandler: [authenticate],
     }, async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as UpdateDiscountInput;
@@ -94,9 +99,10 @@ const discountController: FastifyPluginAsync = async (fastify) => {
         return discount;
     });
 
-    // DELETE /discount/:id — Delete a discount
+    // DELETE /discount/:id — Delete a discount (authenticated)
     fastify.delete('/:id', {
         schema: deleteDiscountSchema,
+        preHandler: [authenticate],
     }, async (request, reply) => {
         const { id } = request.params as { id: string };
         await discountService.deleteDiscount(id);

@@ -14,6 +14,7 @@ import {
 import { EventService } from "./event.service";
 import { supabase } from "../lib/supabase.js";
 import { notifyVendorUser, notifyOrganizer } from "../notifications/notify-helpers.js";
+import { authenticate, authenticateAdmin, authenticateOrganizerOrAdmin } from "../lib/auth.js";
 
 const eventController: FastifyPluginAsync = async (fastify) => {
     const eventService = new EventService();
@@ -50,18 +51,12 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.post("/", { schema: createEventSchema }, async (request, reply) => {
+    fastify.post("/", { schema: createEventSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
             const eventData = request.body as any;
-            // If caller is an authenticated organizer, stamp the event with their ID
-            try {
-                await request.jwtVerify();
-                const user = request.user as { userId?: string; role?: string };
-                if (user?.role === 'organizer' && user.userId) {
-                    eventData.organizerId = user.userId;
-                }
-            } catch {
-                // No valid JWT — that's fine, create without organizer_id
+            const user = request.user as { userId?: string; role?: string };
+            if (user?.role === 'organizer' && user.userId) {
+                eventData.organizerId = user.userId;
             }
             const event = await eventService.createEvent(eventData);
             return reply.status(201).send({ event });
@@ -71,7 +66,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.patch<{ Params: { id: string } }>("/:id", { schema: updateEventSchema }, async (request, reply) => {
+    fastify.patch<{ Params: { id: string } }>("/:id", { schema: updateEventSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
             const { id } = request.params;
             const updates = request.body as any;
@@ -83,7 +78,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteEventSchema }, async (request, reply) => {
+    fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteEventSchema, preHandler: [authenticateAdmin] }, async (request, reply) => {
         try {
             await eventService.deleteEvent(request.params.id);
             return reply.status(204).send();
@@ -93,7 +88,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.post<{ Params: { id: string } }>("/:id/vendors", { schema: addVendorsToEventSchema }, async (request, reply) => {
+    fastify.post<{ Params: { id: string } }>("/:id/vendors", { schema: addVendorsToEventSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
             const { id } = request.params;
             const { invites } = request.body as { invites: { vendorId: string; commissionRate: number }[] };
@@ -165,7 +160,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.delete<{ Params: { id: string; vendorId: string } }>("/:id/vendors/:vendorId", { schema: removeVendorFromEventSchema }, async (request, reply) => {
+    fastify.delete<{ Params: { id: string; vendorId: string } }>("/:id/vendors/:vendorId", { schema: removeVendorFromEventSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
             const { id, vendorId } = request.params;
             await eventService.removeVendorFromEvent(id, vendorId);

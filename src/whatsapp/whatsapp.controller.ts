@@ -9,12 +9,14 @@ import {
     OrderReadyBody
 } from "./whatsapp.schema";
 
+import { authenticateAdmin } from "../lib/auth.js";
+
 const whatsappController: FastifyPluginAsync = async (fastify) => {
     const whatsappService = getWhatsappService();
 
     fastify.post<{ Body: SendWhatsAppMessageBody }>(
         "/test",
-        { schema: sendWhatsAppMessageSchema },
+        { schema: sendWhatsAppMessageSchema, preHandler: [authenticateAdmin] },
         async (req, reply) => {
             try {
                 const { to } = req.body;
@@ -29,7 +31,7 @@ const whatsappController: FastifyPluginAsync = async (fastify) => {
 
     fastify.post<{ Body: OrderPlacedBody }>(
         "/order-placed",
-        { schema: orderPlacedSchema },
+        { schema: orderPlacedSchema, preHandler: [authenticateAdmin] },
         async (req, reply) => {
             try {
                 const { to, orderId, total, prepTimeMinutes, qrImageUrl } = req.body;
@@ -50,7 +52,7 @@ const whatsappController: FastifyPluginAsync = async (fastify) => {
 
     fastify.post<{ Body: OrderReadyBody }>(
         "/order-ready",
-        { schema: orderReadySchema },
+        { schema: orderReadySchema, preHandler: [authenticateAdmin] },
         async (req, reply) => {
             try {
                 const { to, orderId, vendorName } = req.body;

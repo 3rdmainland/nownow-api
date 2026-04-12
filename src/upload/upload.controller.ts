@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { uploadImage } from './upload.service.js';
 import { ImagePurpose } from './upload.types.js';
-import { authenticate } from '../lib/auth.js';
+import { authenticate, assertVendorOwnership } from '../lib/auth.js';
 
 interface UploadBody {
     file: string;     // base64-encoded image data
@@ -16,6 +16,7 @@ const uploadController: FastifyPluginAsync = async (fastify) => {
         Body: UploadBody;
     }>('/event/:eventId', {
         bodyLimit: 10 * 1024 * 1024, // 10 MB (base64 adds ~33% overhead)
+        preHandler: [authenticate],
     }, async (request, reply) => {
         const { eventId } = request.params;
         const { purpose } = request.query;
@@ -38,6 +39,7 @@ const uploadController: FastifyPluginAsync = async (fastify) => {
         bodyLimit: 10 * 1024 * 1024,
     }, async (request, reply) => {
         const { vendorId } = request.params;
+        assertVendorOwnership(request, vendorId);
         const { purpose } = request.query;
         const { file, mimetype } = request.body;
 
@@ -58,6 +60,7 @@ const uploadController: FastifyPluginAsync = async (fastify) => {
         bodyLimit: 10 * 1024 * 1024,
     }, async (request, reply) => {
         const { vendorId } = request.params;
+        assertVendorOwnership(request, vendorId);
         const { purpose } = request.query;
         const { file, mimetype } = request.body;
 

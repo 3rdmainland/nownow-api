@@ -4,10 +4,10 @@ const orderItemSchema = {
     properties: {
         id: { type: "string" },
         name: { type: "string" },
-        price: { type: "number" },
+        price: { type: "number", minimum: 0 },
         imageUrl: { type: "string" },
         prepTime: { type: "number" },
-        quantity: { type: "number" },
+        quantity: { type: "number", minimum: 1 },
         vendorId: { type: "string" },
         vendorName: { type: "string" },
         selectedModifiers: {
@@ -164,7 +164,7 @@ export const createOrderSchema = {
             event_id: { type: "string" },
             phone: { type: "string" },
             items: { type: "array", items: orderItemSchema },
-            total: { type: "number" },
+            total: { type: "number", minimum: 0 },
             notes: { type: "string" },
             paymentMethod: { type: "string" },
             scheduled_pickup_time: {

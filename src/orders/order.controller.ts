@@ -24,13 +24,13 @@ import {
 import { OrderService } from "./order.service";
 import {OrderStatus} from "./order.types";
 import {supabase} from "../lib/supabase";
-import { authenticate, authenticateCustomer, optionalAuthenticateCustomer } from "../lib/auth.js";
+import { authenticate, authenticateCustomer, authenticateAdmin, authenticateVendor, authenticateVendorOrAdmin, optionalAuthenticateCustomer } from "../lib/auth.js";
 
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
 
-    // Get all orders (supports ?vendorId=&eventId=&status=&startDate=&endDate=&page=&pageSize= filters)
-    fastify.get("/", { schema: getOrdersResponseSchema }, async (request, reply) => {
+    // Get all orders (admin only)
+    fastify.get("/", { schema: getOrdersResponseSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
             const { vendorId, eventId, status, startDate, endDate, page, pageSize } = request.query as {
                 vendorId?: string; eventId?: string; status?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number;
@@ -43,8 +43,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get recent orders
-    fastify.get("/recent", { schema: getRecentOrdersSchema }, async (request, reply) => {
+    // Get recent orders (authenticated)
+    fastify.get("/recent", { schema: getRecentOrdersSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { limit = 10 } = request.query as { limit?: number };
             const orders = await orderService.getRecentOrders(limit);
@@ -55,8 +55,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get time-series order statistics
-    fastify.get("/stats/timeseries", { schema: getTimeSeriesStatsSchema }, async (request, reply) => {
+    // Get time-series order statistics (authenticated)
+    fastify.get("/stats/timeseries", { schema: getTimeSeriesStatsSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { vendorId, eventId, startDate, endDate, granularity = 'day' } = request.query as {
                 vendorId?: string; eventId?: string; startDate: string; endDate: string; granularity?: 'day' | 'week' | 'month';
@@ -69,8 +69,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get order statistics
-    fastify.get("/stats", { schema: getOrderStatsSchema }, async (request, reply) => {
+    // Get order statistics (authenticated)
+    fastify.get("/stats", { schema: getOrderStatsSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { vendorId, eventId } = request.query as { vendorId?: string, eventId?: string };
             const stats = await orderService.getOrderStats(vendorId, eventId);
@@ -81,8 +81,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Search orders
-    fastify.get("/search", { schema: searchOrdersSchema }, async (request, reply) => {
+    // Search orders (authenticated)
+    fastify.get("/search", { schema: searchOrdersSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { q, eventId, page, pageSize } = request.query as { q: string; eventId?: string; page?: number; pageSize?: number };
             const result = await orderService.searchOrders(q, eventId, { page, pageSize });
@@ -93,8 +93,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by phone
-    fastify.get("/phone", { schema: getOrdersByPhoneSchema }, async (request, reply) => {
+    // Get orders by phone (authenticated — vendor/admin use)
+    fastify.get("/phone", { schema: getOrdersByPhoneSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { phone, eventId, page, pageSize } = request.query as { phone: string; eventId?: string; page?: number; pageSize?: number };
             const result = await orderService.getOrdersByPhone(phone, { page, pageSize }, eventId);
@@ -105,8 +105,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by status
-    fastify.get("/status", { schema: getOrdersByStatusSchema }, async (request, reply) => {
+    // Get orders by status (authenticated)
+    fastify.get("/status", { schema: getOrdersByStatusSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { status, page, pageSize } = request.query as { status: string; page?: number; pageSize?: number };
             const result = await orderService.getOrdersByStatus(status, { page, pageSize });
@@ -117,8 +117,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by date range
-    fastify.get("/date-range", { schema: getOrdersByDateRangeSchema }, async (request, reply) => {
+    // Get orders by date range (authenticated)
+    fastify.get("/date-range", { schema: getOrdersByDateRangeSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const { startDate, endDate, page, pageSize } = request.query as { startDate: string; endDate: string; page?: number; pageSize?: number };
             const result = await orderService.getOrdersByDateRange(startDate, endDate, { page, pageSize });
@@ -203,8 +203,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get order by ID
-    fastify.get<{ Params: { id: string } }>("/:id", { schema: getOrderByIdResponseSchema }, async (request, reply) => {
+    // Get order by ID (authenticated)
+    fastify.get<{ Params: { id: string } }>("/:id", { schema: getOrderByIdResponseSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
             const order = await orderService.getOrderById(request.params.id);
             if (!order) {
@@ -217,8 +217,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Create new order
-    fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer] }, async (request, reply) => {
+    // Create new order (rate limited)
+    fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer], config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
         const orderData = request.body as any;
         // Attach customer_id from JWT if authenticated
         const user = request.user as { customerId?: string; role?: string } | undefined;
@@ -230,11 +230,21 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         return reply.status(201).send({ order, paymentUrl });
     });
 
-    // Update order status
-    fastify.patch<{ Params: { id: string } }>("/:id/status", { schema: updateOrderStatusSchema }, async (request, reply) => {
+    // Update order status (vendor or admin — vendor must own the order)
+    fastify.patch<{ Params: { id: string } }>("/:id/status", { schema: updateOrderStatusSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
             const { id } = request.params;
             const { status } = request.body as { status: OrderStatus };
+            const user = request.user as { vendorId?: string; role?: string };
+
+            // Vendor can only update their own orders
+            if (user.role === 'vendor' && user.vendorId) {
+                const existing = await orderService.getOrderById(id);
+                if (existing && existing.vendor_id !== user.vendorId) {
+                    return reply.status(403).send({ error: 'You can only update your own orders' });
+                }
+            }
+
             const order = await orderService.updateOrderStatus(id, status);
             return { order };
         } catch (err) {
@@ -246,13 +256,21 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Refund order
     fastify.post<{ Params: { id: string } }>(
         "/:id/refund",
-        { schema: refundOrderSchema, preHandler: [authenticate] },
+        { schema: refundOrderSchema, preHandler: [authenticateVendorOrAdmin] },
         async (request, reply) => {
             try {
                 const { id } = request.params;
                 const { type, amount, reason } = request.body as { type: 'full' | 'partial'; amount?: number; reason: string };
-                const user = request.user as { email?: string; sub?: string };
+                const user = request.user as { email?: string; sub?: string; vendorId?: string; role?: string };
                 const refundedBy = user.email || user.sub || 'unknown';
+
+                // Vendors can only refund their own orders
+                if (user.role === 'vendor' && user.vendorId) {
+                    const orderData = await orderService.getOrderById(id);
+                    if (orderData && orderData.vendor_id !== user.vendorId) {
+                        return reply.status(403).send({ error: 'You can only refund your own orders' });
+                    }
+                }
 
                 const order = await orderService.refundOrder(id, { type, amount, reason, refundedBy });
                 return { order };
@@ -269,8 +287,8 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     );
 
-    // Delete order
-    fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteOrderSchema }, async (request, reply) => {
+    // Delete order (admin only)
+    fastify.delete<{ Params: { id: string } }>("/:id", { schema: deleteOrderSchema, preHandler: [authenticateAdmin] }, async (request, reply) => {
         try {
             await orderService.deleteOrder(request.params.id);
             return reply.status(204).send();

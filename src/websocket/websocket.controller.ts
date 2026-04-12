@@ -293,8 +293,18 @@ function validateSubscription(
       }
       sanitized.organizerId = value as string;
     } else if (key === 'phone') {
-      // Phone subscriptions are for customer order tracking — allow for any authenticated user or anonymous
-      sanitized.phone = value as string;
+      // Phone subscriptions: customers can only subscribe to their own phone
+      // Vendors/admins can subscribe to any phone (for order management)
+      if (user && (user.role === 'vendor' || user.role === 'admin')) {
+        sanitized.phone = value as string;
+      } else if (user && user.role === 'customer' && (user as any).phone === value) {
+        sanitized.phone = value as string;
+      } else if (!user) {
+        // Anonymous users cannot subscribe to phone channels
+        return { valid: false, sanitized, error: 'Authentication required for phone subscriptions' };
+      } else {
+        return { valid: false, sanitized, error: 'Cannot subscribe to another user\'s phone' };
+      }
     } else if (key === 'eventId') {
       sanitized.eventId = value as string;
     }
