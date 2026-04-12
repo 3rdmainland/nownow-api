@@ -13,6 +13,7 @@ import categoryController from "./category/category.controller";
 import vendorMenuController from "./vendor/menu/vendor-menu.controller";
 import fastifyCors from "@fastify/cors";
 import redis from "./lib/redis";
+import { supabase } from "./lib/supabase";
 import whatsappController from "./whatsapp/whatsapp.controller";
 import { websocketController } from "./websocket";
 import authController from "./auth/auth.controller";
@@ -29,6 +30,7 @@ import customerSupportController from "./support/customer-support.controller";
 import retentionController from "./retention/retention.controller";
 import nudgeEndpoint from "./retention/nudge.endpoint";
 import orderQrEndpoint from "./orders/order-qr.endpoint";
+import orderCleanupEndpoint from "./orders/order-cleanup.endpoint";
 import whatsappWebhook from "./whatsapp/whatsapp.webhook";
 import legalController from "./legal/legal.controller";
 import settlementController from "./settlement/settlement.controller";
@@ -102,7 +104,7 @@ await fastify.register(fastifyHelmet, {
 
 // Rate limiting (local store — Upstash REST client is not ioredis-compatible)
 await fastify.register(fastifyRateLimit, {
-    max: process.env.NODE_ENV === 'test' ? 10_000 : 100,
+    max: process.env.NODE_ENV === 'test' ? 10_000 : 500,
     timeWindow: '1 minute',
 });
 
@@ -181,6 +183,7 @@ fastify.register(customerSupportController, { prefix: "/customer/support" });
 fastify.register(retentionController, { prefix: "/retention" });
 fastify.register(nudgeEndpoint, { prefix: "/internal/nudge" });
 fastify.register(orderQrEndpoint, { prefix: "/internal/order-qr" });
+fastify.register(orderCleanupEndpoint, { prefix: "/internal/cleanup" });
 fastify.register(whatsappWebhook, { prefix: "/whatsapp/webhook" });
 fastify.register(legalController, { prefix: "/legal" });
 fastify.register(settlementController, { prefix: "/settlement" });
@@ -195,24 +198,45 @@ fastify.get('/config/flags', async () => {
     return { flags };
 });
 
-// Register health check route with redis
+// Register health check route — tests Redis + Supabase + circuit breaker
 fastify.get('/health', async (request, reply) => {
-    try {
-        // Test Redis connection
-        await redis.ping()
+    const result: Record<string, any> = {
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+    };
+    let unhealthy = false;
 
-        return {
-            status: 'healthy',
-            redis: 'connected',
-            timestamp: new Date().toISOString(),
+    // Redis check
+    try {
+        await redis.ping();
+        result.redis = 'connected';
+    } catch (error: any) {
+        result.redis = 'disconnected';
+        result.redisError = error.message;
+        unhealthy = true;
+    }
+
+    // Supabase check (lightweight query)
+    try {
+        const { error } = await supabase.from('orders').select('count').limit(1);
+        result.supabase = error ? 'error' : 'connected';
+        if (error) {
+            result.supabaseError = error.message;
+            unhealthy = true;
         }
     } catch (error: any) {
-        return reply.code(503).send({
-            status: 'unhealthy',
-            redis: 'disconnected',
-            error: error.message,
-        })
+        result.supabase = 'disconnected';
+        result.supabaseError = error.message;
+        unhealthy = true;
     }
+
+    // Circuit breaker state
+    const { supabaseBreaker } = await import('./lib/circuit-breaker.js');
+    result.circuitBreaker = supabaseBreaker.getState();
+    if (result.circuitBreaker === 'OPEN') unhealthy = true;
+
+    result.status = unhealthy ? 'unhealthy' : 'healthy';
+    return reply.code(unhealthy ? 503 : 200).send(result);
 })
 
 

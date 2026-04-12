@@ -208,20 +208,25 @@ export class OrderScheduler {
         vendorId: string,
         eventId: string,
         requestedPickupTime: string,
-        estimatedPrepTime: number
+        estimatedPrepTime: number,
+        prefetchedEvent?: { start_date: string; end_date: string; status?: string; id?: string } | null
     ): Promise<SchedulingValidation> {
-        // 1. Fetch event details
-        const { data: event, error: eventError } = await supabase
-            .from('events')
-            .select('*')
-            .eq('id', eventId)
-            .single();
+        // 1. Use pre-fetched event data if available, otherwise fetch
+        let event: any = prefetchedEvent;
+        if (!event) {
+            const { data, error: eventError } = await supabase
+                .from('events')
+                .select('*')
+                .eq('id', eventId)
+                .single();
 
-        if (eventError || !event) {
-            return {
-                isValid: false,
-                error: 'Event not found'
-            };
+            if (eventError || !data) {
+                return {
+                    isValid: false,
+                    error: 'Event not found'
+                };
+            }
+            event = data;
         }
 
         const eventStart = new Date(event.start_date);
@@ -498,23 +503,32 @@ export class OrderScheduler {
     async validateImmediateOrder(
         vendorId: string,
         eventId: string,
-        estimatedPrepTime: number
+        estimatedPrepTime: number,
+        prefetchedEvent?: { start_date: string; end_date: string } | null
     ): Promise<SchedulingValidation> {
         const now = new Date();
         const estimatedReadyTime = new Date(now.getTime() + estimatedPrepTime * 60000);
 
-        // Fetch event to ensure it's active
-        const { data: event, error: eventError } = await supabase
-            .from('events')
-            .select('*')
-            .eq('id', eventId)
-            .single();
+        // Use pre-fetched event data if available, otherwise fetch
+        let event = prefetchedEvent;
+        if (!event) {
+            const { data, error: eventError } = await supabase
+                .from('events')
+                .select('*')
+                .eq('id', eventId)
+                .single();
 
-        if (eventError || !event) {
-            return {
-                isValid: false,
-                error: 'Event not found'
-            };
+            if (eventError || !data) {
+                return {
+                    isValid: false,
+                    error: 'Event not found'
+                };
+            }
+            event = data;
+        }
+
+        if (!event) {
+            return { isValid: false, error: 'Event not found' };
         }
 
         const eventEnd = new Date(event.end_date);

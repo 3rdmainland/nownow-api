@@ -38,7 +38,7 @@ const orderSchema = {
         total: { type: "number" },
         status: {
             type: "string",
-            enum: ["PENDING", "PREPARING", "READY", "COLLECTED", "CANCELLED"]
+            enum: ["PAYMENT_PENDING", "PENDING", "PREPARING", "READY", "COLLECTED", "CANCELLED"]
         },
         type: {
             type: "string",
@@ -172,7 +172,11 @@ export const createOrderSchema = {
                 format: "date-time",
                 description: "Optional: ISO 8601 datetime for future order pickup. If omitted, order is immediate."
             },
-            age_verified: { type: "boolean" }
+            age_verified: { type: "boolean" },
+            idempotency_key: {
+                type: "string",
+                description: "Client-generated UUID to prevent duplicate orders on retry"
+            }
         },
         required: ["vendor_id", "event_id", "phone", "items", "total"]
     },

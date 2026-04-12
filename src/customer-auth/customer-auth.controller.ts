@@ -8,7 +8,8 @@ import {
 } from './customer-auth.schema.js';
 import { OtpService } from './otp.service.js';
 import { CustomerAuthService } from './customer-auth.service.js';
-import { ConsoleSmsProvider } from './sms.provider.js';
+import { ConsoleSmsProvider, SmsProvider } from './sms.provider.js';
+import { AfricasTalkingSmsProvider } from './africastalking-sms.provider.js';
 import { authenticateCustomer } from '../lib/auth.js';
 import { normalizePhone } from './phone.utils.js';
 import type {
@@ -24,7 +25,10 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 const customerAuthController: FastifyPluginAsync = async (fastify) => {
   const otpService = new OtpService();
   const customerAuthService = new CustomerAuthService();
-  const smsProvider = new ConsoleSmsProvider();
+  // Use Africa's Talking in production, console logger in dev/test
+  const smsProvider: SmsProvider = process.env.AT_API_KEY
+    ? new AfricasTalkingSmsProvider()
+    : new ConsoleSmsProvider();
 
   // POST /customer/auth/request-otp — Send OTP to phone
   fastify.post('/request-otp', { schema: requestOtpSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -39,8 +43,10 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
       message: 'Verification code sent',
     };
 
-    // TODO: Remove once real SMS/WhatsApp provider is integrated
-    response.otp = code;
+    // Only expose OTP in dev/test (console provider) — never in production
+    if (!process.env.AT_API_KEY) {
+      response.otp = code;
+    }
 
     return response;
   });

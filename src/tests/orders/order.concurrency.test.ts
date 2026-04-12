@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabaseMock, createSupabaseMock } from '../mocks/supabase.js';
-import { makeVendor, makeEvent, makeEventMenuConfig } from '../fixtures/index.js';
+import { makeEvent, makeEventMenuConfig } from '../fixtures/index.js';
 
 import { redisMock, cacheMock, CACHE_TTL_MOCK } from '../mocks/redis.js';
 
@@ -97,15 +97,6 @@ import { OrderService } from '../../orders/order.service.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function mockFromSequence(responses: Array<ReturnType<typeof createSupabaseMock>>) {
-  let callIndex = 0;
-  supabaseMock.from.mockImplementation(() => {
-    const mock = responses[callIndex] ?? createSupabaseMock({ data: null, error: null });
-    callIndex++;
-    return mock;
-  });
-}
-
 const VENDOR_ID = 'vendor-conc-01';
 const EVENT_ID = 'event-conc-01';
 
@@ -133,10 +124,14 @@ function makeVendorData(overrides: Record<string, any> = {}) {
   };
 }
 
-// Standard "success tail" for createOrder: insert order, select it, QR upload + update, updateQueuePositions
-function successTailMocks(orderId = 'order-created-id') {
-  const createdOrder = {
-    id: orderId,
+const eventData = {
+  start_date: new Date(Date.now() - 86400000).toISOString(),
+  end_date: new Date(Date.now() + 86400000).toISOString(),
+};
+
+function makeCreatedOrder(overrides: Record<string, any> = {}) {
+  return {
+    id: 'order-created-id',
     vendor_id: VENDOR_ID,
     event_id: EVENT_ID,
     phone: '+27821234567',
@@ -150,20 +145,60 @@ function successTailMocks(orderId = 'order-created-id') {
     queue_position: 1,
     estimated_ready_time: new Date(Date.now() + 15 * 60_000).toISOString(),
     created_at: new Date().toISOString(),
+    ...overrides,
   };
+}
 
-  return [
-    createSupabaseMock({ data: createdOrder, error: null }),                                  // insert + select().single()
-    createSupabaseMock({ data: { ...createdOrder, qr_code: 'ORDER:' + orderId, qr_image: 'https://storage.test/qr.png' }, error: null }), // update QR
-    createSupabaseMock({ data: [], error: null }),                                             // updateQueuePositions
-  ];
+/** Mock the RPC to return an error status. */
+function mockRpcError(status: string, message: string, meta?: any) {
+  // Mock discount query (always called before RPC)
+  supabaseMock.from.mockReturnValue(createSupabaseMock({ data: [], error: null }));
+  supabaseMock.rpc.mockResolvedValue({
+    data: { status, message, ...(meta ? { meta } : {}) },
+    error: null,
+  });
+}
+
+/** Mock the RPC to return a successful order creation. */
+function mockRpcSuccess(menuConfig?: any, orderOverrides?: Record<string, any>) {
+  const order = makeCreatedOrder(orderOverrides);
+  const updatedOrder = { ...order, qr_code: 'ORDER:' + order.id, qr_image: 'https://storage.test/qr.png' };
+
+  // Mock from() calls: discount query first, then QR update, then any others
+  let fromCallCount = 0;
+  supabaseMock.from.mockImplementation(() => {
+    fromCallCount++;
+    if (fromCallCount === 1) {
+      // Discount resolution query
+      return createSupabaseMock({ data: [], error: null });
+    }
+    // QR update and any subsequent calls
+    return createSupabaseMock({ data: updatedOrder, error: null });
+  });
+
+  supabaseMock.rpc.mockResolvedValue({
+    data: {
+      status: 'ok',
+      order,
+      vendor: makeVendorData(),
+      menu_config: menuConfig ?? null,
+      event: eventData,
+      queue_position: 1,
+      estimated_ready_time: new Date(Date.now() + 15 * 60_000).toISOString(),
+      customer_name: null,
+      capacity_incremented: false,
+    },
+    error: null,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Tests — Event Menu Configuration Enforcement (concurrency controls)
+// Tests — RPC-based validation (concurrency controls)
+// The validation logic now lives in the create_order_validated RPC.
+// These tests verify that JS correctly interprets the RPC's error responses.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('OrderService — concurrency and rate control in createOrder', () => {
+describe('OrderService — concurrency and rate control in createOrder (RPC-based)', () => {
   let service: OrderService;
 
   beforeEach(() => {
@@ -175,21 +210,8 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('is_accepting_orders check', () => {
     it('throws when vendor has is_accepting_orders = false', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        is_accepting_orders: false,
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),          // fetch vendor
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }), // fetch event
-        createSupabaseMock({ data: config, error: null }),                    // fetch event_menu_configurations
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'not currently accepting orders',
-      );
+      mockRpcError('not_accepting', 'This vendor is not currently accepting orders.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('not currently accepting orders');
     });
   });
 
@@ -197,39 +219,13 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('menu status enforcement', () => {
     it('throws when menu status is PAUSED', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        status: 'PAUSED',
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'temporarily paused orders',
-      );
+      mockRpcError('paused', 'This vendor has temporarily paused orders. Please try again shortly.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('temporarily paused orders');
     });
 
     it('throws when menu status is CLOSED', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        status: 'CLOSED',
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'closed for this event',
-      );
+      mockRpcError('closed', 'This vendor has closed for this event.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('closed for this event');
     });
   });
 
@@ -237,88 +233,26 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('max_concurrent_orders enforcement', () => {
     it('throws when current_active_orders >= max_concurrent_orders', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: 10,
-        current_active_orders: 10, // at capacity
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'at capacity',
-      );
+      mockRpcError('at_capacity', 'This vendor is at capacity (10 concurrent orders). Please wait a few minutes and try again.',
+        { max: 10, current: 10 });
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('at capacity');
     });
 
     it('throws when current_active_orders exceeds max_concurrent_orders', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: 5,
-        current_active_orders: 7, // over capacity
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'at capacity (5 concurrent orders)',
-      );
+      mockRpcError('at_capacity', 'This vendor is at capacity (5 concurrent orders). Please wait a few minutes and try again.',
+        { max: 5, current: 7 });
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('at capacity (5 concurrent orders)');
     });
 
     it('allows order when current_active_orders < max_concurrent_orders', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: 10,
-        current_active_orders: 9, // one slot available
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess();
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
-      expect(result.id).toBeDefined();
+      expect(result.paymentUrl).toBe('');
     });
 
     it('bypasses check when max_concurrent_orders is null (unlimited)', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        current_active_orders: 500, // doesn't matter
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess();
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
@@ -328,79 +262,19 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('order_cooldown_minutes enforcement', () => {
     it('throws when a recent order exists within the cooldown window', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: 5,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      // A recent order placed 1 minute ago (within the 5-minute cooldown)
-      const recentOrder = {
-        id: 'recent-order-id',
-        created_at: new Date(Date.now() - 1 * 60 * 1000).toISOString(),
-      };
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        createSupabaseMock({ data: [recentOrder], error: null }), // recent orders query
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'managing order flow',
-      );
+      mockRpcError('cooldown', 'This vendor is managing order flow. Please try again in 4m.',
+        { wait_seconds: 240 });
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('managing order flow');
     });
 
     it('allows order when no recent orders exist within cooldown window', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: 5,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        createSupabaseMock({ data: [], error: null }),  // no recent orders
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess();
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
 
     it('bypasses cooldown check when order_cooldown_minutes is 0', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: 0,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        // No cooldown query expected since cooldown is 0 (falsy)
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess();
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
@@ -410,203 +284,81 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('max_orders_per_customer_event enforcement', () => {
     it('throws when customer has reached the per-event order limit', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: 3,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      // Customer already placed 3 orders (the max)
-      const countMock = createSupabaseMock({ data: null, error: null });
-      // Override the builder to return count via the thenable
-      countMock.then = vi.fn((resolve: (val: any) => any) =>
-        Promise.resolve(resolve({ data: null, error: null, count: 3 })),
-      );
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        countMock, // customer order count query
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'maximum of 3 order(s) allowed per customer',
-      );
+      mockRpcError('max_orders_reached', 'You have reached the maximum of 3 order(s) allowed per customer at this event.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('maximum of 3 order(s) allowed per customer');
     });
 
     it('allows order when customer is below the per-event limit', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: 3,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      const countMock = createSupabaseMock({ data: null, error: null });
-      countMock.then = vi.fn((resolve: (val: any) => any) =>
-        Promise.resolve(resolve({ data: null, error: null, count: 2 })),
-      );
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        countMock,
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess();
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
 
     it('bypasses customer limit when max_orders_per_customer_event is null', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        // No customer count query expected
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess();
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
   });
 
-  // ── 6. Operating hours — daily default ─────────────────────────────────
+  // ── 6. Operating hours — daily default (still validated in JS) ─────────
 
   describe('operating hours enforcement (daily default)', () => {
     it('throws when current time is before event_open_time', async () => {
-      // Set open/close to a window we're guaranteed to be outside of
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
+      // RPC succeeds (it doesn't check operating hours) but returns menu_config
+      // with a narrow operating window we're guaranteed to be outside of
+      mockRpcSuccess({
         event_open_time: '23:58',
         event_close_time: '23:59',
         operating_schedule: null,
       });
 
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'only accepting orders between',
-      );
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('only accepting orders between');
     });
 
     it('allows order when current time is within daily operating window', async () => {
-      // Create a wide-open window that always includes "now" (UTC — matches service logic)
       const now = new Date();
       const pad = (n: number) => n.toString().padStart(2, '0');
       const openTime = `${pad(now.getUTCHours())}:00`;
       const closeHour = now.getUTCHours() === 23 ? '23' : pad(now.getUTCHours() + 1);
       const closeTime = `${closeHour}:59`;
 
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
+      mockRpcSuccess({
         event_open_time: openTime,
         event_close_time: closeTime,
         operating_schedule: null,
       });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        ...successTailMocks(),
-      ]);
 
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
   });
 
-  // ── 7. Operating schedule — per-day override ───────────────────────────
+  // ── 7. Operating schedule — per-day override (still validated in JS) ───
 
   describe('operating hours enforcement (per-day schedule)', () => {
     it('throws when today has isClosed = true in the schedule', async () => {
       const todayDate = new Date().toISOString().split('T')[0];
 
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
+      mockRpcSuccess({
         event_open_time: '00:00',
         event_close_time: '23:59',
-        operating_schedule: [
-          { date: todayDate, isClosed: true },
-        ],
+        operating_schedule: [{ date: todayDate, isClosed: true }],
       });
 
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'not operating today',
-      );
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('not operating today');
     });
 
-    it('throws when per-day schedule has a narrow time window the current time falls outside', async () => {
+    it('throws when per-day schedule has a narrow time window', async () => {
       const todayDate = new Date().toISOString().split('T')[0];
 
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
+      mockRpcSuccess({
         event_open_time: '00:00',
         event_close_time: '23:59',
-        operating_schedule: [
-          { date: todayDate, isClosed: false, openTime: '23:58', closeTime: '23:59' },
-        ],
+        operating_schedule: [{ date: todayDate, isClosed: false, openTime: '23:58', closeTime: '23:59' }],
       });
 
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'operates',
-      );
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('operates');
     });
 
     it('per-day schedule takes precedence over daily defaults', async () => {
@@ -617,27 +369,11 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
       const closeHour = now.getUTCHours() === 23 ? '23' : pad(now.getUTCHours() + 1);
       const closeTime = `${closeHour}:59`;
 
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
-        // Daily defaults would block (narrow window)
+      mockRpcSuccess({
         event_open_time: '23:58',
         event_close_time: '23:59',
-        // But per-day schedule allows (wide window including now)
-        operating_schedule: [
-          { date: todayDate, isClosed: false, openTime, closeTime },
-        ],
+        operating_schedule: [{ date: todayDate, isClosed: false, openTime, closeTime }],
       });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        ...successTailMocks(),
-      ]);
 
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
@@ -648,37 +384,13 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('event date bounds enforcement', () => {
     it('throws when the event has not started yet', async () => {
-      const futureEvent = makeEvent({
-        id: EVENT_ID,
-        start_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // tomorrow
-        end_date: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: futureEvent, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'not started yet',
-      );
+      mockRpcError('event_not_started', 'This event has not started yet.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('not started yet');
     });
 
     it('throws when the event has already ended', async () => {
-      const pastEvent = makeEvent({
-        id: EVENT_ID,
-        start_date: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(), // 3 days ago
-        end_date: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),   // 2 days ago
-      });
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: pastEvent, error: null }),
-      ]);
-
-      await expect(service.createOrder(makeOrderInput())).rejects.toThrow(
-        'event has ended',
-      );
+      mockRpcError('event_ended', 'This event has ended. Orders are no longer accepted.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('event has ended');
     });
   });
 
@@ -686,52 +398,8 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('prep_time_buffer_minutes', () => {
     it('adds buffer to estimated prep time when set in config', async () => {
-      const config = makeEventMenuConfig({
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        max_concurrent_orders: null,
-        order_cooldown_minutes: null,
-        max_orders_per_customer_event: null,
-        event_open_time: null,
-        event_close_time: null,
-        operating_schedule: null,
-        prep_time_buffer_minutes: 10,
-      });
-
-      const createdOrder = {
-        id: 'order-prep-buffer',
-        vendor_id: VENDOR_ID,
-        event_id: EVENT_ID,
-        phone: '+27821234567',
-        items: [{ id: 'item-1', name: 'Burger', price: 80, quantity: 1 }],
-        total: 80,
-        status: 'PENDING',
-        type: 'CART',
-        estimated_prep_time: 22, // 12 base + 10 buffer
-        qr_code: 'PENDING-123',
-        qr_image: '',
-        queue_position: 1,
-        estimated_ready_time: new Date(Date.now() + 22 * 60_000).toISOString(),
-        created_at: new Date().toISOString(),
-      };
-
-      const updatedOrder = {
-        ...createdOrder,
-        qr_code: 'ORDER:order-prep-buffer',
-        qr_image: 'https://storage.test/qr.png',
-      };
-
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: config, error: null }),
-        createSupabaseMock({ data: createdOrder, error: null }),  // insert
-        createSupabaseMock({ data: updatedOrder, error: null }),  // QR update
-        createSupabaseMock({ data: [], error: null }),            // updateQueuePositions
-      ]);
-
+      mockRpcSuccess(null, { estimated_prep_time: 22 }); // 12 base + 10 buffer (done in RPC)
       const result = await service.createOrder(makeOrderInput());
-      // The order gets created — the prep_time_buffer is added internally
       expect(result).toBeDefined();
     });
   });
@@ -740,30 +408,18 @@ describe('OrderService — concurrency and rate control in createOrder', () => {
 
   describe('no event_menu_configuration found', () => {
     it('allows order when no config record exists for the vendor+event', async () => {
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        createSupabaseMock({ data: makeEvent({ id: EVENT_ID }), error: null }),
-        createSupabaseMock({ data: null, error: null }), // no config found (null)
-        ...successTailMocks(),
-      ]);
-
+      mockRpcSuccess(null);
       const result = await service.createOrder(makeOrderInput());
       expect(result).toBeDefined();
     });
   });
 
-  // ── 11. No event_id (non-event order) ──────────────────────────────────
+  // ── 11. Duplicate detection ────────────────────────────────────────────
 
-  describe('non-event order (no event_id)', () => {
-    it('skips all event menu checks when event_id is not provided', async () => {
-      mockFromSequence([
-        createSupabaseMock({ data: makeVendorData(), error: null }),
-        // No event or config queries
-        ...successTailMocks(),
-      ]);
-
-      const result = await service.createOrder(makeOrderInput({ event_id: undefined }));
-      expect(result).toBeDefined();
+  describe('duplicate order detection', () => {
+    it('throws when a duplicate order is detected within 30s window', async () => {
+      mockRpcError('duplicate', 'A duplicate order was detected. Please wait a moment before ordering again.');
+      await expect(service.createOrder(makeOrderInput())).rejects.toThrow('duplicate order was detected');
     });
   });
 });

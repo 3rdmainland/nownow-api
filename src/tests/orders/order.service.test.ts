@@ -1219,16 +1219,23 @@ describe('OrderService', () => {
         }
 
         it('creates a PENDING order with payment_status=pay_at_stall when paymentMethod is CASH', async () => {
-            mockFromByTable({
-                vendors: [{ data: vendorData, error: null }],
-                events: [{ data: eventData, error: null }],
-                event_menu_configurations: [{ data: menuConfigWithCash, error: null }],
-                orders: [
-                    { data: null, error: null },         // dedup check
-                    { data: createdOrder, error: null },  // insert
-                    { data: createdOrder, error: null },  // update QR
-                    { data: null, error: null },          // queue positions
-                ],
+            // Mock discount resolution (returns no discounts)
+            mockFrom({ data: [], error: null });
+
+            // Mock the RPC call
+            supabaseMock.rpc.mockResolvedValue({
+                data: {
+                    status: 'ok',
+                    order: createdOrder,
+                    vendor: vendorData,
+                    menu_config: menuConfigWithCash,
+                    event: eventData,
+                    queue_position: 1,
+                    estimated_ready_time: new Date().toISOString(),
+                    customer_name: null,
+                    capacity_incremented: false,
+                },
+                error: null,
             });
 
             const result = await service.createOrder({
@@ -1240,11 +1247,16 @@ describe('OrderService', () => {
         });
 
         it('rejects cash order when allow_pay_at_stall is false', async () => {
-            mockFromByTable({
-                vendors: [{ data: vendorData, error: null }],
-                events: [{ data: eventData, error: null }],
-                event_menu_configurations: [{ data: menuConfigNoCash, error: null }],
-                orders: [],
+            // Mock discount resolution
+            mockFrom({ data: [], error: null });
+
+            // Mock the RPC returning cash_not_allowed
+            supabaseMock.rpc.mockResolvedValue({
+                data: {
+                    status: 'cash_not_allowed',
+                    message: 'Pay at stall is not available for this vendor at this event.',
+                },
+                error: null,
             });
 
             await expect(
@@ -1255,18 +1267,27 @@ describe('OrderService', () => {
         it('creates a PAYMENT_PENDING order and returns paymentUrl for online payment', async () => {
             const onlineOrder = makeOrder({ vendor_id: 'vendor-1', event_id: 'event-1', status: 'PAYMENT_PENDING', payment_method: 'ONLINE' });
 
-            mockFromByTable({
-                vendors: [{ data: vendorData, error: null }],
-                events: [{ data: eventData, error: null }],
-                event_menu_configurations: [{ data: menuConfigWithCash, error: null }],
-                customers: [{ data: { name: 'Test Customer' }, error: null }],
-                orders: [
-                    { data: null, error: null },         // dedup check
-                    { data: onlineOrder, error: null },  // insert
-                    { data: onlineOrder, error: null },  // update QR
-                    { data: null, error: null },         // store stitch payment id
-                ],
+            // Mock discount resolution
+            mockFrom({ data: [], error: null });
+
+            // Mock the RPC call
+            supabaseMock.rpc.mockResolvedValue({
+                data: {
+                    status: 'ok',
+                    order: onlineOrder,
+                    vendor: vendorData,
+                    menu_config: menuConfigWithCash,
+                    event: eventData,
+                    queue_position: 1,
+                    estimated_ready_time: new Date().toISOString(),
+                    customer_name: 'Test Customer',
+                    capacity_incremented: false,
+                },
+                error: null,
             });
+
+            // Mock the stitch_payment_id update
+            supabaseMock.from.mockReturnValue(createSupabaseMock({ data: onlineOrder, error: null }));
 
             const result = await service.createOrder({
                 ...baseOrderInput,

@@ -9,18 +9,19 @@ import { paymentService } from "../payment/payment.service.js";
 import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError, ConflictError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 
-interface EventMenuConfig {
-    is_accepting_orders: boolean;
-    status: string;
-    max_concurrent_orders: number | null;
-    current_active_orders: number;
-    order_cooldown_minutes: number | null;
-    max_orders_per_customer_event: number | null;
-    prep_time_buffer_minutes: number | null;
-    event_open_time: string | null;
-    event_close_time: string | null;
-    operating_schedule: any[] | null;
-    allow_pay_at_stall: boolean;
+/**
+ * Ensure order.items is a parsed array.
+ * Supabase may return JSONB columns as strings in some cases.
+ */
+function normalizeOrderItems<T extends Record<string, any>>(order: T): T {
+    if (order && typeof (order as any).items === 'string') {
+        try { (order as any).items = JSON.parse((order as any).items); } catch { /* leave as-is */ }
+    }
+    return order;
+}
+
+function normalizeOrders<T extends Record<string, any>>(orders: T[]): T[] {
+    return orders.map(normalizeOrderItems);
 }
 
 export class OrderService {
@@ -54,7 +55,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
     async getOrderById(id: string): Promise<Order | null> {
@@ -68,218 +69,18 @@ export class OrderService {
             throw new Error(`Failed to fetch order: ${error.message}`);
         }
 
-        return data || null;
+        return data ? normalizeOrderItems(data) : null;
     }
 
     async createOrder(
         order: Omit<Order, 'id' | 'created_at' | 'status' | 'type' | 'estimatedPrepTime' | 'qr_image' | 'qr_code'>
     ): Promise<Order & { paymentUrl: string }> {
         const qrHelper = new QRHelper();
+        const paymentMethod = (order as any).paymentMethod || (order as any).payment_method || 'ONLINE';
+        const isCashOrder = paymentMethod === 'CASH';
+        const idempotencyKey = (order as any).idempotency_key || null;
 
-        // ── Parallel fetch: vendor, event dates, menu config ─────────────
-        const [vendorResult, eventDataResult, menuConfigResult] = await Promise.all([
-            supabase
-                .from('vendors')
-                .select('estimated_prep_time, name, minimum_order, service_fee_percent')
-                .eq('id', order.vendor_id)
-                .single(),
-            order.event_id
-                ? supabase.from('events').select('start_date, end_date').eq('id', order.event_id).single()
-                : Promise.resolve({ data: null, error: null }),
-            order.event_id
-                ? supabase
-                      .from('event_menu_configurations')
-                      .select(
-                          'is_accepting_orders, status, max_concurrent_orders, current_active_orders, ' +
-                          'order_cooldown_minutes, max_orders_per_customer_event, prep_time_buffer_minutes, ' +
-                          'event_open_time, event_close_time, operating_schedule, allow_pay_at_stall'
-                      )
-                      .eq('vendor_id', order.vendor_id)
-                      .eq('event_id', order.event_id)
-                      .single()
-                : Promise.resolve({ data: null, error: null }),
-        ]);
-
-        const { data: vendor, error: vendorError } = vendorResult;
-        if (vendorError || !vendor) {
-            throw new NotFoundError('Vendor not found');
-        }
-
-        let estimatedPrepTime = vendor.estimated_prep_time || 12;
-
-        // ── Enforce event menu configuration rules ───────────────────────
-        if (order.event_id) {
-            const eventData = eventDataResult.data;
-
-            if (eventData) {
-                const now = new Date();
-                const startDate = new Date(eventData.start_date);
-                const endDate = new Date(eventData.end_date);
-                endDate.setHours(23, 59, 59, 999); // inclusive of the end day
-
-                if (now < startDate) {
-                    throw new ValidationError('This event has not started yet.');
-                }
-                if (now > endDate) {
-                    throw new ValidationError('This event has ended. Orders are no longer accepted.');
-                }
-            }
-
-            const menuConfig = menuConfigResult.data as EventMenuConfig | null;
-
-            if (menuConfig) {
-                // 1. Check if vendor is accepting orders
-                if (!menuConfig.is_accepting_orders) {
-                    throw new ValidationError('This vendor is not currently accepting orders.');
-                }
-
-                // 2. Check menu status (PAUSED or CLOSED blocks orders)
-                if (menuConfig.status === 'PAUSED') {
-                    throw new ValidationError('This vendor has temporarily paused orders. Please try again shortly.');
-                }
-                if (menuConfig.status === 'CLOSED') {
-                    throw new ValidationError('This vendor has closed for this event.');
-                }
-
-                // 3. Check max concurrent orders
-                if (
-                    menuConfig.max_concurrent_orders !== null &&
-                    menuConfig.max_concurrent_orders !== undefined &&
-                    menuConfig.current_active_orders >= menuConfig.max_concurrent_orders
-                ) {
-                    throw new ValidationError(
-                        `This vendor is at capacity (${menuConfig.max_concurrent_orders} concurrent orders). ` +
-                        'Please wait a few minutes and try again.'
-                    );
-                }
-
-                // 4 & 5: Parallel checks — cooldown + max orders per customer
-                {
-                    const cooldownPromise = menuConfig.order_cooldown_minutes
-                        ? supabase
-                              .from('orders')
-                              .select('id, created_at')
-                              .eq('vendor_id', order.vendor_id)
-                              .eq('event_id', order.event_id)
-                              .gte('created_at', new Date(Date.now() - menuConfig.order_cooldown_minutes * 60 * 1000).toISOString())
-                              .limit(1)
-                        : Promise.resolve({ data: null });
-
-                    const maxOrdersPromise = (menuConfig.max_orders_per_customer_event && order.phone)
-                        ? supabase
-                              .from('orders')
-                              .select('id', { count: 'exact', head: true })
-                              .eq('vendor_id', order.vendor_id)
-                              .eq('event_id', order.event_id)
-                              .eq('phone', order.phone)
-                        : Promise.resolve({ count: null });
-
-                    const [cooldownResult, maxOrdersResult] = await Promise.all([cooldownPromise, maxOrdersPromise]);
-
-                    // 4. Cooldown check
-                    if (menuConfig.order_cooldown_minutes && cooldownResult.data && (cooldownResult.data as any[]).length > 0) {
-                        const cooldownMs = menuConfig.order_cooldown_minutes * 60 * 1000;
-                        const recentOrders = cooldownResult.data as any[];
-                        const lastOrderTime = new Date(recentOrders[0].created_at);
-                        const nextAvailable = new Date(lastOrderTime.getTime() + cooldownMs);
-                        const waitSecs = Math.ceil((nextAvailable.getTime() - Date.now()) / 1000);
-                        throw new TooManyRequestsError(
-                            `This vendor is managing order flow. ` +
-                            `Please try again in ${waitSecs < 60 ? `${waitSecs}s` : `${Math.ceil(waitSecs / 60)}m`}.`
-                        );
-                    }
-
-                    // 5. Max orders per customer check
-                    if (menuConfig.max_orders_per_customer_event && order.phone) {
-                        const count = (maxOrdersResult as any).count;
-                        if (count !== null && count >= menuConfig.max_orders_per_customer_event) {
-                            throw new ValidationError(
-                                `You have reached the maximum of ${menuConfig.max_orders_per_customer_event} ` +
-                                `order(s) allowed per customer at this event.`
-                            );
-                        }
-                    }
-                }
-
-                // 6. Check event operating hours at the relevant time
-                // For scheduled orders → check the pickup date/time
-                // For immediate orders → check now
-                {
-                    const checkTime = order.scheduled_pickup_time
-                        ? new Date(order.scheduled_pickup_time)
-                        : new Date();
-                    const pad = (n: number) => n.toString().padStart(2, '0');
-                    const checkHHMM = `${pad(checkTime.getUTCHours())}:${pad(checkTime.getUTCMinutes())}`;
-                    const checkDate = checkTime.toISOString().split('T')[0]; // YYYY-MM-DD (UTC)
-
-                    const daySchedule = (menuConfig.operating_schedule as any[] | null)
-                        ?.find((s: any) => s.date === checkDate);
-
-                    if (daySchedule) {
-                        // Per-day entry exists — use it
-                        if (daySchedule.isClosed) {
-                            throw new ValidationError(
-                                order.scheduled_pickup_time
-                                    ? `This vendor is not operating on ${checkDate}.`
-                                    : 'This vendor is not operating today.'
-                            );
-                        }
-                        if (daySchedule.openTime && daySchedule.closeTime && daySchedule.openTime !== daySchedule.closeTime) {
-                            if (checkHHMM < daySchedule.openTime || checkHHMM >= daySchedule.closeTime) {
-                                throw new ValidationError(
-                                    `This vendor operates ${daySchedule.openTime} – ${daySchedule.closeTime} on ${checkDate}.`
-                                );
-                            }
-                        }
-                    } else if (menuConfig.event_open_time && menuConfig.event_close_time && menuConfig.event_open_time !== menuConfig.event_close_time) {
-                        // Fall back to daily default
-                        if (checkHHMM < menuConfig.event_open_time || checkHHMM >= menuConfig.event_close_time) {
-                            throw new ValidationError(
-                                `This vendor is only accepting orders between ${menuConfig.event_open_time} and ${menuConfig.event_close_time}.`
-                            );
-                        }
-                    }
-                }
-
-                // 7. Apply prep time buffer (extra minutes on top of vendor default)
-                if (menuConfig.prep_time_buffer_minutes) {
-                    estimatedPrepTime += menuConfig.prep_time_buffer_minutes;
-                }
-            }
-        }
-
-        // ── Vendor-level defaults (minimum order, service fee) ────────────
-        (order as any)._minimumOrderValue = vendor.minimum_order ?? null;
-        (order as any)._serviceFeePercent = vendor.service_fee_percent ?? null;
-        // ─────────────────────────────────────────────────────────────────
-
-        // Validate scheduled order if pickup time is provided
-        let validationResult;
-        if (order.scheduled_pickup_time) {
-            validationResult = await this.scheduler.validateScheduledOrder(
-                order.vendor_id,
-                order.event_id,
-                order.scheduled_pickup_time,
-                estimatedPrepTime
-            );
-
-            if (!validationResult.isValid) {
-                throw new ValidationError(`Invalid scheduled order: ${validationResult.error}`);
-            }
-        } else {
-            // Validate immediate order
-            validationResult = await this.scheduler.validateImmediateOrder(
-                order.vendor_id,
-                order.event_id,
-                estimatedPrepTime
-            );
-
-            if (!validationResult.isValid) {
-                throw new ValidationError(`Cannot place order: ${validationResult.error}`);
-            }
-        }
-
-        // Server-side discount validation: batch-resolve all discounts in 1 DB query
+        // ── Step 1: Discount resolution (1 Supabase query) ──────────────
         const discountService = new DiscountService();
         const discountInputs = order.items.map((item: any) => ({
             itemId: item.id,
@@ -291,6 +92,7 @@ export class OrderService {
             discountInputs
         );
 
+        // ── Step 2: Apply discounts + calculate total (pure JS) ─────────
         const validatedItems = order.items.map((item: any) => {
             const basePrice = item.basePrice ?? item.price;
             const priceForDiscount = item.originalPrice ?? basePrice;
@@ -314,102 +116,139 @@ export class OrderService {
             (sum: number, item: any) => sum + (item.price * item.quantity), 0
         );
 
-        // 7. Check minimum order value
-        const minimumOrderValue = (order as any)._minimumOrderValue;
-        if (minimumOrderValue && validatedTotal < minimumOrderValue) {
+        // ── Step 3: Call the single-transaction RPC (1 Supabase call) ───
+        // This replaces: vendor fetch, event fetch, menu config fetch+lock,
+        // capacity increment, cooldown check, max orders check, dedup check,
+        // idempotency check, customer name lookup, queue position calc, INSERT.
+        const { data: rpcResult, error: rpcError } = await safeQuery(async () =>
+            await supabase.rpc('create_order_validated', {
+                p_vendor_id: order.vendor_id,
+                p_event_id: order.event_id,
+                p_phone: order.phone,
+                p_items: validatedItems,
+                p_total: Math.round(validatedTotal * 100) / 100,
+                p_payment_method: isCashOrder ? 'CASH' : 'ONLINE',
+                p_notes: order.notes || null,
+                p_customer_id: order.customer_id || null,
+                p_customer_name: (order as any).customer_name || null,
+                p_idempotency_key: idempotencyKey,
+                p_estimated_prep_time: null, // let RPC use vendor default + buffer
+                p_queue_position: null,      // let RPC calculate
+                p_estimated_ready_time: null, // let RPC calculate
+                p_scheduled_pickup_time: order.scheduled_pickup_time || null,
+                p_service_fee: 0,            // calculated below after we get vendor data
+                p_age_verified: (order as any).age_verified || false,
+                p_qr_code: null,             // RPC generates placeholder
+            })
+        );
+
+        if (rpcError) {
+            throw new Error(`Order creation failed: ${rpcError.message}`);
+        }
+
+        const result = rpcResult as any;
+
+        // ── Step 4: Handle RPC result status ────────────────────────────
+        // The RPC returns error codes instead of throwing, so we map them
+        // to the appropriate JS error classes.
+        if (result.status === 'idempotent_hit') {
+            return { ...normalizeOrderItems(result.order), paymentUrl: '' } as Order & { paymentUrl: string };
+        }
+
+        const errorStatusMap: Record<string, () => never> = {
+            vendor_not_found: () => { throw new NotFoundError(result.message); },
+            event_not_found: () => { throw new NotFoundError(result.message); },
+            event_not_started: () => { throw new ValidationError(result.message); },
+            event_ended: () => { throw new ValidationError(result.message); },
+            not_accepting: () => { throw new ValidationError(result.message); },
+            paused: () => { throw new ValidationError(result.message); },
+            closed: () => { throw new ValidationError(result.message); },
+            at_capacity: () => { throw new ValidationError(result.message); },
+            cooldown: () => { throw new TooManyRequestsError(result.message); },
+            max_orders_reached: () => { throw new ValidationError(result.message); },
+            cash_not_allowed: () => { throw new ValidationError(result.message); },
+            customer_name_required: () => { throw new ValidationError(result.message); },
+            duplicate: () => { throw new ConflictError(result.message); },
+        };
+
+        if (result.status !== 'ok' && errorStatusMap[result.status]) {
+            errorStatusMap[result.status]();
+        } else if (result.status !== 'ok') {
+            throw new Error(`Order creation failed: ${result.message || result.status}`);
+        }
+
+        // ── Step 5: Post-RPC validations (JS-only, no DB) ───────────────
+        const vendor = result.vendor;
+        const menuConfig = result.menu_config;
+        let createdOrder = result.order;
+        const capacityIncremented = result.capacity_incremented;
+
+        // Check minimum order value (vendor data came from RPC)
+        if (vendor.minimum_order && validatedTotal < vendor.minimum_order) {
+            // Rollback: cancel the order and decrement counter
+            await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
             throw new ValidationError(
-                `Minimum order value is R${minimumOrderValue.toFixed(2)}. ` +
+                `Minimum order value is R${vendor.minimum_order.toFixed(2)}. ` +
                 `Your order total is R${validatedTotal.toFixed(2)}.`
             );
         }
 
-        // 8. Apply service fee
-        const serviceFeePercent = (order as any)._serviceFeePercent;
+        // Apply service fee (now that we have vendor.service_fee_percent)
         let serviceFee = 0;
-        if (serviceFeePercent) {
-            serviceFee = Math.round(validatedTotal * (serviceFeePercent / 100) * 100) / 100;
+        if (vendor.service_fee_percent) {
+            serviceFee = Math.round(validatedTotal * (vendor.service_fee_percent / 100) * 100) / 100;
             validatedTotal = Math.round((validatedTotal + serviceFee) * 100) / 100;
-        }
 
-        // Strip internal fields and map camelCase to snake_case before inserting into DB
-        const { _minimumOrderValue, _serviceFeePercent, paymentMethod, ...cleanOrder } = order as any;
-
-        // Determine if this is a cash (pay-at-stall) order
-        const menuConfig = menuConfigResult.data as EventMenuConfig | null;
-        const isCashOrder = paymentMethod === 'CASH';
-
-        // Validate cash orders are allowed
-        if (isCashOrder && (!menuConfig || !menuConfig.allow_pay_at_stall)) {
-            throw new ValidationError('Pay at stall is not available for this vendor at this event.');
-        }
-
-        // Set defaults including estimated prep time and scheduling data
-        const orderWithDefaults = {
-            ...cleanOrder,
-            payment_method: isCashOrder ? 'CASH' : (paymentMethod || cleanOrder.payment_method || 'ONLINE'),
-            items: validatedItems,
-            total: Math.round(validatedTotal * 100) / 100,
-            ...(serviceFee > 0 ? { service_fee: serviceFee } : {}),
-            status: isCashOrder ? OrderStatus.PENDING : OrderStatus.PAYMENT_PENDING,
-            payment_status: isCashOrder ? ('pay_at_stall' as const) : ('pending' as const),
-            type: isCashOrder ? OrderType.ORDER : OrderType.CART,
-            estimated_prep_time: estimatedPrepTime,
-            qr_code: `PENDING-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            qr_image: '',
-            queue_position: validationResult.queuePosition,
-            estimated_ready_time: validationResult.estimatedReadyTime,
-            age_verified: cleanOrder.age_verified || false,
-            age_verified_at: cleanOrder.age_verified ? new Date().toISOString() : null,
-        };
-
-        // Pre-fetch customer name for online payment before inserting order
-        // This ensures we don't create orphan orders if the name lookup fails
-        let payerName: string | null = null;
-        if (!isCashOrder) {
-            if (order.customer_id) {
-                const { data: customer } = await supabase
-                    .from('customers')
-                    .select('name')
-                    .eq('id', order.customer_id)
-                    .single();
-                if (customer?.name) payerName = customer.name;
-            }
-            if (!payerName) payerName = (order as any).customer_name || null;
-            if (!payerName) {
-                throw new ValidationError('Customer name is required for online payment. Please update your profile.');
-            }
-        }
-
-        // Dedup guard: reject if an identical order was created in the last 30 seconds
-        if (orderWithDefaults.phone && orderWithDefaults.vendor_id) {
-            const cutoff = new Date(Date.now() - 30_000).toISOString();
-            let dupQuery = supabase
+            // Update the order with corrected total and service fee
+            const { data: updated } = await supabase
                 .from('orders')
-                .select('id', { count: 'exact', head: true })
-                .eq('phone', orderWithDefaults.phone)
-                .eq('vendor_id', orderWithDefaults.vendor_id)
-                .eq('total', orderWithDefaults.total)
-                .gte('created_at', cutoff);
-            if (orderWithDefaults.event_id) {
-                dupQuery = dupQuery.eq('event_id', orderWithDefaults.event_id);
-            }
-            const { count: dupCount } = await dupQuery;
-            if (dupCount && dupCount > 0) {
-                throw new ConflictError('A duplicate order was detected. Please wait a moment before ordering again.');
+                .update({ total: validatedTotal, service_fee: serviceFee })
+                .eq('id', createdOrder.id)
+                .select()
+                .single();
+            if (updated) createdOrder = updated;
+        }
+
+        // Check operating hours (JS logic on schedule data from RPC)
+        if (menuConfig) {
+            const checkTime = order.scheduled_pickup_time
+                ? new Date(order.scheduled_pickup_time)
+                : new Date();
+            const pad = (n: number) => n.toString().padStart(2, '0');
+            const checkHHMM = `${pad(checkTime.getUTCHours())}:${pad(checkTime.getUTCMinutes())}`;
+            const checkDate = checkTime.toISOString().split('T')[0];
+
+            const daySchedule = (menuConfig.operating_schedule as any[] | null)
+                ?.find((s: any) => s.date === checkDate);
+
+            if (daySchedule) {
+                if (daySchedule.isClosed) {
+                    await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+                    throw new ValidationError(
+                        order.scheduled_pickup_time
+                            ? `This vendor is not operating on ${checkDate}.`
+                            : 'This vendor is not operating today.'
+                    );
+                }
+                if (daySchedule.openTime && daySchedule.closeTime && daySchedule.openTime !== daySchedule.closeTime) {
+                    if (checkHHMM < daySchedule.openTime || checkHHMM >= daySchedule.closeTime) {
+                        await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+                        throw new ValidationError(
+                            `This vendor operates ${daySchedule.openTime} – ${daySchedule.closeTime} on ${checkDate}.`
+                        );
+                    }
+                }
+            } else if (menuConfig.event_open_time && menuConfig.event_close_time && menuConfig.event_open_time !== menuConfig.event_close_time) {
+                if (checkHHMM < menuConfig.event_open_time || checkHHMM >= menuConfig.event_close_time) {
+                    await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+                    throw new ValidationError(
+                        `This vendor is only accepting orders between ${menuConfig.event_open_time} and ${menuConfig.event_close_time}.`
+                    );
+                }
             }
         }
 
-        const { data: createdOrder, error } = await supabase
-            .from('orders')
-            .insert([orderWithDefaults])
-            .select()
-            .single();
-
-        if (error) {
-            throw new Error(`Failed to create order: ${error.message}`);
-        }
-
-        // Defer QR generation to QStash background job (saves ~50-100ms from critical path)
+        // ── Step 6: QR generation (background, non-blocking) ────────────
         let updatedOrder = createdOrder;
         try {
             const { qstash, getCallbackBaseUrl } = await import('../lib/qstash.js');
@@ -420,7 +259,6 @@ export class OrderService {
                     body: { orderId: createdOrder.id },
                 }).catch(err => console.error('Failed to enqueue QR generation:', err?.message || err));
             } else {
-                // Fallback: generate inline if QStash not available (dev/test)
                 const { qr_code, qr_image } = await qrHelper.generateAndUploadQRCode(createdOrder.id);
                 const { data: qrUpdated, error: updateError } = await supabase
                     .from('orders')
@@ -434,37 +272,64 @@ export class OrderService {
                 updatedOrder = qrUpdated;
             }
         } catch (qrErr: any) {
-            // Non-fatal: order is created, QR can be generated later
             console.error('QR generation error (non-fatal):', qrErr?.message || qrErr);
         }
 
-        // Fire-and-forget: update queue positions for other pending orders
+        // Fire-and-forget: update queue positions
         this.scheduler.updateQueuePositions(order.vendor_id).catch(err =>
             console.error('Failed to update queue positions:', err?.message || err)
         );
 
-        // Cash order: skip Stitch, send notifications immediately
+        // ── Step 7: Cash orders — done, send notifications ──────────────
         if (isCashOrder) {
             this.sendOrderNotifications(updatedOrder).catch(err =>
                 console.error('Failed to send cash order notifications:', err?.message || err)
             );
-            return { ...updatedOrder, paymentUrl: '' };
+            return { ...normalizeOrderItems(updatedOrder), paymentUrl: '' };
         }
 
-        const { paymentId, paymentUrl } = await paymentService.createPaymentRequest(
-            updatedOrder.id,
-            Math.round(validatedTotal * 100), // Convert rands to cents
-            payerName ?? 'Customer',
-            order.phone
-        );
+        // ── Step 8: Online payment (1 Stitch HTTP call + 1 DB update) ───
+        const payerName = result.customer_name || (order as any).customer_name || 'Customer';
+        let paymentId: string;
+        let paymentUrl: string;
+        try {
+            const payment = await paymentService.createPaymentRequest(
+                updatedOrder.id,
+                Math.round(validatedTotal * 100),
+                payerName,
+                order.phone
+            );
+            paymentId = payment.paymentId;
+            paymentUrl = payment.paymentUrl;
+        } catch (paymentErr) {
+            // Payment failed — cancel order and rollback counter
+            await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+            throw paymentErr;
+        }
 
-        // Store payment reference on order
         await supabase
             .from('orders')
             .update({ stitch_payment_id: paymentId })
             .eq('id', updatedOrder.id);
 
-        return { ...updatedOrder, paymentUrl };
+        return { ...normalizeOrderItems(updatedOrder), paymentUrl };
+    }
+
+    /** Cancel an order and decrement active orders counter (used on post-insert failures). */
+    private async rollbackOrder(orderId: string, vendorId: string, eventId: string, decrementCounter: boolean): Promise<void> {
+        const { error: cancelErr } = await supabase
+            .from('orders')
+            .update({ status: OrderStatus.CANCELLED, payment_status: 'failed' })
+            .eq('id', orderId);
+        if (cancelErr) console.error('Failed to cancel order during rollback:', cancelErr.message);
+
+        if (decrementCounter && eventId) {
+            const { error: decErr } = await supabase.rpc('decrement_active_orders', {
+                p_vendor_id: vendorId,
+                p_event_id: eventId,
+            });
+            if (decErr) console.error('Failed to decrement active orders during rollback:', decErr.message);
+        }
     }
 
     /**
@@ -576,6 +441,17 @@ export class OrderService {
             throw new Error(`Failed to update order: ${updateError.message}`);
         }
 
+        // Decrement active orders counter on collection
+        if (order.event_id) {
+            void (async () => {
+                const { error: decErr } = await supabase.rpc('decrement_active_orders', {
+                    p_vendor_id: order.vendor_id,
+                    p_event_id: order.event_id,
+                });
+                if (decErr) console.error('Failed to decrement active orders on collection:', decErr.message);
+            })();
+        }
+
         // Send collection confirmation via WhatsApp (fire-and-forget, non-blocking)
         try {
             const token = process.env.WA_ACCESS_TOKEN;
@@ -626,7 +502,7 @@ export class OrderService {
             console.error('Retention import error (non-fatal):', (retentionErr as any)?.message || retentionErr);
         }
 
-        return updatedOrder;
+        return normalizeOrderItems(updatedOrder);
     }
 
 
@@ -683,6 +559,20 @@ export class OrderService {
 
         if (error) {
             throw new Error(`Failed to update order status: ${error.message}`);
+        }
+
+        // Decrement active orders counter when order leaves the active pipeline
+        if (
+            (status === OrderStatus.COLLECTED || status === OrderStatus.CANCELLED) &&
+            currentOrder.event_id
+        ) {
+            void (async () => {
+                const { error: decErr } = await supabase.rpc('decrement_active_orders', {
+                    p_vendor_id: currentOrder.vendor_id,
+                    p_event_id: currentOrder.event_id,
+                });
+                if (decErr) console.error('Failed to decrement active orders:', decErr.message);
+            })();
         }
 
         // Fire-and-forget: update queue positions when order completes
@@ -750,7 +640,7 @@ export class OrderService {
             timestamp: new Date().toISOString(),
         });
 
-        return data;
+        return normalizeOrderItems(data);
     }
 
     async getOrdersByVendor(vendorId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
@@ -774,7 +664,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
     async getOrdersByPhone(phone: string, pagination?: PaginationParams, eventId?: string): Promise<PaginatedResponse<Order>> {
@@ -837,7 +727,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders, page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(orders), page, pageSize, total, totalPages };
     }
 
     async getOrdersByCustomerId(customerId: string, pagination?: PaginationParams, eventId?: string): Promise<PaginatedResponse<Order>> {
@@ -900,7 +790,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders, page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(orders), page, pageSize, total, totalPages };
     }
 
     async getOrdersByStatus(status: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
@@ -922,7 +812,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
     async getRecentOrders(limit: number = 10): Promise<Order[]> {
@@ -936,7 +826,7 @@ export class OrderService {
             throw new Error(`Failed to fetch recent orders: ${error.message}`);
         }
 
-        return data || [];
+        return normalizeOrders(data || []);
     }
 
     async deleteOrder(id: string): Promise<void> {
@@ -970,7 +860,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
     async refundOrder(orderId: string, dto: RefundOrderDto): Promise<Order> {
@@ -1339,7 +1229,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
     async searchOrders(searchTerm: string, eventId?: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
@@ -1370,7 +1260,7 @@ export class OrderService {
 
         const total = count || 0;
         const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-        return { orders: data || [], page, pageSize, total, totalPages };
+        return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
     async health(): Promise<void> {
@@ -1379,6 +1269,56 @@ export class OrderService {
         if (error) {
             throw new Error(`Failed to find order: ${error.message}`);
         }
+    }
+
+    /**
+     * Cancel orders stuck in PAYMENT_PENDING for more than `maxAgeMinutes`.
+     * Should be called periodically (e.g., every 5 minutes via cron/QStash).
+     * Also decrements the active orders counter for each expired order.
+     */
+    async cleanupStalePaymentPending(maxAgeMinutes = 15): Promise<number> {
+        const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+
+        // Fetch stale orders so we can decrement their active order counters
+        const { data: staleOrders, error: fetchErr } = await supabase
+            .from('orders')
+            .select('id, vendor_id, event_id')
+            .eq('status', OrderStatus.PAYMENT_PENDING)
+            .lt('created_at', cutoff)
+            .limit(200);
+
+        if (fetchErr || !staleOrders || staleOrders.length === 0) {
+            return 0;
+        }
+
+        const staleIds = staleOrders.map((o: any) => o.id);
+
+        // Batch cancel
+        const { error: updateErr } = await supabase
+            .from('orders')
+            .update({ status: OrderStatus.CANCELLED, payment_status: 'expired' })
+            .in('id', staleIds);
+
+        if (updateErr) {
+            console.error('Failed to cancel stale orders:', updateErr.message);
+            return 0;
+        }
+
+        // Decrement active orders counters (fire-and-forget, best-effort)
+        for (const order of staleOrders) {
+            if (order.event_id) {
+                void (async () => {
+                    const { error: decErr } = await supabase.rpc('decrement_active_orders', {
+                        p_vendor_id: order.vendor_id,
+                        p_event_id: order.event_id,
+                    });
+                    if (decErr) console.error('Failed to decrement for stale order:', decErr.message);
+                })();
+            }
+        }
+
+        console.log(`Cleaned up ${staleIds.length} stale PAYMENT_PENDING orders`);
+        return staleIds.length;
     }
 
     /**
