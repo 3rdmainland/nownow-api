@@ -9,7 +9,7 @@ import {
 import { OtpService } from './otp.service.js';
 import { CustomerAuthService } from './customer-auth.service.js';
 import { ConsoleSmsProvider, SmsProvider } from './sms.provider.js';
-import { AfricasTalkingSmsProvider } from './africastalking-sms.provider.js';
+import { BulkSmsProvider } from './bulksms.provider.js';
 import { authenticateCustomer } from '../lib/auth.js';
 import { normalizePhone } from './phone.utils.js';
 import type {
@@ -25,9 +25,9 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 const customerAuthController: FastifyPluginAsync = async (fastify) => {
   const otpService = new OtpService();
   const customerAuthService = new CustomerAuthService();
-  // Use Africa's Talking in production, console logger in dev/test
-  const smsProvider: SmsProvider = process.env.AT_API_KEY
-    ? new AfricasTalkingSmsProvider()
+  // Use BulkSMS in production, console logger in dev/test
+  const smsProvider: SmsProvider = process.env.BULKSMS_TOKEN_ID
+    ? new BulkSmsProvider()
     : new ConsoleSmsProvider();
 
   // POST /customer/auth/request-otp — Send OTP to phone
@@ -44,7 +44,7 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
     };
 
     // Only expose OTP in dev/test (console provider) — never in production
-    if (!process.env.AT_API_KEY) {
+    if (!process.env.BULKSMS_TOKEN_ID) {
       response.otp = code;
     }
 
