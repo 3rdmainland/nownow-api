@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { Receiver } from '@upstash/qstash';
 import { OrderService } from './order.service.js';
+import { supabase } from '../lib/supabase.js';
 
 const receiver = (process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_NEXT_SIGNING_KEY)
   ? new Receiver({
@@ -40,7 +41,25 @@ const orderCleanupEndpoint: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
     const cleaned = await orderService.cleanupStalePaymentPending(15);
 
-    return { cleaned };
+    // Mark READY orders as UNCOLLECTED after 30 minutes
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: expired } = await supabase
+      .from('orders')
+      .select('id, vendor_id, event_id')
+      .eq('status', 'READY')
+      .lt('ready_at', thirtyMinAgo);
+
+    let uncollected = 0;
+    if (expired?.length) {
+      await supabase
+        .from('orders')
+        .update({ status: 'UNCOLLECTED', updated_at: new Date().toISOString() })
+        .eq('status', 'READY')
+        .lt('ready_at', thirtyMinAgo);
+      uncollected = expired.length;
+    }
+
+    return { cleaned, uncollected };
   });
 };
 

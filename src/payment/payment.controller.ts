@@ -9,51 +9,33 @@ import { broadcastNewOrder, broadcastAdminOrderFeed, broadcastPaymentFailed } fr
 import { sendEmail } from '../lib/email.js';
 
 /**
- * Extract orderId and status from a Stitch webhook payload.
- * Handles both Express format (data.payment) and Core format (data.paymentInitiationRequest).
+ * Extract orderId and status from a Stitch REST v2 webhook payload.
  */
 function extractWebhookData(event: StitchWebhookEvent): { orderId: string | null; status: string | null } {
-  // Try Express format first
-  if (event.data?.payment) {
-    const p = event.data.payment;
-    const rawStatus = (p.status || '').toUpperCase();
-    // Map Express statuses to our internal format
-    const statusMap: Record<string, string> = {
-      PAID: 'complete',
-      SETTLED: 'complete',
-      CANCELLED: 'cancelled',
-      EXPIRED: 'expired',
-    };
-    return {
-      orderId: p.merchantReference || null,
-      status: statusMap[rawStatus] || rawStatus.toLowerCase(),
-    };
-  }
+  const node = event.data?.client?.paymentInitiationRequests?.node;
+  if (!node) return { orderId: null, status: null };
 
-  // Fallback to Core format
-  if (event.data?.paymentInitiationRequest) {
-    const p = event.data.paymentInitiationRequest;
-    return {
-      orderId: p.externalReference || null,
-      status: p.status || null,
-    };
-  }
+  const stateType = node.state?.__typename;
+  const statusMap: Record<string, string> = {
+    PaymentInitiationRequestCompleted: 'complete',
+    PaymentInitiationRequestCancelled: 'cancelled',
+    PaymentInitiationRequestExpired: 'expired',
+  };
 
-  return { orderId: null, status: null };
+  return {
+    orderId: node.externalReference || null,
+    status: statusMap[stateType] || null,
+  };
 }
 
 const paymentController: FastifyPluginAsync = async (fastify) => {
-  // Capture raw request body for webhook signature verification.
-  // Fastify's default JSON parser discards the original bytes, but Svix
-  // signatures are computed against the exact raw payload. We store the
-  // raw string on the request so the webhook handler can use it.
+  // Capture raw request body for webhook signature verification
   fastify.addContentTypeParser(
     'application/json',
     { parseAs: 'string' },
     (_req, body, done) => {
       try {
         const parsed = JSON.parse(body as string);
-        // Attach the original raw string so the webhook route can verify the signature
         (parsed as any).__rawBody = body;
         done(null, parsed);
       } catch (err) {
@@ -62,28 +44,21 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // Register redirect URL with Stitch on startup (fire-and-forget)
-  paymentService.registerRedirectUrl().catch(err => {
-    fastify.log.warn({ err }, 'Failed to register Stitch redirect URL on startup');
-  });
-
   /**
    * POST /payment/webhook
-   * Receives Stitch webhook events. Source of truth for payment status.
+   * Receives Stitch REST v2 webhook events. Source of truth for payment status.
+   * Signature: X-Stitch-Signature: t={timestamp},hmac_sha256={hex}
    */
   fastify.post('/webhook', { schema: webhookSchema, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
-    const svixId = request.headers['svix-id'] as string;
-    const svixTimestamp = request.headers['svix-timestamp'] as string;
-    const svixSignature = request.headers['svix-signature'] as string;
+    const signatureHeader = request.headers['x-stitch-signature'] as string;
     const rawBody = (request.body as any)?.__rawBody || JSON.stringify(request.body);
 
-    if (!svixId || !svixTimestamp || !svixSignature) {
-      fastify.log.warn('Missing Svix webhook headers');
-      return reply.status(401).send({ error: 'Invalid signature' });
+    if (!signatureHeader) {
+      fastify.log.warn('Missing X-Stitch-Signature header');
+      return reply.status(401).send({ error: 'Missing signature' });
     }
 
-    // Verify Svix webhook signature
-    const isValid = await paymentService.verifyWebhookSignature(rawBody, svixId, svixTimestamp, svixSignature);
+    const isValid = await paymentService.verifyWebhookSignature(rawBody, signatureHeader);
     if (!isValid) {
       fastify.log.warn('Invalid Stitch webhook signature');
       return reply.status(401).send({ error: 'Invalid signature' });
@@ -94,10 +69,10 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
 
     if (!orderId || !paymentStatus) {
       fastify.log.warn({ body: request.body }, 'Could not extract orderId/status from webhook');
-      return { received: true };
+      return reply.status(200).send({ received: true });
     }
 
-    fastify.log.info({ orderId, paymentStatus, eventType: event.type }, 'Stitch webhook received');
+    fastify.log.info({ orderId, paymentStatus }, 'Stitch REST v2 webhook received');
 
     // Fetch the order
     const { data: order, error } = await supabase
@@ -108,23 +83,26 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
 
     if (error || !order) {
       fastify.log.error({ orderId, error }, 'Order not found for webhook');
-      return { received: true };
+      return reply.status(200).send({ received: true });
     }
 
     if (paymentStatus === 'complete') {
       await completeOrder(order, orderId, fastify);
-    } else if (['cancelled', 'expired', 'failed'].includes(paymentStatus)) {
+    } else if (['cancelled', 'expired'].includes(paymentStatus)) {
       await supabase
         .from('orders')
         .update({ payment_status: paymentStatus })
         .eq('id', orderId);
 
-      // Notify admins of payment failure
+      // Restore inventory for failed payments
+      const { error: restoreErr } = await supabase.rpc('restore_inventory', { p_order_id: orderId });
+      if (restoreErr) fastify.log.error(restoreErr, 'Failed to restore inventory on payment failure');
+
       broadcastPaymentFailed({
         orderId: order.id,
         customerPhone: order.phone || null,
         vendorName: null,
-        total: Number(order.total_amount) || 0,
+        total: Number(order.total) || 0,
         paymentStatus,
         timestamp: new Date().toISOString(),
       });
@@ -140,20 +118,20 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
               <h2>Payment Issue</h2>
               <p>Hi ${customer.name || 'there'},</p>
               <p>Your payment for order <strong>#${orderId.slice(0, 8)}</strong> has ${paymentStatus}.</p>
-              <p>Please try placing your order again. If you continue to experience issues, contact our support team.</p>
+              <p>Please try placing your order again.</p>
             `,
           }).catch(err => fastify.log.error(err, 'Failed to send payment failure email'));
         }
       }
     }
 
-    return { received: true };
+    return reply.status(200).send({ received: true });
   });
 
   /**
    * GET /payment/status/:orderId
    * Frontend polls this to check if webhook has confirmed payment.
-   * Also polls Stitch directly as a fallback if our DB still shows pending.
+   * Also polls Stitch directly as a fallback.
    */
   fastify.get('/status/:orderId', { schema: paymentStatusSchema }, async (request) => {
     const { orderId } = request.params as { orderId: string };
@@ -168,14 +146,12 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
       throw new NotFoundError('Order not found');
     }
 
-    // If payment is still pending and we have a Stitch payment ID, poll Stitch directly
+    // If payment is still pending and we have a Stitch payment ID, poll Stitch
     if (order.payment_status === 'pending' && order.stitch_payment_id) {
       try {
         const stitchStatus = await paymentService.checkPaymentStatus(order.stitch_payment_id);
-        const upper = stitchStatus.toUpperCase();
 
-        if (upper === 'PAID' || upper === 'SETTLED') {
-          // Stitch says paid but our DB is behind — update now
+        if (stitchStatus === 'completed') {
           const { data: freshOrder } = await supabase
             .from('orders')
             .select('*')
@@ -186,20 +162,15 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
             await completeOrder(freshOrder, orderId, fastify);
           }
 
-          return {
-            orderId: order.id,
-            paymentStatus: 'complete',
-            orderStatus: 'PENDING',
-          };
-        } else if (upper === 'CANCELLED') {
+          return { orderId: order.id, paymentStatus: 'complete', orderStatus: 'PENDING' };
+        } else if (stitchStatus === 'cancelled') {
           await supabase.from('orders').update({ payment_status: 'cancelled' }).eq('id', orderId);
           return { orderId: order.id, paymentStatus: 'cancelled', orderStatus: order.status };
-        } else if (upper === 'EXPIRED') {
+        } else if (stitchStatus === 'expired') {
           await supabase.from('orders').update({ payment_status: 'expired' }).eq('id', orderId);
           return { orderId: order.id, paymentStatus: 'expired', orderStatus: order.status };
         }
       } catch (err) {
-        // If Stitch poll fails, fall through and return DB status
         fastify.log.warn({ err, orderId }, 'Failed to poll Stitch for payment status');
       }
     }
@@ -213,10 +184,9 @@ const paymentController: FastifyPluginAsync = async (fastify) => {
 };
 
 /**
- * Shared logic: mark order as paid, send notifications.
+ * Shared logic: mark order as paid, send notifications + push.
  */
 async function completeOrder(order: any, orderId: string, fastify: any) {
-  // Try optimistic update (order should be PAYMENT_PENDING)
   const { data: updated, error: updateError } = await supabase
     .from('orders')
     .update({
@@ -229,18 +199,14 @@ async function completeOrder(order: any, orderId: string, fastify: any) {
     .select('id')
     .maybeSingle();
 
-  // If the status guard didn't match, another caller already completed this order — skip notifications
-  if (!updateError && !updated) {
-    return;
-  }
+  if (!updateError && !updated) return;
 
   if (!updateError) {
-    // Fire-and-forget WhatsApp notification
+    // WhatsApp notification
     try {
       const token = process.env.WA_ACCESS_TOKEN;
       if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order.phone) {
         const whatsapp = getWhatsappService();
-
         void whatsapp
           .sendOrderPlacedTemplate(order.phone, {
             orderId: String(order.id),
@@ -248,22 +214,21 @@ async function completeOrder(order: any, orderId: string, fastify: any) {
             prepTimeMinutes: String(order.estimated_prep_time || 15),
             qrImageUrl: order.qr_image,
           })
-          .catch((err: any) => {
-            console.error('Failed to send WhatsApp notification:', err?.message || err);
-          });
+          .catch((err: any) => console.error('WhatsApp notification error:', err?.message || err));
       }
     } catch (notifyErr) {
       console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
     }
 
-    // Notify the vendor's live panel in real time
+    // WebSocket: notify vendor KDS
     broadcastNewOrder({
       orderId: order.id,
       vendorId: order.vendor_id,
       eventId: order.event_id,
+      phone: order.phone,
     });
 
-    // Notify admin dashboard
+    // WebSocket: notify admin dashboard
     broadcastAdminOrderFeed({
       orderId: order.id,
       customerPhone: order.phone || null,
@@ -272,12 +237,23 @@ async function completeOrder(order: any, orderId: string, fastify: any) {
       vendorName: null,
       eventId: order.event_id || null,
       eventName: null,
-      total: Number(order.total_amount) || 0,
+      total: Number(order.total) || 0,
       status: 'PENDING',
       paymentStatus: 'complete',
-      items: Array.isArray(order.items) ? order.items.map((i: any) => ({ name: i.name || i.menu_item_name || '', quantity: i.quantity || 1 })) : [],
+      items: Array.isArray(order.items) ? order.items.map((i: any) => ({ name: i.name || '', quantity: i.quantity || 1 })) : [],
       createdAt: order.created_at,
     });
+
+    // Web Push: notify vendor of new order
+    import('../push/push.service.js').then(({ pushService: push }) => {
+      const orderRef = order.id.slice(-4).toUpperCase();
+      push.sendToVendorUsers(order.vendor_id, {
+        title: `New order #${orderRef}`,
+        body: `R${Number(order.total || 0).toFixed(2)} — ${Array.isArray(order.items) ? order.items.length : 0} items`,
+        tag: `new-order-${order.id}`,
+        data: { url: '/lite/kds', type: 'new_order', orderId: order.id },
+      }).catch(() => {});
+    }).catch(() => {});
   }
 }
 

@@ -1,68 +1,71 @@
-// Stitch Express API types
+// Stitch REST v2 API types
 
-export interface StitchExpressTokenResponse {
-  success: boolean;
-  data: {
-    accessToken: string;
+export interface StitchOAuthTokenResponse {
+  access_token: string;
+  expires_in: number;
+  token_type: string;
+  scope: string;
+}
+
+export interface StitchPaymentRequestBody {
+  amount: { currency: 'ZAR'; quantity: number };
+  externalReference: string;
+  expireAt: string;
+  payer: {
+    identifier: string;
+    fullName: string;
+    mobileNumber?: string;
+  };
+  paymentMethods: {
+    eft: {
+      enabled: boolean;
+      payerReference: string;
+      beneficiaryReference: string;
+      beneficiary: {
+        name: string;
+        bank: string;
+        accountNumber: string;
+      };
+      capitecPay?: { enabled: boolean };
+    };
+    card: { enabled: boolean };
   };
 }
 
-export interface StitchPaymentLinkResponse {
-  success: boolean;
-  data: {
-    payment: {
-      id: string;
-      amount: number;
-      status: string;
-      paidAt: string | null;
-      payerName: string | null;
-      payerEmailAddress: string | null;
-      payerPhoneNumber: string | null;
-      link: string;
-      merchantReference: string | null;
-      expireAt: string | null;
-    };
-  };
-}
-
-/** Response from GET /api/v1/payment-links/{paymentId} */
-export interface StitchPaymentStatusResponse {
-  success: boolean;
-  data: {
-    payment: {
-      id: string;
-      amount: number;
-      status: string; // "PENDING" | "PAID" | "SETTLED" | "EXPIRED" | "CANCELLED"
-      paidAt: string | null;
-      merchantReference: string | null;
-    };
+export interface StitchPaymentResponse {
+  id: string;
+  amount: { currency: string; quantity: number };
+  externalReference: string;
+  status: 'pending' | 'completed' | 'cancelled' | 'expired';
+  interaction: {
+    type: 'redirect';
+    url: string;
   };
 }
 
 /**
- * Stitch webhook event — flexible to handle both Express and Core formats.
- * Express: body.data.payment.{merchantReference, status}
- * Core:    body.data.paymentInitiationRequest.{externalReference, status}
+ * Stitch REST v2 webhook payload.
+ * Dispatched for payment, payment.confirmation, refund events.
  */
 export interface StitchWebhookEvent {
-  id: string;
-  type: string;
   data: {
-    // Express format
-    payment?: {
-      id: string;
-      merchantReference: string;
-      status: string; // "PAID" | "SETTLED" | "CANCELLED" | "EXPIRED"
-    };
-    // Core format (legacy)
-    paymentInitiationRequest?: {
-      id: string;
-      externalReference: string;
-      status: string; // "complete" | "cancelled" | "expired"
-    };
-    amount?: {
-      quantity: string;
-      currency: string;
+    client: {
+      paymentInitiationRequests: {
+        node: {
+          __typename: string;
+          id: string;
+          amount: { currency: string; quantity: string };
+          state: {
+            __typename:
+              | 'PaymentInitiationRequestCompleted'
+              | 'PaymentInitiationRequestCancelled'
+              | 'PaymentInitiationRequestExpired';
+            date: string;
+            payer?: { accountNumber: string; bankId: string };
+          };
+          externalReference?: string;
+        };
+      };
     };
   };
 }

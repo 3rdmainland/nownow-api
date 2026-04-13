@@ -1,38 +1,42 @@
-import {
-  StitchExpressTokenResponse,
-  StitchPaymentLinkResponse,
-  StitchPaymentStatusResponse,
+import type {
+  StitchOAuthTokenResponse,
+  StitchPaymentRequestBody,
+  StitchPaymentResponse,
   CreatePaymentResult,
 } from './payment.types.js';
 import { ServiceUnavailableError, InternalError } from '../lib/errors.js';
 
+const STITCH_TOKEN_URL = 'https://secure.stitch.money/connect/token';
+const STITCH_API_URL = 'https://api.stitch.money/v2';
+
 class PaymentService {
-  private clientToken: string | null = null;
+  private accessToken: string | null = null;
   private tokenExpiresAt: number = 0;
 
   /**
-   * Get a client token from Stitch Express token endpoint.
-   * Tokens are cached until 1 minute before expiry.
+   * Get a client token via OAuth 2.0 Client Credentials flow.
+   * Cached until 80% of lifetime.
    */
   async getClientToken(): Promise<string> {
-    if (this.clientToken && Date.now() < this.tokenExpiresAt - 60_000) {
-      return this.clientToken;
+    if (this.accessToken && Date.now() < this.tokenExpiresAt) {
+      return this.accessToken;
     }
 
     const clientId = process.env.STITCH_CLIENT_ID;
     const clientSecret = process.env.STITCH_CLIENT_SECRET;
-
     if (!clientId || !clientSecret) {
       throw new InternalError('Stitch credentials not configured');
     }
 
-    const res = await fetch('https://express.stitch.money/api/v1/token', {
+    const res = await fetch(STITCH_TOKEN_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'accept': 'application/json' },
-      body: JSON.stringify({
-        clientId,
-        clientSecret,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
         scope: 'client_paymentrequest',
+        audience: STITCH_TOKEN_URL,
       }),
     });
 
@@ -41,35 +45,52 @@ class PaymentService {
       throw new ServiceUnavailableError(`Stitch token request failed: ${res.status} ${text}`);
     }
 
-    const body = await res.json() as StitchExpressTokenResponse;
-    const accessToken = body.data.accessToken;
-    this.clientToken = accessToken;
-    // Express tokens last 15 minutes; cache conservatively
-    this.tokenExpiresAt = Date.now() + 14 * 60 * 1000;
-
-    return accessToken;
+    const body = await res.json() as StitchOAuthTokenResponse;
+    this.accessToken = body.access_token;
+    this.tokenExpiresAt = Date.now() + (body.expires_in * 0.8 * 1000);
+    return this.accessToken;
   }
 
   /**
-   * Create a payment link via Stitch Express REST API.
-   * Returns the payment ID and payment link URL.
+   * Create a payment request via Stitch REST v2.
+   * Supports EFT (including Capitec Pay) + Cards.
+   * Amount is in Rands (not cents).
    */
   async createPaymentRequest(
     orderId: string,
-    amountInCents: number,
+    amountInRands: number,
     payerName: string,
-    payerPhone?: string
+    payerPhone: string
   ): Promise<CreatePaymentResult> {
     const token = await this.getClientToken();
+    const orderRef = orderId.slice(-8).toUpperCase();
 
-    const payload: Record<string, unknown> = {
-      amount: amountInCents,
-      merchantReference: orderId.slice(0, 50),
-      payerName: payerName.slice(0, 40),
+    const payload: StitchPaymentRequestBody = {
+      amount: { currency: 'ZAR', quantity: amountInRands },
+      externalReference: orderId,
+      expireAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      payer: {
+        identifier: payerPhone,
+        fullName: payerName.slice(0, 40),
+        mobileNumber: payerPhone,
+      },
+      paymentMethods: {
+        eft: {
+          enabled: true,
+          payerReference: `NowNow ${orderRef}`.slice(0, 12),
+          beneficiaryReference: orderRef.slice(0, 20),
+          beneficiary: {
+            name: process.env.STITCH_BENEFICIARY_NAME || '',
+            bank: process.env.STITCH_BENEFICIARY_BANK || '',
+            accountNumber: process.env.STITCH_BENEFICIARY_ACCOUNT || '',
+          },
+          capitecPay: { enabled: true },
+        },
+        card: { enabled: true },
+      },
     };
-    if (payerPhone) payload.payerPhoneNumber = payerPhone;
 
-    const res = await fetch('https://express.stitch.money/api/v1/payment-links', {
+    const res = await fetch(`${STITCH_API_URL}/payment-requests`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -80,73 +101,29 @@ class PaymentService {
 
     if (!res.ok) {
       const text = await res.text();
-      throw new ServiceUnavailableError(`Stitch payment link failed: ${res.status} ${text}`);
+      throw new ServiceUnavailableError(`Stitch payment request failed: ${res.status} ${text}`);
     }
 
-    const body = await res.json() as StitchPaymentLinkResponse;
+    const body = await res.json() as StitchPaymentResponse;
 
-    if (!body.success || !body.data?.payment) {
-      throw new InternalError('Stitch returned no payment data');
-    }
-
-    const payment = body.data.payment;
-
-    // Append redirect URL so Stitch redirects back to our app after payment
-    const redirectBase = process.env.STITCH_REDIRECT_BASE_URL || 'http://localhost:3000';
-    const redirectUrl = `${redirectBase}/checkout/payment-callback`;
-    const paymentUrl = `${payment.link}?redirect_url=${encodeURIComponent(redirectUrl)}`;
+    const redirectUrl = process.env.STITCH_REDIRECT_URL;
+    if (!redirectUrl) throw new InternalError('STITCH_REDIRECT_URL not configured — cannot redirect after payment');
+    const paymentUrl = `${body.interaction.url}?redirect_uri=${encodeURIComponent(redirectUrl)}`;
 
     return {
-      paymentId: payment.id,
+      paymentId: body.id,
       paymentUrl,
     };
   }
 
   /**
-   * Register a redirect URL with Stitch Express.
-   * Must be called at least once before redirect_url query params will work.
-   * Max 5 URLs per client. Duplicates are silently ignored.
-   */
-  async registerRedirectUrl(): Promise<void> {
-    const redirectBase = process.env.STITCH_REDIRECT_BASE_URL;
-    if (!redirectBase) return;
-
-    const url = `${redirectBase}/checkout/payment-callback`;
-    const token = await this.getClientToken();
-
-    const res = await fetch('https://express.stitch.money/api/v1/redirect-urls', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        'accept': 'application/json',
-      },
-      body: JSON.stringify({ url }),
-    });
-
-    if (res.ok) {
-      console.log(`Stitch redirect URL registered: ${url}`);
-    } else {
-      const text = await res.text();
-      // 409 = already registered, that's fine
-      if (res.status !== 409) {
-        console.warn(`Failed to register Stitch redirect URL: ${res.status} ${text}`);
-      }
-    }
-  }
-
-  /**
-   * Poll Stitch Express for the current status of a payment link.
+   * Check payment status via Stitch REST v2.
    */
   async checkPaymentStatus(paymentId: string): Promise<string> {
     const token = await this.getClientToken();
 
-    const res = await fetch(`https://express.stitch.money/api/v1/payment-links/${paymentId}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'accept': 'application/json',
-      },
+    const res = await fetch(`${STITCH_API_URL}/payment-requests/${paymentId}`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     if (!res.ok) {
@@ -154,55 +131,76 @@ class PaymentService {
       throw new ServiceUnavailableError(`Stitch status check failed: ${res.status} ${text}`);
     }
 
-    const body = await res.json() as StitchPaymentStatusResponse;
-    return body.data.payment.status;
+    const body = await res.json() as StitchPaymentResponse;
+    return body.status;
   }
 
   /**
-   * Verify Svix webhook signature (used by Stitch Express).
-   * Svix signs: "{svix-id}.{svix-timestamp}.{body}" with HMAC-SHA256.
-   * Secret may be prefixed with "whsec_" (base64-encoded key).
+   * Cancel a pending payment request via Stitch REST v2.
    */
-  async verifyWebhookSignature(
-    payload: string,
-    svixId: string,
-    svixTimestamp: string,
-    svixSignature: string,
-  ): Promise<boolean> {
+  async cancelPaymentRequest(paymentId: string, reason: string): Promise<void> {
+    const token = await this.getClientToken();
+
+    const res = await fetch(`${STITCH_API_URL}/payment-requests/cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ id: paymentId, reason }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn(`Stitch cancel failed (non-fatal): ${res.status} ${text}`);
+    }
+  }
+
+  /**
+   * Verify webhook signature using X-Stitch-Signature header.
+   * Format: t={unix_timestamp},hmac_sha256={hex_signature}
+   * Signed content: "{timestamp}.{raw_body}" with HMAC-SHA256
+   */
+  async verifyWebhookSignature(payload: string, signatureHeader: string): Promise<boolean> {
     const secret = process.env.STITCH_WEBHOOK_SECRET;
-    if (!secret) {
-      throw new InternalError('Stitch webhook secret not configured');
+    if (!secret) throw new InternalError('Stitch webhook secret not configured');
+
+    // Parse header: t=1234567890,hmac_sha256=abcdef...
+    const parts: Record<string, string> = {};
+    for (const pair of signatureHeader.split(',')) {
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx > 0) {
+        parts[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1);
+      }
     }
 
-    // Svix secrets are base64-encoded, optionally prefixed with "whsec_"
-    const secretBytes = Buffer.from(
-      secret.startsWith('whsec_') ? secret.slice(6) : secret,
-      'base64',
-    );
+    const timestamp = parts['t'];
+    const signature = parts['hmac_sha256'];
+    if (!timestamp || !signature) return false;
 
-    const signedContent = `${svixId}.${svixTimestamp}.${payload}`;
+    // Replay protection: reject timestamps older than 5 minutes
+    const ts = parseInt(timestamp, 10);
+    if (Math.abs(Date.now() / 1000 - ts) > 300) return false;
+
+    // Compute HMAC-SHA256
+    const signedContent = `${timestamp}.${payload}`;
     const encoder = new TextEncoder();
-
     const key = await crypto.subtle.importKey(
       'raw',
-      secretBytes,
+      encoder.encode(secret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['sign'],
     );
     const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(signedContent));
-    const computed = `v1,${Buffer.from(sig).toString('base64')}`;
+    const computed = Buffer.from(sig).toString('hex');
 
-    // svix-signature can contain multiple signatures separated by spaces
-    const expectedSignatures = svixSignature.split(' ');
-    // Use constant-time comparison to prevent timing attacks
+    // Constant-time comparison
     const { timingSafeEqual } = await import('node:crypto');
-    return expectedSignatures.some(s => {
-      const a = Buffer.from(s);
-      const b = Buffer.from(computed);
-      if (a.length !== b.length) return false;
-      return timingSafeEqual(a, b);
-    });
+    const a = Buffer.from(signature);
+    const b = Buffer.from(computed);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
   }
 }
 

@@ -73,6 +73,7 @@ export interface NewOrderPayload {
   orderId: string;
   vendorId: string;
   eventId?: string;
+  phone?: string;
 }
 
 export interface AdminOrderFeedPayload {
@@ -129,4 +130,5 @@ export interface WebSocketUser {
   userId: string;
   role: 'vendor' | 'organizer' | 'admin' | 'customer';
   vendorId?: string; // For vendor users — the vendor they belong to
+  phone?: string;    // For customer users — their verified phone
 }

@@ -38,7 +38,7 @@ const orderSchema = {
         total: { type: "number" },
         status: {
             type: "string",
-            enum: ["PAYMENT_PENDING", "PENDING", "PREPARING", "READY", "COLLECTED", "CANCELLED"]
+            enum: ["PAYMENT_PENDING", "PENDING", "PREPARING", "READY", "COLLECTED", "UNCOLLECTED", "CANCELLED"]
         },
         type: {
             type: "string",
@@ -153,9 +153,27 @@ export const getOrderByIdResponseSchema = {
     }
 };
 
-// CREATE order
+// New order item input — frontend sends only IDs + quantities, no prices
+const createOrderItemInputSchema = {
+    type: "object",
+    properties: {
+        menuItemId: { type: "string" },
+        quantity: { type: "number", minimum: 1, maximum: 99 },
+        selectedModifiers: {
+            type: "object",
+            description: "Map of modifier group IDs to arrays of selected modifier IDs",
+            additionalProperties: {
+                type: "array",
+                items: { type: "string" }
+            }
+        }
+    },
+    required: ["menuItemId", "quantity"]
+};
+
+// CREATE order — server calculates all prices from menu DB
 export const createOrderSchema = {
-    description: "Create a new order with optional scheduled pickup time",
+    description: "Create a new order. Server calculates all prices from menu DB.",
     tags: ['orders'],
     body: {
         type: "object",
@@ -163,22 +181,21 @@ export const createOrderSchema = {
             vendor_id: { type: "string" },
             event_id: { type: "string" },
             phone: { type: "string" },
-            items: { type: "array", items: orderItemSchema },
-            total: { type: "number", minimum: 0 },
-            notes: { type: "string" },
-            paymentMethod: { type: "string" },
-            scheduled_pickup_time: {
-                type: "string",
-                format: "date-time",
-                description: "Optional: ISO 8601 datetime for future order pickup. If omitted, order is immediate."
-            },
-            age_verified: { type: "boolean" },
+            items: { type: "array", items: createOrderItemInputSchema, minItems: 1 },
+            paymentMethod: { type: "string", enum: ["ONLINE", "CASH"] },
             idempotency_key: {
                 type: "string",
                 description: "Client-generated UUID to prevent duplicate orders on retry"
-            }
+            },
+            scheduled_pickup_time: {
+                type: "string",
+                format: "date-time",
+                description: "Optional: ISO 8601 datetime for future order pickup."
+            },
+            age_verified: { type: "boolean" },
+            notes: { type: "string", maxLength: 500 }
         },
-        required: ["vendor_id", "event_id", "phone", "items", "total"]
+        required: ["vendor_id", "event_id", "phone", "items", "paymentMethod", "idempotency_key"]
     },
     response: {
         201: {
@@ -192,6 +209,10 @@ export const createOrderSchema = {
         400: {
             type: "object",
             properties: { error: { type: "string" } }
+        },
+        409: {
+            type: "object",
+            properties: { error: { type: "string" }, code: { type: "string" } }
         },
         500: {
             type: "object",

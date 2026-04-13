@@ -23,6 +23,7 @@ export enum OrderStatus {
     PREPARING = 'PREPARING',
     READY = 'READY',
     COLLECTED = 'COLLECTED',
+    UNCOLLECTED = 'UNCOLLECTED',
     CANCELLED = 'CANCELLED',
 }
 
@@ -72,6 +73,36 @@ export interface Order {
     age_verified_at?: string;
     customer_id?: string;
     customer_name?: string;
+}
+
+// ── New server-side order creation input (frontend sends only IDs + quantities) ──
+
+export interface CreateOrderItemInput {
+    menuItemId: string;
+    quantity: number;
+    selectedModifiers: Record<string, string[]>;
+}
+
+export interface CreateOrderInput {
+    vendor_id: string;
+    event_id: string;
+    phone: string;
+    items: CreateOrderItemInput[];
+    paymentMethod: 'ONLINE' | 'CASH';
+    idempotency_key: string;
+    scheduled_pickup_time?: string;
+    age_verified?: boolean;
+    notes?: string;
+}
+
+export interface ValidatedOrderResult {
+    items: OrderItem[];
+    total: number;
+}
+
+export interface InventoryResult {
+    lowStock: Array<{ id: string; name: string; remaining: number }>;
+    soldOut: Array<{ id: string; name: string }>;
 }
 
 export interface PaginationParams {

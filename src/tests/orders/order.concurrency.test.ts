@@ -106,10 +106,10 @@ function makeOrderInput(overrides: Record<string, any> = {}) {
     event_id: EVENT_ID,
     phone: '+27821234567',
     items: [
-      { id: 'item-1', name: 'Burger', price: 80, quantity: 1, vendorId: VENDOR_ID, vendorName: 'Test Vendor', prepTime: 10, imageUrl: '' },
+      { menuItemId: 'item-1', quantity: 1, selectedModifiers: {} },
     ],
-    total: 80,
-    payment_method: 'CASH',
+    paymentMethod: 'CASH' as const,
+    idempotency_key: 'test-key-' + Math.random().toString(36).slice(2),
     ...overrides,
   };
 }
@@ -149,46 +149,65 @@ function makeCreatedOrder(overrides: Record<string, any> = {}) {
   };
 }
 
-/** Mock the RPC to return an error status. */
+/** Mock validation + inventory RPCs to succeed, then the order RPC to return an error. */
 function mockRpcError(status: string, message: string, meta?: any) {
-  // Mock discount query (always called before RPC)
   supabaseMock.from.mockReturnValue(createSupabaseMock({ data: [], error: null }));
-  supabaseMock.rpc.mockResolvedValue({
-    data: { status, message, ...(meta ? { meta } : {}) },
-    error: null,
+  let rpcCallCount = 0;
+  supabaseMock.rpc.mockImplementation(() => {
+    rpcCallCount++;
+    if (rpcCallCount === 1) {
+      // validate_order_items
+      return Promise.resolve({ data: { status: 'ok', items: [{ id: 'item-1', name: 'Burger', price: 80, quantity: 1 }], total: 80 }, error: null });
+    }
+    if (rpcCallCount === 2) {
+      // decrement_inventory
+      return Promise.resolve({ data: { status: 'ok', low_stock: [], sold_out: [] }, error: null });
+    }
+    // create_order_validated — return the error
+    return Promise.resolve({ data: { status, message, ...(meta ? { meta } : {}) }, error: null });
   });
 }
 
-/** Mock the RPC to return a successful order creation. */
+/** Mock all 3 RPCs to succeed for a full order creation. */
 function mockRpcSuccess(menuConfig?: any, orderOverrides?: Record<string, any>) {
   const order = makeCreatedOrder(orderOverrides);
   const updatedOrder = { ...order, qr_code: 'ORDER:' + order.id, qr_image: 'https://storage.test/qr.png' };
 
-  // Mock from() calls: discount query first, then QR update, then any others
   let fromCallCount = 0;
   supabaseMock.from.mockImplementation(() => {
     fromCallCount++;
     if (fromCallCount === 1) {
-      // Discount resolution query
       return createSupabaseMock({ data: [], error: null });
     }
-    // QR update and any subsequent calls
     return createSupabaseMock({ data: updatedOrder, error: null });
   });
 
-  supabaseMock.rpc.mockResolvedValue({
-    data: {
-      status: 'ok',
-      order,
-      vendor: makeVendorData(),
-      menu_config: menuConfig ?? null,
-      event: eventData,
-      queue_position: 1,
-      estimated_ready_time: new Date(Date.now() + 15 * 60_000).toISOString(),
-      customer_name: null,
-      capacity_incremented: false,
-    },
-    error: null,
+  let rpcCallCount = 0;
+  supabaseMock.rpc.mockImplementation(() => {
+    rpcCallCount++;
+    if (rpcCallCount === 1) {
+      // validate_order_items
+      return Promise.resolve({ data: { status: 'ok', items: order.items, total: order.total }, error: null });
+    }
+    if (rpcCallCount === 2) {
+      // decrement_inventory
+      return Promise.resolve({ data: { status: 'ok', low_stock: [], sold_out: [] }, error: null });
+    }
+    // create_order_validated
+    return Promise.resolve({
+      data: {
+        status: 'ok',
+        order,
+        vendor: makeVendorData(),
+        menu_config: menuConfig ?? null,
+        event: eventData,
+        queue_position: 1,
+        estimated_ready_time: new Date(Date.now() + 15 * 60_000).toISOString(),
+        customer_name: null,
+        capacity_incremented: false,
+      },
+      error: null,
+    });
   });
 }
 

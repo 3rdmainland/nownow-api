@@ -220,10 +220,11 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     // Create new order (rate limited)
     fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer], config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
         const orderData = request.body as any;
-        // Attach customer_id from JWT if authenticated
-        const user = request.user as { customerId?: string; role?: string } | undefined;
+        // Attach customer_id and customer_name from JWT if authenticated
+        const user = request.user as { customerId?: string; customerName?: string; role?: string } | undefined;
         if (user?.customerId && user?.role === 'customer') {
             orderData.customer_id = user.customerId;
+            if (user.customerName) orderData.customer_name = user.customerName;
         }
         const result = await orderService.createOrder(orderData);
         const { paymentUrl, ...order } = result;

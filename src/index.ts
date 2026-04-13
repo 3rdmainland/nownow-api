@@ -39,6 +39,8 @@ import vendorEventController from "./vendor-event/vendor-event.controller";
 import adminNotificationController from "./notifications/notifications.controller";
 import exportController from "./export/export.controller";
 import recipientNotificationController from "./notifications/recipient-notification.controller";
+import pushController from "./push/push.controller";
+import reconciliationEndpoint from "./payment/payment-reconciliation.endpoint";
 import { AppError } from "./lib/errors";
 import { getFeatureFlags } from "./lib/feature-flags";
 
@@ -105,7 +107,7 @@ await fastify.register(fastifyHelmet, {
 
 // Rate limiting (local store — Upstash REST client is not ioredis-compatible)
 await fastify.register(fastifyRateLimit, {
-    max: process.env.NODE_ENV === 'test' ? 10_000 : 500,
+    max: process.env.NODE_ENV === 'test' ? 10_000 : 3000,
     timeWindow: '1 minute',
 });
 
@@ -193,6 +195,8 @@ fastify.register(vendorEventController, { prefix: "/vendor-events" });
 fastify.register(adminNotificationController, { prefix: "/admin/notifications" });
 fastify.register(recipientNotificationController, { prefix: "/notifications" });
 fastify.register(exportController, { prefix: "/export" });
+fastify.register(pushController, { prefix: "/push" });
+fastify.register(reconciliationEndpoint, { prefix: "/internal/reconciliation" });
 
 // Public feature flags endpoint (no auth required)
 fastify.get('/config/flags', async () => {

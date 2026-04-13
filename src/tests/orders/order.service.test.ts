@@ -1179,10 +1179,12 @@ describe('OrderService', () => {
             event_id: 'event-1',
             phone: '0811234567',
             items: [
-                { id: 'item-1', name: 'Burger', price: 80, basePrice: 80, quantity: 1, vendorId: 'vendor-1', vendorName: 'Test Vendor', prepTime: 10 },
+                { menuItemId: 'item-1', quantity: 1, selectedModifiers: {} },
             ],
-            total: 80,
+            idempotency_key: 'test-idem-key-pay',
         };
+
+        const validatedItems = [{ id: 'item-1', name: 'Burger', price: 80, basePrice: 80, quantity: 1, vendorId: 'vendor-1', vendorName: '', prepTime: 10, imageUrl: '', modifierSummary: '', selectedModifiers: {} }];
 
         const vendorData = { estimated_prep_time: 10, name: 'Test Vendor', minimum_order: null, service_fee_percent: null };
         const eventData = {
@@ -1202,40 +1204,42 @@ describe('OrderService', () => {
             operating_schedule: null,
             allow_pay_at_stall: true,
         };
-        const menuConfigNoCash = { ...menuConfigWithCash, allow_pay_at_stall: false };
 
         const createdOrder = makeOrder({ vendor_id: 'vendor-1', event_id: 'event-1', status: 'PENDING', payment_method: 'CASH', payment_status: 'pay_at_stall' });
 
-        /** Helper that mocks `from()` based on the table name passed. */
-        function mockFromByTable(tableMap: Record<string, Array<{ data: any; error: any }>>) {
-            const counters: Record<string, number> = {};
-            supabaseMock.from.mockImplementation((table: string) => {
-                counters[table] = (counters[table] ?? 0);
-                const responses = tableMap[table] ?? [{ data: null, error: null }];
-                const resp = responses[counters[table]] ?? responses[responses.length - 1];
-                counters[table]++;
-                return createSupabaseMock(resp);
+        /** Helper: mock the 3-RPC sequence (validate → inventory → create) */
+        function mock3RpcSuccess(rpcResult: any) {
+            let rpcCallCount = 0;
+            supabaseMock.rpc.mockImplementation(() => {
+                rpcCallCount++;
+                if (rpcCallCount === 1) return Promise.resolve({ data: { status: 'ok', items: validatedItems, total: 80 }, error: null });
+                if (rpcCallCount === 2) return Promise.resolve({ data: { status: 'ok', low_stock: [], sold_out: [] }, error: null });
+                return Promise.resolve({ data: rpcResult, error: null });
+            });
+        }
+
+        function mock3RpcWithOrderError(errorStatus: string, errorMessage: string) {
+            let rpcCallCount = 0;
+            supabaseMock.rpc.mockImplementation(() => {
+                rpcCallCount++;
+                if (rpcCallCount === 1) return Promise.resolve({ data: { status: 'ok', items: validatedItems, total: 80 }, error: null });
+                if (rpcCallCount === 2) return Promise.resolve({ data: { status: 'ok', low_stock: [], sold_out: [] }, error: null });
+                return Promise.resolve({ data: { status: errorStatus, message: errorMessage }, error: null });
             });
         }
 
         it('creates a PENDING order with payment_status=pay_at_stall when paymentMethod is CASH', async () => {
-            // Mock discount resolution (returns no discounts)
             mockFrom({ data: [], error: null });
-
-            // Mock the RPC call
-            supabaseMock.rpc.mockResolvedValue({
-                data: {
-                    status: 'ok',
-                    order: createdOrder,
-                    vendor: vendorData,
-                    menu_config: menuConfigWithCash,
-                    event: eventData,
-                    queue_position: 1,
-                    estimated_ready_time: new Date().toISOString(),
-                    customer_name: null,
-                    capacity_incremented: false,
-                },
-                error: null,
+            mock3RpcSuccess({
+                status: 'ok',
+                order: createdOrder,
+                vendor: vendorData,
+                menu_config: menuConfigWithCash,
+                event: eventData,
+                queue_position: 1,
+                estimated_ready_time: new Date().toISOString(),
+                customer_name: null,
+                capacity_incremented: false,
             });
 
             const result = await service.createOrder({
@@ -1247,17 +1251,8 @@ describe('OrderService', () => {
         });
 
         it('rejects cash order when allow_pay_at_stall is false', async () => {
-            // Mock discount resolution
             mockFrom({ data: [], error: null });
-
-            // Mock the RPC returning cash_not_allowed
-            supabaseMock.rpc.mockResolvedValue({
-                data: {
-                    status: 'cash_not_allowed',
-                    message: 'Pay at stall is not available for this vendor at this event.',
-                },
-                error: null,
-            });
+            mock3RpcWithOrderError('cash_not_allowed', 'Pay at stall is not available for this vendor at this event.');
 
             await expect(
                 service.createOrder({ ...baseOrderInput, paymentMethod: 'CASH' } as any)
@@ -1267,26 +1262,19 @@ describe('OrderService', () => {
         it('creates a PAYMENT_PENDING order and returns paymentUrl for online payment', async () => {
             const onlineOrder = makeOrder({ vendor_id: 'vendor-1', event_id: 'event-1', status: 'PAYMENT_PENDING', payment_method: 'ONLINE' });
 
-            // Mock discount resolution
             mockFrom({ data: [], error: null });
-
-            // Mock the RPC call
-            supabaseMock.rpc.mockResolvedValue({
-                data: {
-                    status: 'ok',
-                    order: onlineOrder,
-                    vendor: vendorData,
-                    menu_config: menuConfigWithCash,
-                    event: eventData,
-                    queue_position: 1,
-                    estimated_ready_time: new Date().toISOString(),
-                    customer_name: 'Test Customer',
-                    capacity_incremented: false,
-                },
-                error: null,
+            mock3RpcSuccess({
+                status: 'ok',
+                order: onlineOrder,
+                vendor: vendorData,
+                menu_config: menuConfigWithCash,
+                event: eventData,
+                queue_position: 1,
+                estimated_ready_time: new Date().toISOString(),
+                customer_name: 'Test Customer',
+                capacity_incremented: false,
             });
 
-            // Mock the stitch_payment_id update
             supabaseMock.from.mockReturnValue(createSupabaseMock({ data: onlineOrder, error: null }));
 
             const result = await service.createOrder({

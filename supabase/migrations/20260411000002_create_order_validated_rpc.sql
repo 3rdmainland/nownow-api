@@ -223,6 +223,7 @@ BEGIN
            AND vendor_id = p_vendor_id
            AND total = p_total
            AND event_id = p_event_id
+           AND status NOT IN ('CANCELLED', 'PAYMENT_PENDING')
            AND created_at >= (now() - interval '30 seconds');
 
         IF v_dup_count > 0 THEN

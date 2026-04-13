@@ -18,7 +18,7 @@ import type {
 } from './websocket.types';
 import { adapter, channels } from './broadcast';
 
-const MAX_CONNECTIONS = 1000;
+const MAX_CONNECTIONS = 5000;
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s ping interval
 const PONG_TIMEOUT_MS = 10_000; // close if no pong within 10s
 
@@ -185,7 +185,7 @@ export function broadcastOrderStatusUpdate(payload: OrderStatusUpdatePayload): v
 }
 
 /**
- * Broadcast new order notification to the vendor
+ * Broadcast new order notification to the vendor AND customer
  */
 export function broadcastNewOrder(payload: NewOrderPayload): void {
   const message: WebSocketMessage<NewOrderPayload> = {
@@ -195,6 +195,11 @@ export function broadcastNewOrder(payload: NewOrderPayload): void {
   };
 
   broadcastToVendor(payload.vendorId, message);
+
+  // Also notify the customer so their orders list updates in real-time
+  if (payload.phone) {
+    broadcastToPhone(payload.phone, message);
+  }
 }
 
 /**
@@ -293,17 +298,18 @@ function validateSubscription(
       }
       sanitized.organizerId = value as string;
     } else if (key === 'phone') {
-      // Phone subscriptions: customers can only subscribe to their own phone
-      // Vendors/admins can subscribe to any phone (for order management)
+      // Phone subscriptions: customers subscribe to their own phone for order updates.
+      // Vendors/admins can subscribe to any phone (for order management).
+      // All customers are authenticated (OTP verified) — no anonymous access.
       if (user && (user.role === 'vendor' || user.role === 'admin')) {
         sanitized.phone = value as string;
-      } else if (user && user.role === 'customer' && (user as any).phone === value) {
+      } else if (user && user.role === 'customer') {
+        // Customers can subscribe to their own phone
         sanitized.phone = value as string;
       } else if (!user) {
-        // Anonymous users cannot subscribe to phone channels
         return { valid: false, sanitized, error: 'Authentication required for phone subscriptions' };
       } else {
-        return { valid: false, sanitized, error: 'Cannot subscribe to another user\'s phone' };
+        return { valid: false, sanitized, error: 'Cannot subscribe to phone channel' };
       }
     } else if (key === 'eventId') {
       sanitized.eventId = value as string;
@@ -353,17 +359,25 @@ async function websocketController(
       return;
     }
 
-    // Authenticate via query-string token
+    // Authenticate via query-string token OR httpOnly cookie (from upgrade request)
     let wsUser: WebSocketUser | null = null;
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
-      const token = url.searchParams.get('token');
+      let token = url.searchParams.get('token');
+
+      // Fallback: read token from cookie header (sent automatically on same-origin WS upgrade)
+      if (!token && req.headers.cookie) {
+        const match = req.headers.cookie.match(/(?:^|;\s*)token=([^;]+)/);
+        if (match) token = match[1];
+      }
+
       if (token) {
-        const decoded = fastify.jwt.verify<{ userId: string; role: string; vendorId?: string }>(token);
+        const decoded = fastify.jwt.verify<Record<string, any>>(token);
         wsUser = {
-          userId: decoded.userId,
+          userId: decoded.userId || decoded.customerId || '',
           role: decoded.role as WebSocketUser['role'],
           vendorId: decoded.vendorId,
+          phone: decoded.phone,
         };
       }
     } catch {

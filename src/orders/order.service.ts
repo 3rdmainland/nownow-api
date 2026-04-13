@@ -1,4 +1,4 @@
-import {Order, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats, TimeSeriesGranularity, TimeSeriesStats, TimeSeriesBucket, TimeSeriesSummary, PreviousPeriodSummary, RefundOrderDto} from "./order.types";
+import {Order, OrderItem, OrderStatus, OrderType, PaginationParams, PaginatedResponse, OrderStats, TimeSeriesGranularity, TimeSeriesStats, TimeSeriesBucket, TimeSeriesSummary, PreviousPeriodSummary, RefundOrderDto, CreateOrderItemInput, ValidatedOrderResult, InventoryResult} from "./order.types";
 import {supabase, safeQuery} from "../lib/supabase";
 import { getWhatsappService } from "../whatsapp/whatsapp.service";
 import { QRHelper } from '../lib/qr.helper';
@@ -30,6 +30,54 @@ export class OrderService {
 
     constructor() {
         this.scheduler = new OrderScheduler();
+    }
+
+    /**
+     * Server-side price calculation + modifier validation.
+     * Calls the validate_order_items RPC which fetches menu prices from DB,
+     * validates modifiers, and returns server-calculated prices.
+     */
+    async validateOrderItems(vendorId: string, eventId: string, items: CreateOrderItemInput[]): Promise<ValidatedOrderResult> {
+        const { data, error } = await supabase.rpc('validate_order_items', {
+            p_vendor_id: vendorId,
+            p_event_id: eventId,
+            p_items: items,
+        });
+
+        if (error) throw new ValidationError(`Order validation failed: ${error.message}`);
+
+        if (data.status === 'validation_error') {
+            throw new ValidationError(data.errors.join('; '));
+        }
+
+        return {
+            items: data.items as OrderItem[],
+            total: Number(data.total),
+        };
+    }
+
+    /**
+     * Atomic inventory decrement for order items.
+     * Decrements stock for tracked items and increments per-item order counts.
+     * Returns low stock / sold out alerts for vendor notifications.
+     */
+    async decrementInventory(vendorId: string, eventId: string, items: CreateOrderItemInput[]): Promise<InventoryResult> {
+        const { data, error } = await supabase.rpc('decrement_inventory', {
+            p_vendor_id: vendorId,
+            p_event_id: eventId,
+            p_items: items.map(i => ({ menuItemId: i.menuItemId, quantity: i.quantity })),
+        });
+
+        if (error) throw new ValidationError(`Inventory check failed: ${error.message}`);
+
+        if (data.status === 'out_of_stock') {
+            throw new ValidationError(data.errors.join('; '));
+        }
+
+        return {
+            lowStock: data.low_stock || [],
+            soldOut: data.sold_out || [],
+        };
     }
 
     async getAllOrders(params?: { vendorId?: string; eventId?: string; status?: string; startDate?: string; endDate?: string; pagination?: PaginationParams }): Promise<PaginatedResponse<Order>> {
@@ -74,29 +122,31 @@ export class OrderService {
     }
 
     async createOrder(
-        order: Omit<Order, 'id' | 'created_at' | 'status' | 'type' | 'estimatedPrepTime' | 'qr_image' | 'qr_code'>
+        input: import('./order.types.js').CreateOrderInput & { customer_id?: string; customer_name?: string }
     ): Promise<Order & { paymentUrl: string }> {
         const qrHelper = new QRHelper();
-        const paymentMethod = (order as any).paymentMethod || (order as any).payment_method || 'ONLINE';
-        const isCashOrder = paymentMethod === 'CASH';
-        const idempotencyKey = (order as any).idempotency_key || null;
+        const isCashOrder = input.paymentMethod === 'CASH';
 
-        // ── Step 1: Discount resolution (1 Supabase query) ──────────────
+        // ── Step 1: Server-side price calculation + modifier validation ──
+        const validated = await this.validateOrderItems(input.vendor_id, input.event_id, input.items);
+
+        // ── Step 2: Atomic inventory decrement ──────────────────────────
+        const inventoryResult = await this.decrementInventory(input.vendor_id, input.event_id, input.items);
+
+        // ── Step 3: Apply discounts to server-calculated prices ─────────
         const discountService = new DiscountService();
-        const discountInputs = order.items.map((item: any) => ({
+        const discountInputs = validated.items.map((item: any) => ({
             itemId: item.id,
-            price: item.originalPrice ?? item.basePrice ?? item.price,
+            price: item.basePrice ?? item.price,
         }));
         const discountMap = await discountService.resolveDiscountsForMenu(
-            order.event_id,
-            order.vendor_id,
+            input.event_id,
+            input.vendor_id,
             discountInputs
         );
 
-        // ── Step 2: Apply discounts + calculate total (pure JS) ─────────
-        const validatedItems = order.items.map((item: any) => {
+        const validatedItems = validated.items.map((item: any) => {
             const basePrice = item.basePrice ?? item.price;
-            const priceForDiscount = item.originalPrice ?? basePrice;
             const resolvedDiscount = discountMap.get(item.id);
 
             if (resolvedDiscount) {
@@ -105,7 +155,7 @@ export class OrderService {
                 return {
                     ...item,
                     price: serverPrice,
-                    originalPrice: priceForDiscount + modifierDelta,
+                    originalPrice: basePrice + modifierDelta,
                     discountId: resolvedDiscount.discountId,
                     discountSavings: resolvedDiscount.savings,
                 };
@@ -117,29 +167,67 @@ export class OrderService {
             (sum: number, item: any) => sum + (item.price * item.quantity), 0
         );
 
-        // ── Step 3: Call the single-transaction RPC (1 Supabase call) ───
+        // ── Step 4: Validate scheduled pickup time + slot capacity ────────
+        if (input.scheduled_pickup_time) {
+            const pickup = new Date(input.scheduled_pickup_time);
+            const now = new Date();
+
+            if (pickup.getTime() < now.getTime() + 10 * 60 * 1000) {
+                throw new ValidationError('Pickup time must be at least 10 minutes in the future');
+            }
+
+            // Check slot capacity if configured
+            const { data: menuConfig } = await supabase
+                .from('event_menu_configurations')
+                .select('max_orders_per_slot, slot_duration_minutes')
+                .eq('vendor_id', input.vendor_id)
+                .eq('event_id', input.event_id)
+                .maybeSingle();
+
+            if (menuConfig?.max_orders_per_slot) {
+                const slotDuration = menuConfig.slot_duration_minutes || 15;
+                const slotMs = slotDuration * 60 * 1000;
+                const slotStart = new Date(Math.floor(pickup.getTime() / slotMs) * slotMs);
+                const slotEnd = new Date(slotStart.getTime() + slotMs);
+
+                const { count } = await supabase
+                    .from('orders')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('vendor_id', input.vendor_id)
+                    .eq('event_id', input.event_id)
+                    .in('status', ['PENDING', 'PREPARING', 'READY', 'PAYMENT_PENDING'])
+                    .gte('scheduled_pickup_time', slotStart.toISOString())
+                    .lt('scheduled_pickup_time', slotEnd.toISOString());
+
+                if ((count || 0) >= menuConfig.max_orders_per_slot) {
+                    throw new ValidationError('This pickup time slot is full. Please choose another time.');
+                }
+            }
+        }
+
+        // ── Step 5: Call the single-transaction RPC (1 Supabase call) ───
         // This replaces: vendor fetch, event fetch, menu config fetch+lock,
         // capacity increment, cooldown check, max orders check, dedup check,
         // idempotency check, customer name lookup, queue position calc, INSERT.
         const { data: rpcResult, error: rpcError } = await safeQuery(async () =>
             await supabase.rpc('create_order_validated', {
-                p_vendor_id: order.vendor_id,
-                p_event_id: order.event_id,
-                p_phone: order.phone,
+                p_vendor_id: input.vendor_id,
+                p_event_id: input.event_id,
+                p_phone: input.phone,
                 p_items: validatedItems,
                 p_total: Math.round(validatedTotal * 100) / 100,
                 p_payment_method: isCashOrder ? 'CASH' : 'ONLINE',
-                p_notes: order.notes || null,
-                p_customer_id: order.customer_id || null,
-                p_customer_name: (order as any).customer_name || null,
-                p_idempotency_key: idempotencyKey,
-                p_estimated_prep_time: null, // let RPC use vendor default + buffer
-                p_queue_position: null,      // let RPC calculate
-                p_estimated_ready_time: null, // let RPC calculate
-                p_scheduled_pickup_time: order.scheduled_pickup_time || null,
-                p_service_fee: 0,            // calculated below after we get vendor data
-                p_age_verified: (order as any).age_verified || false,
-                p_qr_code: null,             // RPC generates placeholder
+                p_notes: input.notes || null,
+                p_customer_id: input.customer_id || null,
+                p_customer_name: input.customer_name || null,
+                p_idempotency_key: input.idempotency_key,
+                p_estimated_prep_time: null,
+                p_queue_position: null,
+                p_estimated_ready_time: null,
+                p_scheduled_pickup_time: input.scheduled_pickup_time || null,
+                p_service_fee: 0,
+                p_age_verified: input.age_verified || false,
+                p_qr_code: null,
             })
         );
 
@@ -186,8 +274,7 @@ export class OrderService {
 
         // Check minimum order value (vendor data came from RPC)
         if (vendor.minimum_order && validatedTotal < vendor.minimum_order) {
-            // Rollback: cancel the order and decrement counter
-            await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+            await this.rollbackOrder(createdOrder.id, input.vendor_id, input.event_id, capacityIncremented);
             throw new ValidationError(
                 `Minimum order value is R${vendor.minimum_order.toFixed(2)}. ` +
                 `Your order total is R${validatedTotal.toFixed(2)}.`
@@ -212,8 +299,8 @@ export class OrderService {
 
         // Check operating hours (JS logic on schedule data from RPC)
         if (menuConfig) {
-            const checkTime = order.scheduled_pickup_time
-                ? new Date(order.scheduled_pickup_time)
+            const checkTime = input.scheduled_pickup_time
+                ? new Date(input.scheduled_pickup_time)
                 : new Date();
             const pad = (n: number) => n.toString().padStart(2, '0');
             const checkHHMM = `${pad(checkTime.getUTCHours())}:${pad(checkTime.getUTCMinutes())}`;
@@ -224,16 +311,16 @@ export class OrderService {
 
             if (daySchedule) {
                 if (daySchedule.isClosed) {
-                    await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+                    await this.rollbackOrder(createdOrder.id, input.vendor_id, input.event_id, capacityIncremented);
                     throw new ValidationError(
-                        order.scheduled_pickup_time
+                        input.scheduled_pickup_time
                             ? `This vendor is not operating on ${checkDate}.`
                             : 'This vendor is not operating today.'
                     );
                 }
                 if (daySchedule.openTime && daySchedule.closeTime && daySchedule.openTime !== daySchedule.closeTime) {
                     if (checkHHMM < daySchedule.openTime || checkHHMM >= daySchedule.closeTime) {
-                        await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+                        await this.rollbackOrder(createdOrder.id, input.vendor_id, input.event_id, capacityIncremented);
                         throw new ValidationError(
                             `This vendor operates ${daySchedule.openTime} – ${daySchedule.closeTime} on ${checkDate}.`
                         );
@@ -241,7 +328,7 @@ export class OrderService {
                 }
             } else if (menuConfig.event_open_time && menuConfig.event_close_time && menuConfig.event_open_time !== menuConfig.event_close_time) {
                 if (checkHHMM < menuConfig.event_open_time || checkHHMM >= menuConfig.event_close_time) {
-                    await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+                    await this.rollbackOrder(createdOrder.id, input.vendor_id, input.event_id, capacityIncremented);
                     throw new ValidationError(
                         `This vendor is only accepting orders between ${menuConfig.event_open_time} and ${menuConfig.event_close_time}.`
                     );
@@ -277,9 +364,33 @@ export class OrderService {
         }
 
         // Fire-and-forget: update queue positions
-        this.scheduler.updateQueuePositions(order.vendor_id).catch(err =>
+        this.scheduler.updateQueuePositions(input.vendor_id).catch(err =>
             console.error('Failed to update queue positions:', err?.message || err)
         );
+
+        // Fire-and-forget: send push notifications for inventory alerts
+        if (inventoryResult.soldOut.length > 0 || inventoryResult.lowStock.length > 0) {
+            import('../push/push.service.js').then(({ pushService: push }) => {
+                for (const item of inventoryResult.soldOut) {
+                    push.sendToVendorUsers(input.vendor_id, {
+                        title: `Sold out: ${item.name}`,
+                        body: 'Stock depleted',
+                        tag: `sold-out-${item.id}`,
+                        data: { url: '/menu', type: 'sold_out' },
+                    }).catch(() => {});
+                    // Broadcast availability update via WebSocket
+                    broadcastToVendor(input.vendor_id, { type: 'ITEM_AVAILABILITY_UPDATE', payload: { vendorId: input.vendor_id, eventId: input.event_id, itemId: item.id, status: 'OUT_OF_STOCK' }, timestamp: new Date().toISOString() });
+                }
+                for (const item of inventoryResult.lowStock) {
+                    push.sendToVendorUsers(input.vendor_id, {
+                        title: `Low stock: ${item.name}`,
+                        body: `${item.remaining} remaining`,
+                        tag: `low-stock-${item.id}`,
+                        data: { url: '/menu', type: 'low_stock' },
+                    }).catch(() => {});
+                }
+            }).catch(() => {});
+        }
 
         // ── Step 7: Cash orders — done, send notifications ──────────────
         if (isCashOrder) {
@@ -290,21 +401,23 @@ export class OrderService {
         }
 
         // ── Step 8: Online payment (1 Stitch HTTP call + 1 DB update) ───
-        const payerName = result.customer_name || (order as any).customer_name || 'Customer';
+        const payerName = result.customer_name || input.customer_name || 'Customer';
         let paymentId: string;
         let paymentUrl: string;
         try {
             const payment = await paymentService.createPaymentRequest(
                 updatedOrder.id,
-                Math.round(validatedTotal * 100),
+                validatedTotal,  // REST v2 uses rands, not cents
                 payerName,
-                order.phone
+                input.phone
             );
             paymentId = payment.paymentId;
             paymentUrl = payment.paymentUrl;
         } catch (paymentErr) {
             // Payment failed — cancel order and rollback counter
-            await this.rollbackOrder(createdOrder.id, order.vendor_id, order.event_id, capacityIncremented);
+            await this.rollbackOrder(createdOrder.id, input.vendor_id, input.event_id, capacityIncremented);
+            // Restore inventory since order is being rolled back
+            void supabase.rpc('restore_inventory', { p_order_id: createdOrder.id });
             throw paymentErr;
         }
 
@@ -316,7 +429,7 @@ export class OrderService {
         return { ...normalizeOrderItems(updatedOrder), paymentUrl };
     }
 
-    /** Cancel an order and decrement active orders counter (used on post-insert failures). */
+    /** Cancel an order, decrement active orders counter, and restore inventory (used on post-insert failures). */
     private async rollbackOrder(orderId: string, vendorId: string, eventId: string, decrementCounter: boolean): Promise<void> {
         const { error: cancelErr } = await supabase
             .from('orders')
@@ -331,6 +444,11 @@ export class OrderService {
             });
             if (decErr) console.error('Failed to decrement active orders during rollback:', decErr.message);
         }
+
+        // Restore inventory
+        supabase.rpc('restore_inventory', { p_order_id: orderId }).then(({ error: restoreErr }) => {
+            if (restoreErr) console.error('Failed to restore inventory during rollback:', restoreErr.message);
+        });
     }
 
     /**
@@ -361,6 +479,7 @@ export class OrderService {
                 orderId: order.id,
                 vendorId: order.vendor_id,
                 eventId: order.event_id,
+                phone: order.phone,
             });
 
             // Notify admin dashboard live feed
@@ -562,6 +681,13 @@ export class OrderService {
             throw new Error(`Failed to update order status: ${error.message}`);
         }
 
+        // Restore inventory on cancellation (before PREPARING = full restore)
+        if (status === OrderStatus.CANCELLED) {
+            void supabase.rpc('restore_inventory', { p_order_id: id }).then(({ error: restErr }) => {
+                if (restErr) console.error('Failed to restore inventory on cancellation:', restErr.message);
+            });
+        }
+
         // Decrement active orders counter when order leaves the active pipeline
         if (
             (status === OrderStatus.COLLECTED || status === OrderStatus.CANCELLED) &&
@@ -640,6 +766,26 @@ export class OrderService {
             },
             timestamp: new Date().toISOString(),
         });
+
+        // Fire-and-forget: Web Push notifications for status changes
+        import('../push/push.service.js').then(({ pushService: push }) => {
+            const orderRef = data.id.slice(-4).toUpperCase();
+            if (status === OrderStatus.PREPARING && data.phone) {
+                push.sendToUser('customer', data.phone, {
+                    title: 'Being prepared',
+                    body: `#${orderRef} is being made`,
+                    tag: `order-preparing-${data.id}`,
+                    data: { url: '/orders', type: 'order_preparing', orderId: data.id },
+                }).catch(() => {});
+            } else if (status === OrderStatus.READY && data.phone) {
+                push.sendToUser('customer', data.phone, {
+                    title: 'Order ready!',
+                    body: `#${orderRef} is ready for collection`,
+                    tag: `order-ready-${data.id}`,
+                    data: { url: '/orders', type: 'order_ready', orderId: data.id },
+                }).catch(() => {});
+            }
+        }).catch(() => {});
 
         return normalizeOrderItems(data);
     }
