@@ -1459,8 +1459,12 @@ export class VendorMenuService {
         try {
             await cache.del(
                 menuCacheKeys.eventMenu(vendorId, eventId),
-                menuCacheKeys.eventConfig(vendorId, eventId)
+                menuCacheKeys.eventConfig(vendorId, eventId),
+                `vendors:event:${eventId}:menuCategories`
             );
+            // Clear all paginated vendor-list keys for this event
+            // (keys like vendors:event:{eventId}:page:1:size:20, etc.)
+            await cache.delByPattern(`vendors:event:${eventId}:*`);
         } catch (error) {
             console.error('Error invalidating event menu caches:', error);
         }

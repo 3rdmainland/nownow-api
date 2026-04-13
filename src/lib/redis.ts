@@ -23,6 +23,7 @@ const noopRedis = {
     ping: async () => 'PONG',
     incr: async () => 1,
     expire: async () => 1,
+    scan: async () => [0, []],
     pipeline: () => noopPipeline,
 } as unknown as Redis
 
@@ -143,6 +144,19 @@ export const cache = {
             }
         }
         await pipeline.exec()
+    },
+
+    // Delete all keys matching a glob pattern (e.g. "vendors:event:abc123:*")
+    async delByPattern(pattern: string): Promise<void> {
+        let cursor: string | number = 0;
+        do {
+            const result: [string, string[]] = await redis.scan(cursor, { match: pattern, count: 100 });
+            cursor = result[0];
+            const keys = result[1];
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+        } while (cursor !== '0');
     },
 }
 

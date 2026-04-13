@@ -480,7 +480,7 @@ export class OrderScheduler {
     calculateActualPrepTime(preparedAt: string, readyAt: string): number {
         const prepared = new Date(preparedAt);
         const ready = new Date(readyAt);
-        return Math.round((ready.getTime() - prepared.getTime()) / 60000);
+        return Math.max(1, Math.round((ready.getTime() - prepared.getTime()) / 60000));
     }
 
     /**
