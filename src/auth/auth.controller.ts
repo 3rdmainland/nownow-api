@@ -14,6 +14,8 @@ import { AuthService } from './auth.service.js';
 import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
 import { authenticate, authenticateAdmin } from '../lib/auth.js';
 import { sendEmail } from '../lib/email.js';
+import * as staffService from '../staff/staff.service.js';
+import { AppError } from '../lib/errors.js';
 
 const COOKIE_NAME = 'token';
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
@@ -161,6 +163,55 @@ const authController: FastifyPluginAsync = async (fastify) => {
     }
     return { user };
   });
+
+  // GET /auth/invite/staff/:token — validate staff invite (public)
+  fastify.get<{ Params: { token: string } }>(
+    '/invite/staff/:token',
+    async (request) => {
+      const invite = await staffService.validateStaffInvite(request.params.token);
+      return { invite };
+    }
+  );
+
+  // POST /auth/register/staff — register via staff invite
+  fastify.post<{ Body: { token: string; email: string; password: string } }>(
+    '/register/staff',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const invite = await staffService.validateStaffInvite(request.body.token);
+      if (invite.email !== request.body.email) {
+        throw new AppError('Email does not match invite', 400);
+      }
+
+      const user = await authService.registerWithInvite({
+        email: request.body.email,
+        password: request.body.password,
+        vendorId: invite.vendorId,
+      });
+
+      await staffService.acceptStaffInvite(request.body.token, user.id);
+
+      const jwtPayload: JwtPayload = {
+        userId: user.id,
+        vendorId: invite.vendorId,
+        email: user.email,
+        role: 'vendor',
+      };
+
+      const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '24h' });
+
+      reply
+        .setCookie(COOKIE_NAME, jwtToken, {
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+          maxAge: COOKIE_MAX_AGE,
+        })
+        .status(201)
+        .send({ user });
+    }
+  );
 };
 
 export default authController;

@@ -406,12 +406,15 @@ export class OrderScheduler {
 
         const { data: menuConfig } = await supabase
             .from('event_menu_configurations')
-            .select('prep_time_buffer_minutes, slot_duration_minutes')
+            .select('prep_time_buffer_minutes, slot_duration_minutes, is_busy_mode, busy_mode_multiplier')
             .eq('vendor_id', vendorId)
             .eq('event_id', eventId)
             .single();
 
-        const prepTimeMinutes = (vendor?.estimated_prep_time || 12) + (menuConfig?.prep_time_buffer_minutes ?? 0);
+        let prepTimeMinutes = (vendor?.estimated_prep_time || 12) + (menuConfig?.prep_time_buffer_minutes ?? 0);
+        if (menuConfig?.is_busy_mode) {
+            prepTimeMinutes = Math.round(prepTimeMinutes * (menuConfig.busy_mode_multiplier || 2));
+        }
 
         // Use config slot duration as default, but allow query param to override
         if (slotDurationMinutes === 30 && menuConfig?.slot_duration_minutes) {

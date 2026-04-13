@@ -482,6 +482,17 @@ export class OrderService {
                 phone: order.phone,
             });
 
+            // Push notification to vendor (new order alert)
+            import('../push/push.service.js').then(({ pushService: push }) => {
+                const orderRef = order.id.slice(-4).toUpperCase();
+                push.sendToVendorUsers(order.vendor_id, {
+                    title: 'New Order!',
+                    body: `#${orderRef} — R${Number(order.total).toFixed(2)}`,
+                    tag: `new-order-${order.id}`,
+                    data: { url: '/kds', type: 'new_order', orderId: order.id },
+                }).catch(() => {});
+            }).catch(() => {});
+
             // Notify admin dashboard live feed
             broadcastAdminOrderFeed({
                 orderId: order.id,

@@ -40,3 +40,18 @@ export interface VendorInvite {
 }
 
 export type SafeVendorUser = Omit<VendorUser, 'passwordHash'>;
+
+export interface VendorRoleSummary {
+  vendorId: string;
+  vendorName: string;
+  role: string;
+  logoUrl: string | null;
+}
+
+export interface AuthUser {
+  id: string;
+  vendorId: string;
+  email: string;
+  createdAt: string;
+  vendors: VendorRoleSummary[];
+}

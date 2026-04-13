@@ -1,5 +1,6 @@
 import webpush from 'web-push';
 import { supabase } from '../lib/supabase.js';
+import { sendExpoPush, isInvalidTokenError } from '../lib/expo-push.js';
 import type { PushPayload, PushSubscriptionInput } from './push.types.js';
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || '';
@@ -25,54 +26,122 @@ class PushService {
     );
   }
 
+  async subscribeNative(input: {
+    userType: string;
+    userId: string;
+    platform: 'ios' | 'android';
+    expoPushToken: string;
+  }): Promise<void> {
+    const endpoint = `expo:${input.expoPushToken}`;
+    await supabase.from('push_subscriptions').upsert(
+      {
+        user_type: input.userType,
+        user_id: input.userId,
+        endpoint,
+        keys_p256dh: '',
+        keys_auth: '',
+        platform: input.platform,
+        expo_push_token: input.expoPushToken,
+        active: true,
+        last_used_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_type,user_id,endpoint' }
+    );
+  }
+
   async unsubscribe(endpoint: string): Promise<void> {
     await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
   }
 
   /**
    * Send push notification to all subscriptions for a user.
-   * Handles expired subscriptions (410 Gone) by removing them.
+   * Routes to web-push or Expo Push based on platform.
    */
   async sendToUser(userType: string, userId: string, payload: PushPayload): Promise<void> {
-    if (!VAPID_PUBLIC || !VAPID_PRIVATE) return;
-
     const { data: subs } = await supabase
       .from('push_subscriptions')
-      .select('endpoint, keys_p256dh, keys_auth')
+      .select('id, endpoint, keys_p256dh, keys_auth, platform, expo_push_token, active')
       .eq('user_type', userType)
       .eq('user_id', userId);
 
     if (!subs?.length) return;
 
-    const jsonPayload = JSON.stringify(payload);
+    // Separate web and native subscriptions
+    const webSubs: any[] = [];
+    const nativeSubs: any[] = [];
 
-    await Promise.allSettled(
-      subs.map(async (sub) => {
-        try {
-          await webpush.sendNotification(
-            {
-              endpoint: sub.endpoint,
-              keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth },
-            },
-            jsonPayload
-          );
-          await supabase
-            .from('push_subscriptions')
-            .update({ last_used_at: new Date().toISOString() })
-            .eq('endpoint', sub.endpoint);
-        } catch (err: any) {
-          if (err.statusCode === 410 || err.statusCode === 404) {
-            await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+    for (const sub of subs) {
+      if (sub.active === false) continue;
+      if (sub.platform === 'web' || !sub.platform) {
+        webSubs.push(sub);
+      } else if (sub.expo_push_token) {
+        nativeSubs.push(sub);
+      }
+    }
+
+    // Send web push notifications
+    if (webSubs.length > 0 && VAPID_PUBLIC && VAPID_PRIVATE) {
+      const jsonPayload = JSON.stringify(payload);
+      await Promise.allSettled(
+        webSubs.map(async (sub) => {
+          try {
+            await webpush.sendNotification(
+              {
+                endpoint: sub.endpoint,
+                keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth },
+              },
+              jsonPayload
+            );
+            await supabase
+              .from('push_subscriptions')
+              .update({ last_used_at: new Date().toISOString() })
+              .eq('endpoint', sub.endpoint);
+          } catch (err: any) {
+            if (err.statusCode === 410 || err.statusCode === 404) {
+              await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+            }
+          }
+        })
+      );
+    }
+
+    // Send Expo push notifications (batched in one HTTP call)
+    if (nativeSubs.length > 0) {
+      const messages = nativeSubs.map((sub) => ({
+        to: sub.expo_push_token,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data || {},
+        sound: 'default' as const,
+        channelId: 'orders',
+        priority: 'high' as const,
+      }));
+
+      try {
+        const tickets = await sendExpoPush(messages);
+
+        // Deactivate invalid tokens
+        for (let i = 0; i < tickets.length; i++) {
+          if (isInvalidTokenError(tickets[i])) {
+            await supabase
+              .from('push_subscriptions')
+              .update({ active: false })
+              .eq('id', nativeSubs[i].id);
+          } else if (tickets[i].status === 'ok') {
+            await supabase
+              .from('push_subscriptions')
+              .update({ last_used_at: new Date().toISOString() })
+              .eq('id', nativeSubs[i].id);
           }
         }
-      })
-    );
+      } catch (err) {
+        console.error('Expo push send failed:', err);
+      }
+    }
   }
 
   /**
    * Send push notification to a vendor (by vendor entity ID).
-   * All vendor users subscribe with the vendor entity ID, so one subscription
-   * covers everyone who has the KDS open for that vendor.
    */
   async sendToVendorUsers(vendorId: string, payload: PushPayload): Promise<void> {
     await this.sendToUser('vendor', vendorId, payload);

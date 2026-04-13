@@ -384,6 +384,8 @@ export function toDbEventMenuConfig(config: Partial<EventMenuConfiguration>): Re
     if (config.estimatedWaitMinutes !== undefined) dbConfig.estimated_wait_minutes = config.estimatedWaitMinutes;
     if (config.boothInfo !== undefined) dbConfig.booth_info = config.boothInfo;
     if (config.vendorNotice !== undefined) dbConfig.vendor_notice = config.vendorNotice;
+    if (config.isBusyMode !== undefined) dbConfig.is_busy_mode = config.isBusyMode;
+    if (config.busyModeMultiplier !== undefined) dbConfig.busy_mode_multiplier = config.busyModeMultiplier;
     if (config.categoryConfigurations !== undefined) dbConfig.category_configurations = config.categoryConfigurations;
     if (config.status !== undefined) dbConfig.status = config.status;
     if (config.publishedAt !== undefined) dbConfig.published_at = config.publishedAt;
@@ -422,6 +424,8 @@ export function fromDbEventMenuConfig(
         estimatedWaitMinutes: dbConfig.estimated_wait_minutes,
         boothInfo: dbConfig.booth_info,
         vendorNotice: dbConfig.vendor_notice,
+        isBusyMode: dbConfig.is_busy_mode ?? false,
+        busyModeMultiplier: dbConfig.busy_mode_multiplier ?? 2,
         status: dbConfig.status || 'DRAFT',
         publishedAt: dbConfig.published_at,
         createdAt: dbConfig.created_at,

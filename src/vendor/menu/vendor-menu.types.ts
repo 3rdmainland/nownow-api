@@ -323,6 +323,10 @@ export interface EventMenuConfiguration {
     boothInfo?: string;                     // Stand/booth location at venue
     vendorNotice?: string;                  // Custom notice shown before ordering
 
+    // Busy mode
+    isBusyMode: boolean;
+    busyModeMultiplier: number;
+
     // Status
     status: EventMenuStatus;
     publishedAt?: string;
@@ -520,6 +524,8 @@ export interface UpdateEventMenuConfigInput {
     estimatedWaitMinutes?: number | null;
     boothInfo?: string | null;
     vendorNotice?: string | null;
+    isBusyMode?: boolean;
+    busyModeMultiplier?: number;
     status?: EventMenuStatus;
 }
 

@@ -155,7 +155,7 @@ const orderController: FastifyPluginAsync = async (fastify) => {
             const { vendorId, eventId } = request.query as { vendorId: string; eventId: string };
             const { data, error } = await supabase
                 .from('event_menu_configurations')
-                .select('allow_pay_at_stall, slot_duration_minutes')
+                .select('allow_pay_at_stall, slot_duration_minutes, estimated_wait_minutes, is_busy_mode, busy_mode_multiplier')
                 .eq('vendor_id', vendorId)
                 .eq('event_id', eventId)
                 .single();
@@ -164,9 +164,16 @@ const orderController: FastifyPluginAsync = async (fastify) => {
                 return { allowPayAtStall: false };
             }
 
+            let estimatedWaitMinutes = data.estimated_wait_minutes ?? undefined;
+            if (estimatedWaitMinutes && data.is_busy_mode) {
+                estimatedWaitMinutes = Math.round(estimatedWaitMinutes * (data.busy_mode_multiplier || 2));
+            }
+
             return {
                 allowPayAtStall: data.allow_pay_at_stall ?? false,
                 slotDurationMinutes: data.slot_duration_minutes ?? undefined,
+                estimatedWaitMinutes,
+                isBusyMode: data.is_busy_mode ?? false,
             };
         } catch (err) {
             fastify.log.error(err);

@@ -200,6 +200,8 @@ const eventMenuConfigProperties = {
     estimatedWaitMinutes: { type: ['number', 'null'] },
     boothInfo: { type: ['string', 'null'] },
     vendorNotice: { type: ['string', 'null'] },
+    isBusyMode: { type: 'boolean' },
+    busyModeMultiplier: { type: 'number' },
     menuItems: { type: 'array' },
     operatingSchedule: {
         type: 'array',
@@ -780,6 +782,8 @@ export const updateEventMenuConfigSchema = {
             estimatedWaitMinutes: { type: ['number', 'null'] },
             boothInfo: { type: ['string', 'null'] },
             vendorNotice: { type: ['string', 'null'] },
+            isBusyMode: { type: 'boolean' },
+            busyModeMultiplier: { type: 'number' },
             operatingSchedule: {
                 type: 'array',
                 items: {

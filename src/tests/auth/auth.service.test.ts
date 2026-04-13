@@ -550,9 +550,10 @@ describe('AuthService', () => {
         updated_at: user.updated_at,
       };
 
-      supabaseMock.from.mockReturnValue(
-        createSupabaseMock({ data: dbRow, error: null }),
-      );
+      mockFromSequence([
+        { table: 'vendor_users', response: createSupabaseMock({ data: dbRow, error: null }) },
+        { table: 'vendor_user_roles', response: createSupabaseMock({ data: [{ vendor_id: 'vendor-xyz', role: 'owner', vendors: { name: 'Test Vendor', logo_url: null } }], error: null }) },
+      ]);
 
       const result = await service.getUserById('found-user-id');
 
@@ -562,6 +563,7 @@ describe('AuthService', () => {
         email: user.email,
         createdAt: user.created_at,
         updatedAt: user.updated_at,
+        vendors: [{ vendorId: 'vendor-xyz', vendorName: 'Test Vendor', role: 'owner', logoUrl: null }],
       });
 
       // Must not include passwordHash

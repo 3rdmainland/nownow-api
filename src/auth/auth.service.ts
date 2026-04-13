@@ -182,6 +182,43 @@ export class AuthService {
     };
   }
 
+  async registerWithInvite(payload: { email: string; password: string; vendorId: string }): Promise<SafeVendorUser> {
+    // Check if email already registered
+    const { data: existing } = await supabase
+      .from('vendor_users')
+      .select('id')
+      .eq('email', payload.email)
+      .single();
+
+    if (existing) {
+      throw new ConflictError('Email already registered');
+    }
+
+    const passwordHash = await bcrypt.hash(payload.password, SALT_ROUNDS);
+
+    const { data, error } = await supabase
+      .from('vendor_users')
+      .insert([{
+        vendor_id: payload.vendorId,
+        email: payload.email,
+        password_hash: passwordHash,
+      }])
+      .select('id, vendor_id, email, created_at, updated_at')
+      .single();
+
+    if (error) {
+      throw new Error(`Registration failed: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      vendorId: data.vendor_id,
+      email: data.email,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
     const { data, error } = await supabase
       .from('vendor_users')
@@ -279,7 +316,7 @@ export class AuthService {
       .eq('token', token);
   }
 
-  async getUserById(userId: string): Promise<SafeVendorUser | null> {
+  async getUserById(userId: string): Promise<(SafeVendorUser & { vendors: Array<{ vendorId: string; vendorName: string; role: string; logoUrl: string | null }> }) | null> {
     const { data, error } = await supabase
       .from('vendor_users')
       .select('id, vendor_id, email, created_at, updated_at')
@@ -288,12 +325,29 @@ export class AuthService {
 
     if (error || !data) return null;
 
+    const { data: roles } = await supabase
+      .from('vendor_user_roles')
+      .select(`
+        vendor_id,
+        role,
+        vendors:vendor_id (id, name, logo_url)
+      `)
+      .eq('user_id', userId);
+
+    const vendors = (roles || []).map((r: any) => ({
+      vendorId: r.vendor_id,
+      vendorName: r.vendors?.name || '',
+      role: r.role,
+      logoUrl: r.vendors?.logo_url || null,
+    }));
+
     return {
       id: data.id,
       vendorId: data.vendor_id,
       email: data.email,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+      vendors,
     };
   }
 }

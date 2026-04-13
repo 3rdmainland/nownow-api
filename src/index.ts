@@ -40,6 +40,7 @@ import adminNotificationController from "./notifications/notifications.controlle
 import exportController from "./export/export.controller";
 import recipientNotificationController from "./notifications/recipient-notification.controller";
 import pushController from "./push/push.controller";
+import staffController from "./staff/staff.controller";
 import reconciliationEndpoint from "./payment/payment-reconciliation.endpoint";
 import { AppError } from "./lib/errors";
 import { getFeatureFlags } from "./lib/feature-flags";
@@ -196,6 +197,7 @@ fastify.register(adminNotificationController, { prefix: "/admin/notifications" }
 fastify.register(recipientNotificationController, { prefix: "/notifications" });
 fastify.register(exportController, { prefix: "/export" });
 fastify.register(pushController, { prefix: "/push" });
+fastify.register(staffController, { prefix: "/vendor" });
 fastify.register(reconciliationEndpoint, { prefix: "/internal/reconciliation" });
 
 // Public feature flags endpoint (no auth required)

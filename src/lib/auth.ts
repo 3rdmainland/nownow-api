@@ -1,5 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from './errors.js';
+import { supabase } from './supabase.js';
+import type { VendorRole } from '../staff/staff.types.js';
 
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -46,6 +48,35 @@ export async function authenticateVendor(request: FastifyRequest, reply: Fastify
   if (payload.role !== 'vendor') {
     throw new UnauthorizedError('Access denied');
   }
+}
+
+/**
+ * Middleware: checks the authenticated user has one of the allowed roles
+ * on the vendor specified by :id or :vendorId in route params.
+ * Must be called AFTER authenticateVendor.
+ */
+export function assertVendorRole(allowedRoles: VendorRole[]) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user as { userId: string; vendorId: string; role: string };
+    const vendorId = (request.params as any).id || (request.params as any).vendorId || user.vendorId;
+
+    const { data, error } = await supabase
+      .from('vendor_user_roles')
+      .select('role')
+      .eq('user_id', user.userId)
+      .eq('vendor_id', vendorId)
+      .single();
+
+    if (error || !data) {
+      throw new ForbiddenError('No access to this vendor');
+    }
+
+    if (!allowedRoles.includes(data.role as VendorRole)) {
+      throw new ForbiddenError(`Requires role: ${allowedRoles.join(' or ')}`);
+    }
+
+    (request as any).vendorRole = data.role;
+  };
 }
 
 /** Authenticate as vendor OR admin (for admin override routes). */

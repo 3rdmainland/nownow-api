@@ -2,27 +2,46 @@ import type { FastifyPluginAsync } from 'fastify';
 import { pushService } from './push.service.js';
 
 const pushController: FastifyPluginAsync = async (fastify) => {
-  // Register push subscription
+  // Register push subscription (web or native)
   fastify.post('/subscribe', async (request, reply) => {
-    const { userType, userId, subscription } = request.body as {
+    const { userType, userId, platform, expoPushToken, subscription } = request.body as {
       userType: 'vendor' | 'customer' | 'admin';
       userId: string;
-      subscription: {
+      platform?: 'web' | 'ios' | 'android';
+      expoPushToken?: string;
+      subscription?: {
         endpoint: string;
         keys: { p256dh: string; auth: string };
       };
     };
 
-    if (!userType || !userId || !subscription?.endpoint || !subscription?.keys) {
+    if (!userType || !userId) {
       return reply.status(400).send({ error: 'Missing required fields' });
     }
 
-    await pushService.subscribe({
-      userType,
-      userId,
-      endpoint: subscription.endpoint,
-      keys: subscription.keys,
-    });
+    const effectivePlatform = platform || 'web';
+
+    if (effectivePlatform === 'web') {
+      if (!subscription?.endpoint || !subscription?.keys) {
+        return reply.status(400).send({ error: 'Web subscriptions require subscription object' });
+      }
+      await pushService.subscribe({
+        userType,
+        userId,
+        endpoint: subscription.endpoint,
+        keys: subscription.keys,
+      });
+    } else {
+      if (!expoPushToken) {
+        return reply.status(400).send({ error: 'Native subscriptions require expoPushToken' });
+      }
+      await pushService.subscribeNative({
+        userType,
+        userId,
+        platform: effectivePlatform,
+        expoPushToken,
+      });
+    }
 
     return reply.status(201).send({ ok: true });
   });
