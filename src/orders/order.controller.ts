@@ -29,12 +29,15 @@ import { authenticate, authenticateCustomer, authenticateAdmin, authenticateVend
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
 
-    // Get all orders (admin only)
+    // Get all orders (vendor sees own, admin sees all)
     fastify.get("/", { schema: getOrdersResponseSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
-            const { vendorId, eventId, status, startDate, endDate, page, pageSize } = request.query as {
+            const user = request.user as { vendorId?: string; role?: string };
+            const { vendorId: qVendorId, eventId, status, startDate, endDate, page, pageSize } = request.query as {
                 vendorId?: string; eventId?: string; status?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number;
             };
+            // Vendors can only see their own orders — override any query param
+            const vendorId = user.role === 'vendor' ? user.vendorId : qVendorId;
             const result = await orderService.getAllOrders({ vendorId, eventId, status, startDate, endDate, pagination: { page, pageSize } });
             return result;
         } catch (err) {
@@ -43,11 +46,12 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get recent orders (authenticated)
-    fastify.get("/recent", { schema: getRecentOrdersSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get recent orders (vendor sees own, admin sees all)
+    fastify.get("/recent", { schema: getRecentOrdersSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string };
             const { limit = 10 } = request.query as { limit?: number };
-            const orders = await orderService.getRecentOrders(limit);
+            const orders = await orderService.getRecentOrders(limit, user.role === 'vendor' ? user.vendorId : undefined);
             return { orders };
         } catch (err) {
             fastify.log.error(err);
@@ -55,12 +59,14 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get time-series order statistics (authenticated)
-    fastify.get("/stats/timeseries", { schema: getTimeSeriesStatsSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get time-series order statistics (vendor sees own, admin sees all)
+    fastify.get("/stats/timeseries", { schema: getTimeSeriesStatsSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
-            const { vendorId, eventId, startDate, endDate, granularity = 'day' } = request.query as {
+            const user = request.user as { vendorId?: string; role?: string };
+            const { vendorId: qVendorId, eventId, startDate, endDate, granularity = 'day' } = request.query as {
                 vendorId?: string; eventId?: string; startDate: string; endDate: string; granularity?: 'day' | 'week' | 'month';
             };
+            const vendorId = user.role === 'vendor' ? user.vendorId : qVendorId;
             const stats = await orderService.getTimeSeriesStats({ vendorId, eventId, startDate, endDate, granularity });
             return stats;
         } catch (err) {
@@ -69,10 +75,12 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get order statistics (authenticated)
-    fastify.get("/stats", { schema: getOrderStatsSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get order statistics (vendor sees own, admin sees all)
+    fastify.get("/stats", { schema: getOrderStatsSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
-            const { vendorId, eventId } = request.query as { vendorId?: string, eventId?: string };
+            const user = request.user as { vendorId?: string; role?: string };
+            const { vendorId: qVendorId, eventId } = request.query as { vendorId?: string, eventId?: string };
+            const vendorId = user.role === 'vendor' ? user.vendorId : qVendorId;
             const stats = await orderService.getOrderStats(vendorId, eventId);
             return stats;
         } catch (err) {
@@ -81,11 +89,12 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Search orders (authenticated)
-    fastify.get("/search", { schema: searchOrdersSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Search orders (vendor sees own, admin sees all)
+    fastify.get("/search", { schema: searchOrdersSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string };
             const { q, eventId, page, pageSize } = request.query as { q: string; eventId?: string; page?: number; pageSize?: number };
-            const result = await orderService.searchOrders(q, eventId, { page, pageSize });
+            const result = await orderService.searchOrders(q, eventId, { page, pageSize }, user.role === 'vendor' ? user.vendorId : undefined);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -93,11 +102,12 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by phone (authenticated — vendor/admin use)
-    fastify.get("/phone", { schema: getOrdersByPhoneSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get orders by phone (vendor sees own, admin sees all)
+    fastify.get("/phone", { schema: getOrdersByPhoneSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string };
             const { phone, eventId, page, pageSize } = request.query as { phone: string; eventId?: string; page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByPhone(phone, { page, pageSize }, eventId);
+            const result = await orderService.getOrdersByPhone(phone, { page, pageSize }, eventId, user.role === 'vendor' ? user.vendorId : undefined);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -105,11 +115,12 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by status (authenticated)
-    fastify.get("/status", { schema: getOrdersByStatusSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get orders by status (vendor sees own, admin sees all)
+    fastify.get("/status", { schema: getOrdersByStatusSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string };
             const { status, page, pageSize } = request.query as { status: string; page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByStatus(status, { page, pageSize });
+            const result = await orderService.getOrdersByStatus(status, { page, pageSize }, user.role === 'vendor' ? user.vendorId : undefined);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -117,11 +128,12 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by date range (authenticated)
-    fastify.get("/date-range", { schema: getOrdersByDateRangeSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get orders by date range (vendor sees own, admin sees all)
+    fastify.get("/date-range", { schema: getOrdersByDateRangeSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string };
             const { startDate, endDate, page, pageSize } = request.query as { startDate: string; endDate: string; page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByDateRange(startDate, endDate, { page, pageSize });
+            const result = await orderService.getOrdersByDateRange(startDate, endDate, { page, pageSize }, user.role === 'vendor' ? user.vendorId : undefined);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -181,12 +193,13 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get orders by event
-    fastify.get("/event/:eventId", { schema: getOrdersByEventSchema, preHandler: [authenticate] }, async (request, reply) => {
+    // Get orders by event (vendor sees own orders at event, admin sees all)
+    fastify.get("/event/:eventId", { schema: getOrdersByEventSchema, preHandler: [authenticateVendorOrAdmin] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string };
             const { eventId } = request.params as { eventId: string };
             const { page, pageSize } = request.query as { page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByEvent(eventId, { page, pageSize });
+            const result = await orderService.getOrdersByEvent(eventId, { page, pageSize }, user.role === 'vendor' ? user.vendorId : undefined);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -210,12 +223,20 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    // Get order by ID (authenticated)
+    // Get order by ID (vendor can only see own orders)
     fastify.get<{ Params: { id: string } }>("/:id", { schema: getOrderByIdResponseSchema, preHandler: [authenticate] }, async (request, reply) => {
         try {
+            const user = request.user as { vendorId?: string; role?: string; customerId?: string };
             const order = await orderService.getOrderById(request.params.id);
             if (!order) {
                 return reply.status(404).send({ error: "Order not found" });
+            }
+            // Vendors can only see their own orders, customers their own
+            if (user.role === 'vendor' && order.vendor_id !== user.vendorId) {
+                return reply.status(403).send({ error: "Access denied" });
+            }
+            if (user.role === 'customer' && order.customer_id !== user.customerId) {
+                return reply.status(403).send({ error: "Access denied" });
             }
             return { order };
         } catch (err) {

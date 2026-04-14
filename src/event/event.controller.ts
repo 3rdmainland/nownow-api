@@ -14,7 +14,7 @@ import {
 import { EventService } from "./event.service";
 import { supabase } from "../lib/supabase.js";
 import { notifyVendorUser, notifyOrganizer } from "../notifications/notify-helpers.js";
-import { authenticate, authenticateAdmin, authenticateOrganizerOrAdmin } from "../lib/auth.js";
+import { authenticate, authenticateAdmin, authenticateOrganizerOrAdmin, assertOrganizerOwnsEvent } from "../lib/auth.js";
 
 const eventController: FastifyPluginAsync = async (fastify) => {
     const eventService = new EventService();
@@ -59,6 +59,33 @@ const eventController: FastifyPluginAsync = async (fastify) => {
                 eventData.organizerId = user.userId;
             }
             const event = await eventService.createEvent(eventData);
+
+            // Fire-and-forget: send event created confirmation email
+            if (user?.role === 'organizer' && user.userId) {
+                (async () => {
+                    try {
+                        const { getOrganizerEmail } = await import('../organizer-emails/organizer-email.service.js');
+                        const { sendEmail } = await import('../lib/email.js');
+                        const email = await getOrganizerEmail(user.userId!);
+                        if (email) {
+                            const ORGANIZER_APP_URL = process.env.ORGANIZER_APP_URL || 'https://nownow-organizer.vercel.app';
+                            const startDate = new Date(event.startDate).toLocaleDateString('en-ZA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                            await sendEmail({
+                                to: email,
+                                subject: `Your event "${event.name}" has been created`,
+                                html: `
+                                    <h2>Event Created</h2>
+                                    <p>Your event <strong>${event.name}</strong> has been created successfully.</p>
+                                    <p><strong>Start:</strong> ${startDate}</p>
+                                    <p><strong>Event Code:</strong> ${event.code}</p>
+                                    <p><a href="${ORGANIZER_APP_URL}/events/${event.id}">View your event</a></p>
+                                `,
+                            });
+                        }
+                    } catch { /* notification email errors should never fail the request */ }
+                })();
+            }
+
             return reply.status(201).send({ event });
         } catch (err) {
             fastify.log.error(err);
@@ -69,6 +96,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
     fastify.patch<{ Params: { id: string } }>("/:id", { schema: updateEventSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
             const { id } = request.params;
+            await assertOrganizerOwnsEvent(request, id);
             const updates = request.body as any;
             const event = await eventService.updateEvent(id, updates);
             return { event };
@@ -150,8 +178,9 @@ const eventController: FastifyPluginAsync = async (fastify) => {
         }
     });
 
-    fastify.get<{ Params: { id: string } }>("/:id/vendors/statuses", { schema: getEventVendorStatusesSchema }, async (request, reply) => {
+    fastify.get<{ Params: { id: string } }>("/:id/vendors/statuses", { schema: getEventVendorStatusesSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
+            await assertOrganizerOwnsEvent(request, request.params.id);
             const statuses = await eventService.getEventVendorStatuses(request.params.id);
             return { statuses };
         } catch (err) {
@@ -163,6 +192,7 @@ const eventController: FastifyPluginAsync = async (fastify) => {
     fastify.delete<{ Params: { id: string; vendorId: string } }>("/:id/vendors/:vendorId", { schema: removeVendorFromEventSchema, preHandler: [authenticateOrganizerOrAdmin] }, async (request, reply) => {
         try {
             const { id, vendorId } = request.params;
+            await assertOrganizerOwnsEvent(request, id);
             await eventService.removeVendorFromEvent(id, vendorId);
             return reply.status(204).send();
         } catch (err) {

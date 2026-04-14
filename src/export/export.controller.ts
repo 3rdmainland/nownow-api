@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { supabase } from '../lib/supabase.js';
 import { emailCSVExport } from '../lib/export.js';
-import { authenticate, authenticateOrganizer } from '../lib/auth.js';
+import { authenticate, authenticateOrganizer, assertOrganizerOwnsEvent } from '../lib/auth.js';
 import { authenticateAdmin } from '../lib/auth.js';
 import { ValidationError } from '../lib/errors.js';
 
@@ -78,6 +78,7 @@ const exportController: FastifyPluginAsync = async (fastify) => {
         const { eventId } = request.body as { eventId: string };
 
         if (!eventId) throw new ValidationError('eventId is required');
+        await assertOrganizerOwnsEvent(request, eventId);
 
         const { data: orders, error } = await supabase
             .from('orders')
@@ -130,6 +131,98 @@ const exportController: FastifyPluginAsync = async (fastify) => {
                 { key: 'net', label: 'Net (R)' },
             ],
         }).catch(err => console.error('Failed to email event breakdown:', err?.message || err));
+
+        return { message: 'Export started. You\'ll receive an email shortly.' };
+    });
+
+    // ── Organizer: Export settlements overview ──────────────────────────
+    fastify.post('/organizer/settlements-overview', { preHandler: [authenticateOrganizer] }, async (request, reply) => {
+        const user = request.user as { userId: string; email: string };
+
+        // Get all events owned by this organizer
+        const { data: events, error: eventsError } = await supabase
+            .from('events')
+            .select('id, name, start_date, end_date, status')
+            .eq('organizer_id', user.userId)
+            .eq('origin_type', 'organizer')
+            .order('start_date', { ascending: false });
+
+        if (eventsError) throw new Error(`Export failed: ${eventsError.message}`);
+        if (!events || events.length === 0) {
+            void emailCSVExport({
+                to: user.email,
+                subject: 'Settlements Overview',
+                filename: 'settlements-overview.csv',
+                rows: [],
+                message: 'No events found.',
+            });
+            return { message: 'Export started. You\'ll receive an email shortly.' };
+        }
+
+        const eventIds = events.map(e => e.id);
+
+        // Get order aggregations per event
+        const { data: orders } = await supabase
+            .from('orders')
+            .select('event_id, total, service_fee, status')
+            .in('event_id', eventIds)
+            .in('payment_status', ['complete', 'pay_at_stall']);
+
+        // Get vendor counts per event
+        const { data: eventVendors } = await supabase
+            .from('event_vendors')
+            .select('event_id, vendor_id')
+            .in('event_id', eventIds)
+            .eq('status', 'accepted');
+
+        // Aggregate
+        const ordersByEvent = new Map<string, { orders: number; gross: number; fees: number }>();
+        for (const o of (orders || [])) {
+            if (o.status === 'CANCELLED') continue;
+            const entry = ordersByEvent.get(o.event_id) || { orders: 0, gross: 0, fees: 0 };
+            entry.orders++;
+            entry.gross += Number(o.total) || 0;
+            entry.fees += Number(o.service_fee) || 0;
+            ordersByEvent.set(o.event_id, entry);
+        }
+
+        const vendorsByEvent = new Map<string, number>();
+        for (const ev of (eventVendors || [])) {
+            vendorsByEvent.set(ev.event_id, (vendorsByEvent.get(ev.event_id) || 0) + 1);
+        }
+
+        const rows = events.map(e => {
+            const stats = ordersByEvent.get(e.id) || { orders: 0, gross: 0, fees: 0 };
+            return {
+                event_name: e.name,
+                status: e.status,
+                start_date: e.start_date,
+                end_date: e.end_date,
+                vendors: vendorsByEvent.get(e.id) || 0,
+                total_orders: stats.orders,
+                gross_revenue: stats.gross.toFixed(2),
+                service_fees: stats.fees.toFixed(2),
+                net_revenue: (stats.gross - stats.fees).toFixed(2),
+            };
+        });
+
+        void emailCSVExport({
+            to: user.email,
+            subject: 'Settlements Overview',
+            filename: `settlements-overview-${new Date().toISOString().split('T')[0]}.csv`,
+            rows,
+            columns: [
+                { key: 'event_name', label: 'Event' },
+                { key: 'status', label: 'Status' },
+                { key: 'start_date', label: 'Start Date' },
+                { key: 'end_date', label: 'End Date' },
+                { key: 'vendors', label: 'Vendors' },
+                { key: 'total_orders', label: 'Total Orders' },
+                { key: 'gross_revenue', label: 'Gross Revenue (R)' },
+                { key: 'service_fees', label: 'Service Fees (R)' },
+                { key: 'net_revenue', label: 'Net Revenue (R)' },
+            ],
+        }).catch(err => console.error('Failed to email settlements overview:', err?.message || err));
 
         return { message: 'Export started. You\'ll receive an email shortly.' };
     });

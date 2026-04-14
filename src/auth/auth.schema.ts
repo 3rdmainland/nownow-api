@@ -96,6 +96,7 @@ export const loginSchema = {
       type: 'object',
       properties: {
         user: { type: 'object', properties: userProperties },
+        token: { type: 'string' },
       },
     },
     401: errorResponse,
@@ -110,6 +111,7 @@ export const meSchema = {
       type: 'object',
       properties: {
         user: { type: 'object', properties: userProperties },
+        token: { type: 'string' },
       },
     },
     401: errorResponse,

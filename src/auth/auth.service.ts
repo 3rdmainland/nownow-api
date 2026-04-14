@@ -157,7 +157,7 @@ export class AuthService {
     };
   }
 
-  async login(payload: LoginPayload): Promise<SafeVendorUser> {
+  async login(payload: LoginPayload): Promise<SafeVendorUser & { vendors: Array<{ vendorId: string; vendorName: string; role: string; logoUrl: string | null }> }> {
     const { data, error } = await supabase
       .from('vendor_users')
       .select('*')
@@ -173,12 +173,29 @@ export class AuthService {
       throw new UnauthorizedError('Invalid email or password');
     }
 
+    const { data: roles } = await supabase
+      .from('vendor_user_roles')
+      .select(`
+        vendor_id,
+        role,
+        vendors:vendor_id (id, name, logo_url)
+      `)
+      .eq('user_id', data.id);
+
+    const vendors = (roles || []).map((r: any) => ({
+      vendorId: r.vendor_id,
+      vendorName: r.vendors?.name || '',
+      role: r.role,
+      logoUrl: r.vendors?.logo_url || null,
+    }));
+
     return {
       id: data.id,
       vendorId: data.vendor_id,
       email: data.email,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+      vendors,
     };
   }
 

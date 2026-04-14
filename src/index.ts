@@ -36,12 +36,14 @@ import legalController from "./legal/legal.controller";
 import settlementController from "./settlement/settlement.controller";
 import vendorSettlementController from "./settlement/vendor-settlement.controller";
 import vendorEventController from "./vendor-event/vendor-event.controller";
+import stallController from "./stall/stall.controller";
 import adminNotificationController from "./notifications/notifications.controller";
 import exportController from "./export/export.controller";
 import recipientNotificationController from "./notifications/recipient-notification.controller";
 import pushController from "./push/push.controller";
 import staffController from "./staff/staff.controller";
 import reconciliationEndpoint from "./payment/payment-reconciliation.endpoint";
+import organizerEmailEndpoint from "./organizer-emails/organizer-email.endpoint";
 import { AppError } from "./lib/errors";
 import { getFeatureFlags } from "./lib/feature-flags";
 
@@ -80,17 +82,15 @@ const fastify = Fastify({
 
 // CORS
 await fastify.register(fastifyCors, {
-    origin: [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3003",
-        "http://localhost:3004",
-        "https://nownow-dev-api-production.up.railway.app",
-        "https://nownow-nine.vercel.app",
-        "https://nownow-vendor.vercel.app",
-        "https://nownow-organizer.vercel.app",
-        "https://nownow-admin.vercel.app"
-    ],
+    origin: process.env.NODE_ENV === 'production'
+      ? [
+          "https://nownow-dev-api-production.up.railway.app",
+          "https://nownow-nine.vercel.app",
+          "https://nownow-vendor.vercel.app",
+          "https://nownow-organizer.vercel.app",
+          "https://nownow-admin.vercel.app",
+        ]
+      : true, // Allow all origins in development (localhost, LAN IPs, native apps)
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Upstash-Signature'],
     credentials: true,
@@ -193,12 +193,14 @@ fastify.register(legalController, { prefix: "/legal" });
 fastify.register(settlementController, { prefix: "/settlement" });
 fastify.register(vendorSettlementController, { prefix: "/vendor" });
 fastify.register(vendorEventController, { prefix: "/vendor-events" });
+fastify.register(stallController, { prefix: "/stalls" });
 fastify.register(adminNotificationController, { prefix: "/admin/notifications" });
 fastify.register(recipientNotificationController, { prefix: "/notifications" });
 fastify.register(exportController, { prefix: "/export" });
 fastify.register(pushController, { prefix: "/push" });
 fastify.register(staffController, { prefix: "/vendor" });
 fastify.register(reconciliationEndpoint, { prefix: "/internal/reconciliation" });
+fastify.register(organizerEmailEndpoint, { prefix: "/internal/organizer-emails" });
 
 // Public feature flags endpoint (no auth required)
 fastify.get('/config/flags', async () => {

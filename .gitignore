@@ -149,3 +149,6 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Worktrees
+.worktrees

@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { DiscountService } from './discount.service.js';
 import { CreateDiscountInput, UpdateDiscountInput } from './discount.types.js';
-import { authenticate, authenticateOrganizer, assertVendorOwnership } from '../lib/auth.js';
+import { authenticate, authenticateOrganizer, authenticateVendorOrAdmin, assertVendorOwnership, assertOrganizerOwnsEvent } from '../lib/auth.js';
 import { JwtPayload } from '../auth/auth.types.js';
 import {
     createVendorDiscountSchema,
@@ -62,6 +62,7 @@ const discountController: FastifyPluginAsync = async (fastify) => {
         preHandler: [authenticateOrganizer],
     }, async (request, reply) => {
         const { eventId } = request.params as { eventId: string };
+        await assertOrganizerOwnsEvent(request, eventId);
         const body = request.body as { type: string; value: number };
 
         const input: CreateDiscountInput = {
@@ -82,29 +83,46 @@ const discountController: FastifyPluginAsync = async (fastify) => {
         preHandler: [authenticateOrganizer],
     }, async (request, reply) => {
         const { eventId } = request.params as { eventId: string };
+        await assertOrganizerOwnsEvent(request, eventId);
         const discounts = await discountService.listOrganizerDiscounts(eventId);
         return discounts;
     });
 
     // ==================== SHARED ROUTES ====================
 
-    // PATCH /discount/:id — Update a discount (authenticated)
+    // PATCH /discount/:id — Update a discount (vendor or admin only, with ownership check)
     fastify.patch('/:id', {
         schema: updateDiscountSchema,
-        preHandler: [authenticate],
+        preHandler: [authenticateVendorOrAdmin],
     }, async (request, reply) => {
         const { id } = request.params as { id: string };
+        const user = request.user as { vendorId?: string; role?: string };
+        // Vendors can only update their own discounts
+        if (user.role === 'vendor') {
+            const existing = await discountService.getDiscountById(id);
+            if (existing.vendorId !== user.vendorId) {
+                return reply.status(403).send({ error: 'Access denied' });
+            }
+        }
         const body = request.body as UpdateDiscountInput;
         const discount = await discountService.updateDiscount(id, body);
         return discount;
     });
 
-    // DELETE /discount/:id — Delete a discount (authenticated)
+    // DELETE /discount/:id — Delete a discount (vendor or admin only, with ownership check)
     fastify.delete('/:id', {
         schema: deleteDiscountSchema,
-        preHandler: [authenticate],
+        preHandler: [authenticateVendorOrAdmin],
     }, async (request, reply) => {
         const { id } = request.params as { id: string };
+        const user = request.user as { vendorId?: string; role?: string };
+        // Vendors can only delete their own discounts
+        if (user.role === 'vendor') {
+            const existing = await discountService.getDiscountById(id);
+            if (existing.vendorId !== user.vendorId) {
+                return reply.status(403).send({ error: 'Access denied' });
+            }
+        }
         await discountService.deleteDiscount(id);
         return { message: 'Discount deleted' };
     });

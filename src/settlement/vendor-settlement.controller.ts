@@ -114,6 +114,23 @@ const vendorSettlementController: FastifyPluginAsync = async (fastify) => {
               type: 'success',
               actionUrl: `/events/${agreement.event_id}`,
             });
+
+            // Email notification
+            const { getOrganizerEmail } = await import('../organizer-emails/organizer-email.service.js');
+            const { sendEmail } = await import('../lib/email.js');
+            const orgEmail = await getOrganizerEmail(agreement.organizer_id);
+            if (orgEmail) {
+                const ORGANIZER_APP_URL = process.env.ORGANIZER_APP_URL || 'https://nownow-organizer.vercel.app';
+                await sendEmail({
+                    to: orgEmail,
+                    subject: `${vendorName} accepted your invite to "${eventName}"`,
+                    html: `
+                        <h2>Vendor Accepted</h2>
+                        <p><strong>${vendorName}</strong> has accepted your invitation to <strong>${eventName}</strong>.</p>
+                        <p><a href="${ORGANIZER_APP_URL}/events/${agreement.event_id}">View event</a></p>
+                    `,
+                });
+            }
           }
         } catch { /* don't fail accept on notification error */ }
       })();
@@ -151,6 +168,23 @@ const vendorSettlementController: FastifyPluginAsync = async (fastify) => {
               type: 'warning',
               actionUrl: `/events/${agreement.event_id}`,
             });
+
+            // Email notification
+            const { getOrganizerEmail } = await import('../organizer-emails/organizer-email.service.js');
+            const { sendEmail } = await import('../lib/email.js');
+            const orgEmail = await getOrganizerEmail(agreement.organizer_id);
+            if (orgEmail) {
+                const ORGANIZER_APP_URL = process.env.ORGANIZER_APP_URL || 'https://nownow-organizer.vercel.app';
+                await sendEmail({
+                    to: orgEmail,
+                    subject: `${vendorName} declined your invite to "${eventName}"`,
+                    html: `
+                        <h2>Vendor Declined</h2>
+                        <p><strong>${vendorName}</strong> has declined your invitation to <strong>${eventName}</strong>.</p>
+                        <p><a href="${ORGANIZER_APP_URL}/events/${agreement.event_id}">View event</a></p>
+                    `,
+                });
+            }
           }
         } catch { /* don't fail decline on notification error */ }
       })();

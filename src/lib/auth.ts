@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { UnauthorizedError, ForbiddenError } from './errors.js';
+import { UnauthorizedError, ForbiddenError, NotFoundError } from './errors.js';
 import { supabase } from './supabase.js';
 import type { VendorRole } from '../staff/staff.types.js';
 
@@ -133,6 +133,29 @@ export function assertVendorOwnership(request: FastifyRequest, vendorId: string)
   if (user.role === 'admin') return; // admins can access anything
   if (!user.vendorId || user.vendorId !== vendorId) {
     throw new ForbiddenError('You do not have access to this vendor\'s resources');
+  }
+}
+
+/**
+ * Assert the authenticated organizer owns the specified event.
+ * Admins bypass the check. Throws 403 if ownership fails, 404 if event not found.
+ */
+export async function assertOrganizerOwnsEvent(request: FastifyRequest, eventId: string): Promise<void> {
+  const user = request.user as { userId?: string; role?: string };
+  if (user.role === 'admin') return; // admins can access anything
+
+  const { data, error } = await supabase
+    .from('events')
+    .select('organizer_id')
+    .eq('id', eventId)
+    .single();
+
+  if (error || !data) {
+    throw new NotFoundError('Event not found');
+  }
+
+  if (data.organizer_id !== user.userId) {
+    throw new ForbiddenError('You do not own this event');
   }
 }
 

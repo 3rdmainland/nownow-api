@@ -392,6 +392,51 @@ export class OrderService {
             }).catch(() => {});
         }
 
+        // Fire-and-forget: check order milestones for organizer email
+        (async () => {
+            try {
+                const { count } = await supabase
+                    .from('orders')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('event_id', input.event_id);
+
+                const milestones = [100, 500, 1000];
+                if (count && milestones.includes(count)) {
+                    const { data: event } = await supabase
+                        .from('events')
+                        .select('organizer_id, name')
+                        .eq('id', input.event_id)
+                        .single();
+
+                    if (event?.organizer_id) {
+                        const { getOrganizerEmail } = await import('../organizer-emails/organizer-email.service.js');
+                        const { sendEmail } = await import('../lib/email.js');
+                        const email = await getOrganizerEmail(event.organizer_id);
+                        if (email) {
+                            const ORGANIZER_APP_URL = process.env.ORGANIZER_APP_URL || 'https://nownow-organizer.vercel.app';
+                            const { data: revenueData } = await supabase
+                                .from('orders')
+                                .select('total')
+                                .eq('event_id', input.event_id)
+                                .neq('status', 'CANCELLED');
+                            const totalRevenue = (revenueData || []).reduce((sum: number, o: any) => sum + (Number(o.total) || 0), 0);
+
+                            await sendEmail({
+                                to: email,
+                                subject: `Your event "${event.name}" just hit ${count} orders!`,
+                                html: `
+                                    <h2>Order Milestone</h2>
+                                    <p>Your event <strong>${event.name}</strong> has reached <strong>${count} orders</strong>!</p>
+                                    <p><strong>Total Revenue:</strong> R${totalRevenue.toFixed(2)}</p>
+                                    <p><a href="${ORGANIZER_APP_URL}/events/${input.event_id}">View event</a></p>
+                                `,
+                            });
+                        }
+                    }
+                }
+            } catch { /* milestone email errors should never affect order flow */ }
+        })();
+
         // ── Step 7: Cash orders — done, send notifications ──────────────
         if (isCashOrder) {
             this.sendOrderNotifications(updatedOrder).catch(err =>
@@ -825,7 +870,7 @@ export class OrderService {
         return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
-    async getOrdersByPhone(phone: string, pagination?: PaginationParams, eventId?: string): Promise<PaginatedResponse<Order>> {
+    async getOrdersByPhone(phone: string, pagination?: PaginationParams, eventId?: string, vendorId?: string): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
@@ -836,6 +881,7 @@ export class OrderService {
             .select('*', { count: 'exact' })
             .eq('phone', phone);
 
+        if (vendorId) query = query.eq('vendor_id', vendorId);
         if (eventId) query = query.eq('event_id', eventId);
 
         const { data, error, count } = await query
@@ -951,16 +997,20 @@ export class OrderService {
         return { orders: normalizeOrders(orders), page, pageSize, total, totalPages };
     }
 
-    async getOrdersByStatus(status: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+    async getOrdersByStatus(status: string, pagination?: PaginationParams, vendorId?: string): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
-        const { data, error, count } = await supabase
+        let query = supabase
             .from('orders')
             .select('*', { count: 'exact' })
-            .eq('status', status)
+            .eq('status', status);
+
+        if (vendorId) query = query.eq('vendor_id', vendorId);
+
+        const { data, error, count } = await query
             .order('created_at', { ascending: false })
             .range(from, to);
 
@@ -973,12 +1023,16 @@ export class OrderService {
         return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
-    async getRecentOrders(limit: number = 10): Promise<Order[]> {
-        const { data, error } = await supabase
+    async getRecentOrders(limit: number = 10, vendorId?: string): Promise<Order[]> {
+        let query = supabase
             .from('orders')
-            .select('*')
+            .select('*');
+
+        if (vendorId) query = query.eq('vendor_id', vendorId);
+
+        const { data, error } = await query
             .order('created_at', { ascending: false })
-            .limit(limit)
+            .limit(limit);
 
         if (error) {
             throw new Error(`Failed to fetch recent orders: ${error.message}`);
@@ -998,17 +1052,21 @@ export class OrderService {
         }
     }
 
-    async getOrdersByDateRange(startDate: string, endDate: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+    async getOrdersByDateRange(startDate: string, endDate: string, pagination?: PaginationParams, vendorId?: string): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
-        const { data, error, count } = await supabase
+        let query = supabase
             .from('orders')
             .select('*', { count: 'exact' })
             .gte('created_at', startDate)
-            .lte('created_at', `${endDate}T23:59:59.999Z`)
+            .lte('created_at', `${endDate}T23:59:59.999Z`);
+
+        if (vendorId) query = query.eq('vendor_id', vendorId);
+
+        const { data, error, count } = await query
             .order('created_at', { ascending: false })
             .range(from, to);
 
@@ -1387,16 +1445,20 @@ export class OrderService {
         return result;
     }
 
-    async getOrdersByEvent(eventId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+    async getOrdersByEvent(eventId: string, pagination?: PaginationParams, vendorId?: string): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
-        const { data, error, count } = await supabase
+        let query = supabase
             .from('orders')
             .select('*', { count: 'exact' })
-            .eq('event_id', eventId)
+            .eq('event_id', eventId);
+
+        if (vendorId) query = query.eq('vendor_id', vendorId);
+
+        const { data, error, count } = await query
             .order('created_at', { ascending: false })
             .range(from, to);
 
@@ -1409,7 +1471,7 @@ export class OrderService {
         return { orders: normalizeOrders(data || []), page, pageSize, total, totalPages };
     }
 
-    async searchOrders(searchTerm: string, eventId?: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+    async searchOrders(searchTerm: string, eventId?: string, pagination?: PaginationParams, vendorId?: string): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
@@ -1422,6 +1484,9 @@ export class OrderService {
             .from('orders')
             .select('*', { count: 'exact' });
 
+        if (vendorId) {
+            query = query.eq('vendor_id', vendorId);
+        }
         if (eventId) {
             query = query.eq('event_id', eventId);
         }

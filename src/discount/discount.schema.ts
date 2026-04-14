@@ -121,6 +121,7 @@ export const updateDiscountSchema = {
     },
     response: {
         200: { type: 'object', properties: discountProperties },
+        403: errorResponse,
         404: errorResponse,
     },
 };
@@ -137,6 +138,7 @@ export const deleteDiscountSchema = {
     },
     response: {
         200: { type: 'object', properties: { message: { type: 'string' } } },
+        403: errorResponse,
         404: errorResponse,
     },
 };

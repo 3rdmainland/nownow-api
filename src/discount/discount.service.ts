@@ -172,6 +172,17 @@ export class DiscountService {
         return (data || []).map(fromDbDiscount);
     }
 
+    async getDiscountById(id: string): Promise<Discount> {
+        const { data, error } = await supabase
+            .from('discounts')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (error || !data) throw new NotFoundError('Discount not found');
+        return fromDbDiscount(data);
+    }
+
     async updateDiscount(id: string, input: UpdateDiscountInput): Promise<Discount> {
         if (input.scope === 'ITEM' && input.targetItemIds !== undefined && input.targetItemIds !== null && input.targetItemIds.length === 0) {
             throw new ValidationError('targetItemIds cannot be empty for ITEM scope discounts');

@@ -63,7 +63,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
       role: 'vendor',
     };
 
-    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '24h' });
+    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '90d' });
 
     reply
       .setCookie(COOKIE_NAME, jwtToken, {
@@ -89,7 +89,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
       role: 'vendor',
     };
 
-    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '24h' });
+    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '90d' });
 
     reply
       .setCookie(COOKIE_NAME, jwtToken, {
@@ -99,7 +99,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: COOKIE_MAX_AGE,
       })
-      .send({ user });
+      .send({ user, token: jwtToken });
   });
 
   // POST /auth/logout — Clear cookie
@@ -151,7 +151,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
     return { message: 'Password reset successfully' };
   });
 
-  // GET /auth/me — Get current user (protected)
+  // GET /auth/me — Get current user (protected), returns refreshed token
   fastify.get('/me', {
     schema: meSchema,
     preHandler: [authenticate],
@@ -161,7 +161,17 @@ const authController: FastifyPluginAsync = async (fastify) => {
     if (!user) {
       return reply.status(401).send({ error: 'User not found' });
     }
-    return { user };
+
+    // Issue a fresh token on every /me call so the session stays alive
+    const jwtPayload: JwtPayload = {
+      userId: user.id,
+      vendorId: user.vendorId,
+      email: user.email,
+      role: 'vendor',
+    };
+    const token = fastify.jwt.sign(jwtPayload, { expiresIn: '90d' });
+
+    return { user, token };
   });
 
   // GET /auth/invite/staff/:token — validate staff invite (public)
@@ -198,7 +208,7 @@ const authController: FastifyPluginAsync = async (fastify) => {
         role: 'vendor',
       };
 
-      const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '24h' });
+      const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '90d' });
 
       reply
         .setCookie(COOKIE_NAME, jwtToken, {
