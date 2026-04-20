@@ -62,6 +62,9 @@ import {
 
     // Analytics Schemas
     getMenuAnalyticsSchema,
+
+    // Scan Schemas
+    scanMenuSchema,
 } from "./vendor-menu.schema";
 
 import { authenticateVendorOrAdmin, assertVendorOwnership } from "../../lib/auth.js";
@@ -964,6 +967,84 @@ const vendorMenuController: FastifyPluginAsync = async (fastify) => {
                 fastify.log.error(err);
                 return reply.status(500).send({ error: "Internal server error" });
             }
+        }
+    );
+
+    // ==================== AI MENU SCAN ====================
+
+    // In-memory store for scan jobs (pending AI results)
+    const scanJobs = new Map<string, { status: 'processing' | 'done' | 'error'; result?: any; error?: string }>();
+
+    /**
+     * POST /vendors/:vendorId/menu/scan
+     * Upload a menu image — kicks off AI extraction in the background, returns a scanId immediately.
+     */
+    fastify.post<{ Params: { vendorId: string } }>(
+        "/:vendorId/menu/scan",
+        {
+            bodyLimit: 15_000_000,
+            config: { rateLimit: { max: 10, timeWindow: '24 hours' } },
+        },
+        async (request, reply) => {
+            try {
+                const { image, mimeType } = request.body as { image: string; mimeType: string };
+
+                if (image.length > 14_000_000) {
+                    return reply.status(400).send({ error: 'Image too large. Maximum size is 10MB.' });
+                }
+
+                // Generate a scan ID and return immediately
+                const scanId = `scan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                scanJobs.set(scanId, { status: 'processing' });
+
+                // Process in background — don't await
+                menuService.scanMenuImage(request.params.vendorId, image, mimeType)
+                    .then((result) => {
+                        if (result.error === 'RATE_LIMITED') {
+                            scanJobs.set(scanId, { status: 'error', error: result.message });
+                        } else {
+                            scanJobs.set(scanId, { status: 'done', result });
+                        }
+                        // Clean up after 5 minutes
+                        setTimeout(() => scanJobs.delete(scanId), 5 * 60 * 1000);
+                    })
+                    .catch((err) => {
+                        fastify.log.error(err);
+                        scanJobs.set(scanId, { status: 'error', error: 'Failed to scan menu. Please try again.' });
+                        setTimeout(() => scanJobs.delete(scanId), 5 * 60 * 1000);
+                    });
+
+                return reply.status(202).send({ scanId });
+            } catch (err) {
+                fastify.log.error(err);
+                return reply.status(500).send({ error: "Failed to start scan." });
+            }
+        }
+    );
+
+    /**
+     * GET /vendors/:vendorId/menu/scan/:scanId
+     * Poll for scan results. Returns status: processing | done | error.
+     */
+    fastify.get<{ Params: { vendorId: string; scanId: string } }>(
+        "/:vendorId/menu/scan/:scanId",
+        async (request, reply) => {
+            const job = scanJobs.get(request.params.scanId);
+            if (!job) {
+                return reply.status(404).send({ error: 'Scan not found or expired' });
+            }
+
+            if (job.status === 'processing') {
+                return { status: 'processing' };
+            }
+
+            if (job.status === 'error') {
+                return reply.status(422).send({ status: 'error', error: job.error });
+            }
+
+            // Done — return result and clean up
+            scanJobs.delete(request.params.scanId);
+            return { status: 'done', ...job.result };
         }
     );
 

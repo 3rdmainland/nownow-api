@@ -80,6 +80,33 @@ export const registerSchema = {
   },
 };
 
+export const registerVendorSchema = {
+  description: 'Self-register a new vendor (creates vendor + user + role)',
+  tags: ['auth'],
+  body: {
+    type: 'object',
+    required: ['name', 'email', 'phone', 'password'],
+    properties: {
+      name: { type: 'string', minLength: 1, maxLength: 255 },
+      email: { type: 'string', format: 'email' },
+      phone: { type: 'string', minLength: 7, maxLength: 20 },
+      password: { type: 'string', minLength: 8, pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^a-zA-Z\\d]).{8,}$' },
+    },
+  },
+  response: {
+    201: {
+      type: 'object',
+      properties: {
+        user: { type: 'object', properties: userProperties },
+        token: { type: 'string' },
+      },
+    },
+    400: errorResponse,
+    409: errorResponse,
+    500: errorResponse,
+  },
+};
+
 export const loginSchema = {
   description: 'Login vendor user',
   tags: ['auth'],

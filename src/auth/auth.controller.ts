@@ -3,6 +3,7 @@ import {
   inviteSchema,
   validateInviteSchema,
   registerSchema,
+  registerVendorSchema,
   loginSchema,
   meSchema,
   logoutSchema,
@@ -11,7 +12,7 @@ import {
   resetPasswordSchema,
 } from './auth.schema.js';
 import { AuthService } from './auth.service.js';
-import { RegisterPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
+import { RegisterPayload, RegisterVendorPayload, LoginPayload, InvitePayload, JwtPayload } from './auth.types.js';
 import { authenticate, authenticateAdmin } from '../lib/auth.js';
 import { sendEmail } from '../lib/email.js';
 import * as staffService from '../staff/staff.service.js';
@@ -75,6 +76,32 @@ const authController: FastifyPluginAsync = async (fastify) => {
       })
       .status(201)
       .send({ user });
+  });
+
+  // POST /auth/register-vendor — Self-register a new vendor
+  fastify.post('/register-vendor', {
+    schema: registerVendorSchema,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    try {
+      const payload = request.body as RegisterVendorPayload;
+      const user = await authService.registerVendor(payload);
+
+      const jwtPayload: JwtPayload = {
+        userId: user.id,
+        vendorId: user.vendorId,
+        email: user.email,
+        role: 'vendor',
+      };
+      const token = fastify.jwt.sign(jwtPayload, { expiresIn: '90d' });
+
+      return reply.status(201).send({ user, token });
+    } catch (err: any) {
+      if (err.statusCode === 409) return reply.status(409).send({ error: err.message });
+      if (err.statusCode === 400) return reply.status(400).send({ error: err.message });
+      fastify.log.error(err);
+      return reply.status(500).send({ error: 'Registration failed' });
+    }
   });
 
   // POST /auth/login — Login with email + password
@@ -151,12 +178,12 @@ const authController: FastifyPluginAsync = async (fastify) => {
     return { message: 'Password reset successfully' };
   });
 
-  // GET /auth/me — Get current user (protected), returns refreshed token
+  // GET /auth/me — Get current user (protected), returns refreshed token + gates
   fastify.get('/me', {
     schema: meSchema,
     preHandler: [authenticate],
   }, async (request, reply) => {
-    const { userId } = request.user as JwtPayload;
+    const { userId, vendorId } = request.user as JwtPayload;
     const user = await authService.getUserById(userId);
     if (!user) {
       return reply.status(401).send({ error: 'User not found' });
@@ -171,7 +198,10 @@ const authController: FastifyPluginAsync = async (fastify) => {
     };
     const token = fastify.jwt.sign(jwtPayload, { expiresIn: '90d' });
 
-    return { user, token };
+    // Build gates based on app version, vendor state, and platform config
+    const gates = await authService.getGates(vendorId, request.headers['x-app-version'] as string | undefined);
+
+    return { user, token, gates };
   });
 
   // GET /auth/invite/staff/:token — validate staff invite (public)

@@ -8,6 +8,13 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface RegisterVendorPayload {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+}
+
 export interface InvitePayload {
   vendorId: string;
   email: string;

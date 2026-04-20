@@ -25,6 +25,7 @@ import { OrderService } from "./order.service";
 import {OrderStatus} from "./order.types";
 import {supabase} from "../lib/supabase";
 import { authenticate, authenticateCustomer, authenticateAdmin, authenticateVendor, authenticateVendorOrAdmin, optionalAuthenticateCustomer } from "../lib/auth.js";
+import { isFeatureEnabled } from "../lib/feature-flags.js";
 
 const orderController: FastifyPluginAsync = async (fastify) => {
     const orderService = new OrderService();
@@ -165,15 +166,20 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     fastify.get("/checkout-options", { schema: checkoutOptionsSchema }, async (request, reply) => {
         try {
             const { vendorId, eventId } = request.query as { vendorId: string; eventId: string };
-            const { data, error } = await supabase
-                .from('event_menu_configurations')
-                .select('allow_pay_at_stall, slot_duration_minutes, estimated_wait_minutes, is_busy_mode, busy_mode_multiplier')
-                .eq('vendor_id', vendorId)
-                .eq('event_id', eventId)
-                .single();
+            const [configResult, onlinePaymentsEnabled] = await Promise.all([
+                supabase
+                    .from('event_menu_configurations')
+                    .select('allow_pay_at_stall, slot_duration_minutes, estimated_wait_minutes, is_busy_mode, busy_mode_multiplier')
+                    .eq('vendor_id', vendorId)
+                    .eq('event_id', eventId)
+                    .single(),
+                isFeatureEnabled('online_payments'),
+            ]);
+
+            const { data, error } = configResult;
 
             if (error || !data) {
-                return { allowPayAtStall: false };
+                return { allowPayAtStall: false, allowOnlinePayment: onlinePaymentsEnabled };
             }
 
             let estimatedWaitMinutes = data.estimated_wait_minutes ?? undefined;
@@ -183,6 +189,7 @@ const orderController: FastifyPluginAsync = async (fastify) => {
 
             return {
                 allowPayAtStall: data.allow_pay_at_stall ?? false,
+                allowOnlinePayment: onlinePaymentsEnabled,
                 slotDurationMinutes: data.slot_duration_minutes ?? undefined,
                 estimatedWaitMinutes,
                 isBusyMode: data.is_busy_mode ?? false,

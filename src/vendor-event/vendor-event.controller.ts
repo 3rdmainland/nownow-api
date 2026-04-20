@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
+import { requireFeature } from '../lib/feature-flags.js';
 import { VendorEventService } from './vendor-event.service.js';
 import {
   createVendorEventSchema,
@@ -30,8 +31,8 @@ const vendorEventController: FastifyPluginAsync = async (fastify) => {
     return user.vendorId;
   }
 
-  // POST /vendor-events — create a vendor lite event
-  fastify.post('/', { schema: createVendorEventSchema }, async (request, reply) => {
+  // POST /vendor-events — create a vendor lite event (feature-flagged)
+  fastify.post('/', { schema: createVendorEventSchema, preHandler: [requireFeature('vendor_events')] }, async (request, reply) => {
     try {
       const vendorId = await getVendorId(request, reply);
       const payload = request.body as { name: string; startDate: string; endDate: string; menuTemplateId?: string; allowPayAtStall?: boolean };

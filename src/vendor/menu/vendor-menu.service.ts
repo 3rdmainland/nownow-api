@@ -8,6 +8,7 @@
  * - Analytics and reporting
  */
 
+import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "../../lib/supabase";
 import { cache, CACHE_TTL } from "../../lib/redis";
 import { handleDatabaseError, assertExists } from "../../lib/errors";
@@ -1441,6 +1442,139 @@ export class VendorMenuService {
     }
 
     // ==================== CACHE INVALIDATION ====================
+
+    // ==================== AI MENU SCAN ====================
+
+    async scanMenuImage(vendorId: string, image: string, mimeType: string): Promise<any> {
+        // Rate limit: max 10 scans per vendor per day
+        const rateLimitKey = `menu-scan:${vendorId}:${new Date().toISOString().slice(0, 10)}`;
+        const scanCount = await cache.get<number>(rateLimitKey);
+        if (scanCount !== null && scanCount >= 10) {
+            return {
+                items: [],
+                categories: [],
+                error: 'RATE_LIMITED',
+                message: "You've reached the daily scan limit. Try again tomorrow.",
+            };
+        }
+
+        const anthropic = new Anthropic();
+
+        const mediaType = mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
+        const response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 4096,
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'image',
+                            source: {
+                                type: 'base64',
+                                media_type: mediaType,
+                                data: image,
+                            },
+                        },
+                        {
+                            type: 'text',
+                            text: `You are analyzing a photograph of a food/beverage menu. Extract every menu item you can identify.
+
+For each item, extract:
+- name: The item name exactly as shown
+- price: The numeric price in South African Rands (just the number, no currency symbol). If price is unclear, make your best estimate.
+- description: Any description text shown for this item. Set to null if none visible.
+- category: The menu section/category this item belongs to (e.g. "Starters", "Mains", "Drinks"). Infer from menu layout.
+- type: One of "FOOD", "BEVERAGE", "RETAIL", or "SERVICE". Infer from the item name and context.
+- isAlcohol: true if the item is an alcoholic drink (beer, wine, spirits, cocktails), false otherwise.
+- confidence: For each of name, price, description, and category, provide a confidence score from 0.0 to 1.0 based on how clearly you could read/identify that field. Use lower scores for blurry text, partially obscured items, or guessed values.
+
+Also detect modifier groups (e.g. "Choose a size", "Add-ons", "Select sauce") and associate them with the relevant items. For each modifier group:
+- name: The group name
+- selectionType: "SINGLE" if customer picks one, "MULTIPLE" if they can pick several
+- isRequired: true if the menu indicates a choice is required
+- modifiers: Array of options, each with name and priceAdjustment (0 if no extra cost)
+
+If this image is NOT a menu, return: { "items": [], "categories": [], "error": "NOT_A_MENU" }
+If the image is too blurry or unreadable, return: { "items": [], "categories": [], "error": "UNREADABLE" }
+
+Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
+{
+  "items": [
+    {
+      "tempId": "scan_1",
+      "name": "string",
+      "price": 0.00,
+      "description": "string or null",
+      "category": "string or null",
+      "type": "FOOD|BEVERAGE|RETAIL|SERVICE",
+      "isAlcohol": false,
+      "confidence": { "name": 0.0, "price": 0.0, "description": 0.0, "category": 0.0 },
+      "modifierGroups": []
+    }
+  ],
+  "categories": ["unique category names"],
+  "error": null
+}
+
+Number the tempId fields sequentially: scan_1, scan_2, scan_3, etc.`,
+                        },
+                    ],
+                },
+            ],
+        });
+
+        // Increment rate limit counter
+        const currentCount = (scanCount ?? 0) + 1;
+        // Set with TTL until end of day (max 24 hours)
+        await cache.set(rateLimitKey, currentCount, 86400);
+
+        // Parse the response
+        const textBlock = response.content.find((block) => block.type === 'text');
+        if (!textBlock || textBlock.type !== 'text') {
+            return {
+                items: [],
+                categories: [],
+                error: 'UNREADABLE',
+                message: 'AI returned no response',
+            };
+        }
+
+        try {
+            // Strip any markdown code fences if present
+            let jsonText = textBlock.text.trim();
+            if (jsonText.startsWith('```')) {
+                jsonText = jsonText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+            }
+
+            const parsed = JSON.parse(jsonText);
+
+            // Validate basic structure
+            if (!parsed.items || !Array.isArray(parsed.items)) {
+                return {
+                    items: [],
+                    categories: [],
+                    error: 'UNREADABLE',
+                    message: 'AI returned invalid structure',
+                };
+            }
+
+            return {
+                items: parsed.items,
+                categories: parsed.categories || [],
+                error: parsed.error || null,
+                message: parsed.message,
+            };
+        } catch {
+            return {
+                items: [],
+                categories: [],
+                error: 'UNREADABLE',
+                message: 'Failed to parse AI response',
+            };
+        }
+    }
 
     private async invalidateMenuCaches(vendorId: string): Promise<void> {
         try {

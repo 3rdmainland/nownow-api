@@ -21,12 +21,11 @@ export class VendorEventService {
   private async assertCanCreateEvents(vendorId: string): Promise<{ id: string; name: string }> {
     const { data: vendor, error } = await supabase
       .from('vendors')
-      .select('id, name, vendor_tier')
+      .select('id, name')
       .eq('id', vendorId)
       .single();
 
     if (error || !vendor) throw new NotFoundError('Vendor not found');
-    if (vendor.vendor_tier !== 'lite' && vendor.vendor_tier !== 'lite_only') throw new ForbiddenError('Vendor does not have lite access');
     return { id: vendor.id, name: vendor.name };
   }
 

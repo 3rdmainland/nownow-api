@@ -1495,6 +1495,84 @@ export const getMenuAnalyticsSchema = {
     },
 };
 
+// ==================== AI MENU SCAN ====================
+
+export const scanMenuSchema = {
+    description: 'Scan a menu image using AI to extract structured menu items',
+    tags: ['vendor-menu'],
+    params: {
+        type: 'object',
+        properties: { vendorId: { type: 'string' } },
+        required: ['vendorId'],
+    },
+    body: {
+        type: 'object',
+        required: ['image', 'mimeType'],
+        properties: {
+            image: { type: 'string', description: 'Base64-encoded image data' },
+            mimeType: { type: 'string', enum: ['image/jpeg', 'image/png', 'image/webp'] },
+        },
+    },
+    response: {
+        200: {
+            type: 'object',
+            properties: {
+                items: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            tempId: { type: 'string' },
+                            name: { type: 'string' },
+                            price: { type: 'number' },
+                            description: { type: ['string', 'null'] },
+                            category: { type: ['string', 'null'] },
+                            type: { type: 'string', enum: ['FOOD', 'BEVERAGE', 'RETAIL', 'SERVICE'] },
+                            isAlcohol: { type: 'boolean' },
+                            confidence: {
+                                type: 'object',
+                                properties: {
+                                    name: { type: 'number' },
+                                    price: { type: 'number' },
+                                    description: { type: 'number' },
+                                    category: { type: 'number' },
+                                },
+                            },
+                            modifierGroups: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        name: { type: 'string' },
+                                        selectionType: { type: 'string', enum: ['SINGLE', 'MULTIPLE'] },
+                                        isRequired: { type: 'boolean' },
+                                        modifiers: {
+                                            type: 'array',
+                                            items: {
+                                                type: 'object',
+                                                properties: {
+                                                    name: { type: 'string' },
+                                                    priceAdjustment: { type: 'number' },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                categories: { type: 'array', items: { type: 'string' } },
+                error: { type: ['string', 'null'] },
+                message: { type: 'string' },
+            },
+        },
+        400: errorResponse,
+        429: errorResponse,
+        500: errorResponse,
+    },
+};
+
 // Get a single vendor menu item by ID
 export const getVendorMenuItemSchema = {
     description: 'Get a single vendor menu item by ID',

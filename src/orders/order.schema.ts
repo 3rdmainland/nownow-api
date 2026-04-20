@@ -777,9 +777,10 @@ export const checkoutOptionsSchema = {
         200: {
             type: 'object',
             properties: {
-                allowPayAtStall: { type: 'boolean' }
+                allowPayAtStall: { type: 'boolean' },
+                allowOnlinePayment: { type: 'boolean' },
             },
-            required: ['allowPayAtStall']
+            required: ['allowPayAtStall', 'allowOnlinePayment']
         },
         500: {
             type: 'object',

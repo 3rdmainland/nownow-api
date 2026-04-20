@@ -9,6 +9,7 @@ import { paymentService } from "../payment/payment.service.js";
 import { ValidationError, NotFoundError, ForbiddenError, TooManyRequestsError, ConflictError } from "../lib/errors.js";
 import { cache, CACHE_TTL } from "../lib/redis";
 import { sendEmail } from "../lib/email.js";
+import { isFeatureEnabled } from "../lib/feature-flags.js";
 
 /**
  * Ensure order.items is a parsed array.
@@ -126,6 +127,14 @@ export class OrderService {
     ): Promise<Order & { paymentUrl: string }> {
         const qrHelper = new QRHelper();
         const isCashOrder = input.paymentMethod === 'CASH';
+
+        // ── Guard: reject online payments when feature flag is off ──
+        if (!isCashOrder) {
+            const onlinePaymentsEnabled = await isFeatureEnabled('online_payments');
+            if (!onlinePaymentsEnabled) {
+                throw new ValidationError('Online payments are not available at this time. Please select pay at stall.');
+            }
+        }
 
         // ── Step 1: Server-side price calculation + modifier validation ──
         const validated = await this.validateOrderItems(input.vendor_id, input.event_id, input.items);
@@ -1058,11 +1067,12 @@ export class OrderService {
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
+        const endDateOnly = endDate.split('T')[0];
         let query = supabase
             .from('orders')
             .select('*', { count: 'exact' })
             .gte('created_at', startDate)
-            .lte('created_at', `${endDate}T23:59:59.999Z`);
+            .lte('created_at', `${endDateOnly}T23:59:59.999Z`);
 
         if (vendorId) query = query.eq('vendor_id', vendorId);
 
@@ -1304,12 +1314,15 @@ export class OrderService {
         const cached = await cache.get<TimeSeriesStats>(cacheKey);
         if (cached) return cached;
 
+        // Strip time portion so appending T23:59:59.999Z is safe
+        const endDateOnly = endDate.split('T')[0];
+
         // Build primary period query
         let primaryQuery = supabase.from('orders')
             .select('total, status, payment_method, items, created_at, collected_at, refund_status, refund_amount');
         if (vendorId) primaryQuery = primaryQuery.eq('vendor_id', vendorId);
         if (eventId) primaryQuery = primaryQuery.eq('event_id', eventId);
-        primaryQuery = primaryQuery.gte('created_at', startDate).lte('created_at', `${endDate}T23:59:59.999Z`);
+        primaryQuery = primaryQuery.gte('created_at', startDate).lte('created_at', `${endDateOnly}T23:59:59.999Z`);
 
         // Compute previous period range (same duration before startDate)
         const startMs = new Date(startDate).getTime();
