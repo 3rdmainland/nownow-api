@@ -61,7 +61,7 @@ const uploadController: FastifyPluginAsync = async (fastify) => {
     }, async (request, reply) => {
         const { vendorId } = request.params;
         assertVendorOwnership(request, vendorId);
-        const { purpose } = request.query;
+        const purpose = request.query.purpose ?? 'menu-item';
         const { file, mimetype } = request.body;
 
         if (!file) return reply.status(400).send({ error: 'No file uploaded' });

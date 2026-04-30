@@ -10,8 +10,10 @@ import {
 } from "./whatsapp.schema";
 
 import { authenticateAdmin } from "../lib/auth.js";
+import { requireFeature } from "../lib/feature-flags.js";
 
 const whatsappController: FastifyPluginAsync = async (fastify) => {
+    fastify.addHook('preHandler', requireFeature('whatsapp'));
     const whatsappService = getWhatsappService();
 
     fastify.post<{ Body: SendWhatsAppMessageBody }>(

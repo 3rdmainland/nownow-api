@@ -103,7 +103,7 @@ export class StallService {
       current_active_orders: 0,
       status: 'DRAFT',
       category_configurations: [],
-      allow_pay_at_stall: payload.allowPayAtStall ?? false,
+      allow_pay_at_stall: payload.allowPayAtStall ?? true,
     };
     if (payload.menuTemplateId) menuConfig.template_id = payload.menuTemplateId;
     if (payload.boothInfo) menuConfig.booth_info = payload.boothInfo;

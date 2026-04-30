@@ -13,7 +13,9 @@ VALUES (
     "reorder": false,
     "push_notifications": true,
     "online_payments": false,
-    "vendor_events": false
+    "vendor_events": false,
+    "otp": false,
+    "whatsapp": false
   }'::jsonb
 )
 ON CONFLICT (key) DO UPDATE

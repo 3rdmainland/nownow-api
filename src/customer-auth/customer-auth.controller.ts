@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import {
   requestOtpSchema,
   verifyOtpSchema,
+  loginPhoneSchema,
   meSchema,
   logoutSchema,
   updateProfileSchema,
@@ -11,6 +12,7 @@ import { CustomerAuthService } from './customer-auth.service.js';
 import { ConsoleSmsProvider, SmsProvider } from './sms.provider.js';
 import { BulkSmsProvider } from './bulksms.provider.js';
 import { authenticateCustomer } from '../lib/auth.js';
+import { requireFeature, isFeatureEnabled } from '../lib/feature-flags.js';
 import { normalizePhone } from './phone.utils.js';
 import type {
   RequestOtpPayload,
@@ -31,7 +33,7 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
     : new ConsoleSmsProvider();
 
   // POST /customer/auth/request-otp — Send OTP to phone
-  fastify.post('/request-otp', { schema: requestOtpSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  fastify.post('/request-otp', { schema: requestOtpSchema, preHandler: [requireFeature('otp')], config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { phone } = request.body as RequestOtpPayload;
     const normalized = normalizePhone(phone);
 
@@ -52,7 +54,7 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
   });
 
   // POST /customer/auth/verify-otp — Verify OTP, issue JWT, auto-create customer
-  fastify.post('/verify-otp', { schema: verifyOtpSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  fastify.post('/verify-otp', { schema: verifyOtpSchema, preHandler: [requireFeature('otp')], config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { phone, code, name } = request.body as VerifyOtpPayload;
     const normalized = normalizePhone(phone);
 
@@ -62,6 +64,38 @@ const customerAuthController: FastifyPluginAsync = async (fastify) => {
     const { isNewCustomer, ...customer } = await customerAuthService.findOrCreateByPhone(normalized, name);
 
     // Issue JWT
+    const jwtPayload: CustomerJwtPayload = {
+      customerId: customer.id,
+      phone: customer.phone,
+      role: 'customer',
+    };
+
+    const jwtToken = fastify.jwt.sign(jwtPayload, { expiresIn: '7d' });
+
+    reply
+      .setCookie(COOKIE_NAME, jwtToken, {
+        path: '/',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: COOKIE_MAX_AGE,
+      })
+      .send({ customer, isNewCustomer });
+  });
+
+  // POST /customer/auth/login-phone — Phone-only login (when OTP is disabled)
+  fastify.post('/login-phone', { schema: loginPhoneSchema, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    // Only available when OTP is OFF
+    const otpEnabled = await isFeatureEnabled('otp');
+    if (otpEnabled) {
+      return reply.status(403).send({ error: 'Phone-only login is not available' });
+    }
+
+    const { phone, name } = request.body as { phone: string; name?: string };
+    const normalized = normalizePhone(phone);
+
+    const { isNewCustomer, ...customer } = await customerAuthService.findOrCreateByPhone(normalized, name);
+
     const jwtPayload: CustomerJwtPayload = {
       customerId: customer.id,
       phone: customer.phone,

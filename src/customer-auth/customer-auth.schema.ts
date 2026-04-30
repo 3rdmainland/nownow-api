@@ -60,6 +60,30 @@ export const verifyOtpSchema = {
   },
 };
 
+export const loginPhoneSchema = {
+  description: 'Login by phone number only (no OTP). Active when OTP feature flag is disabled.',
+  tags: ['customer-auth'],
+  body: {
+    type: 'object',
+    required: ['phone'],
+    properties: {
+      phone: { type: 'string', minLength: 10 },
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+    },
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        customer: { type: 'object', properties: customerProperties },
+        isNewCustomer: { type: 'boolean' },
+      },
+    },
+    403: errorResponse,
+    429: errorResponse,
+  },
+};
+
 export const meSchema = {
   description: 'Get current authenticated customer',
   tags: ['customer-auth'],

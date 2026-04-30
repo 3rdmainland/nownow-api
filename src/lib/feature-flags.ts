@@ -15,7 +15,9 @@ export type FeatureFlag =
   | 'reorder'
   | 'push_notifications'
   | 'online_payments'
-  | 'vendor_events';
+  | 'vendor_events'
+  | 'otp'
+  | 'whatsapp';
 
 export type FeatureFlags = Record<string, boolean>;
 

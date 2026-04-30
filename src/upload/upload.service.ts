@@ -18,7 +18,11 @@ export async function uploadImage(
         throw new ValidationError(`File too large (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Max: 5 MB`);
     }
 
-    const { bucket, pathPrefix } = BUCKET_MAP[purpose];
+    const mapping = BUCKET_MAP[purpose];
+    if (!mapping) {
+        throw new ValidationError(`Invalid image purpose: "${purpose}". Allowed: ${Object.keys(BUCKET_MAP).join(', ')}`);
+    }
+    const { bucket, pathPrefix } = mapping;
     const folder = pathPrefix(resourceId);
 
     // Delete existing files for this purpose (cleanup orphans)

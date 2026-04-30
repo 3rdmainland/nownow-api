@@ -511,9 +511,10 @@ export class OrderService {
      */
     async sendOrderNotifications(order: any): Promise<void> {
         try {
-            // Fire-and-forget WhatsApp notification
+            // Fire-and-forget WhatsApp notification (only if whatsapp flag is on)
             const token = process.env.WA_ACCESS_TOKEN;
-            if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order?.phone) {
+            const whatsappEnabled = await isFeatureEnabled('whatsapp');
+            if (whatsappEnabled && token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order?.phone) {
                 const whatsapp = getWhatsappService();
 
                 void whatsapp
@@ -639,8 +640,9 @@ export class OrderService {
 
         // Send collection confirmation via WhatsApp (fire-and-forget, non-blocking)
         try {
+            const whatsappEnabled = await isFeatureEnabled('whatsapp');
             const token = process.env.WA_ACCESS_TOKEN;
-            if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order.phone) {
+            if (whatsappEnabled && token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && order.phone) {
                 // Fetch vendor name inside fire-and-forget to avoid blocking the response
                 void (async () => {
                     try {
@@ -686,6 +688,37 @@ export class OrderService {
         } catch (retentionErr) {
             console.error('Retention import error (non-fatal):', (retentionErr as any)?.message || retentionErr);
         }
+
+        // Broadcast to customer tracking their order
+        if (order.phone) {
+            broadcastOrderStatusUpdate({
+                orderId: updatedOrder.id,
+                phone: order.phone,
+                status: updatedOrder.status,
+                vendorId: order.vendor_id,
+                eventId: order.event_id,
+            });
+        }
+
+        // Broadcast status change to admin live feed
+        broadcastToAdmins({
+            type: 'ORDER_STATUS_UPDATE',
+            payload: { orderId: updatedOrder.id, status: updatedOrder.status },
+            timestamp: new Date().toISOString(),
+        });
+
+        // Broadcast to vendor's KDS and live event panel
+        broadcastToVendor(order.vendor_id, {
+            type: 'ORDER_STATUS_UPDATE',
+            payload: {
+                orderId: updatedOrder.id,
+                phone: order.phone,
+                status: updatedOrder.status,
+                vendorId: order.vendor_id,
+                eventId: order.event_id,
+            },
+            timestamp: new Date().toISOString(),
+        });
 
         return normalizeOrderItems(updatedOrder);
     }
@@ -776,8 +809,8 @@ export class OrderService {
 
         if (status === OrderStatus.READY) {
             try {
-                const token = process.env.WA_ACCESS_TOKEN;
-                if (token && token !== 'disabled' && process.env.NODE_ENV !== 'test' && data.phone) {
+                const whatsappEnabled = await isFeatureEnabled('whatsapp');
+                if (process.env.NODE_ENV !== 'test' && data.phone) {
                     // Fetch vendor name for the message
                     const { data: vendor } = await supabase
                         .from('vendors')
@@ -785,19 +818,36 @@ export class OrderService {
                         .eq('id', data.vendor_id)
                         .single();
 
-                    const whatsapp = getWhatsappService();
+                    const vendorName = vendor?.name || 'the vendor';
 
-                    void whatsapp
-                        .sendOrderReadyTemplate(data.phone, {
+                    if (whatsappEnabled) {
+                        const token = process.env.WA_ACCESS_TOKEN;
+                        if (token && token !== 'disabled') {
+                            const whatsapp = getWhatsappService();
+                            void whatsapp
+                                .sendOrderReadyTemplate(data.phone, {
+                                    orderId: String(data.id),
+                                    vendorName,
+                                })
+                                .catch((err) => {
+                                    console.error('Failed to send order ready WhatsApp:', err?.message || err);
+                                });
+                        }
+                    } else {
+                        // WhatsApp off — fall back to SMS
+                        const { sendOrderReadySms } = await import('./order-sms.service.js');
+                        void sendOrderReadySms(data.phone, {
                             orderId: String(data.id),
-                            vendorName: vendor?.name || 'the vendor',
-                        })
-                        .catch((err) => {
-                            console.error('Failed to send order ready notification:', err?.message || err);
+                            vendorName,
+                            total: Number(data.total),
+                            paymentMethod: data.payment_method,
+                        }).catch((err) => {
+                            console.error('Failed to send order ready SMS:', err?.message || err);
                         });
+                    }
                 }
             } catch (notifyErr) {
-                console.error('WhatsApp notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
+                console.error('Order ready notification error (non-fatal):', (notifyErr as any)?.message || notifyErr);
             }
         }
 
@@ -855,17 +905,21 @@ export class OrderService {
         return normalizeOrderItems(data);
     }
 
-    async getOrdersByVendor(vendorId: string, pagination?: PaginationParams): Promise<PaginatedResponse<Order>> {
+    async getOrdersByVendor(vendorId: string, pagination?: PaginationParams, statuses?: string[]): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
         const to = from + pageSize - 1;
 
+        let query = supabase
+            .from('orders')
+            .select('*', { count: 'exact' })
+            .eq('vendor_id', vendorId);
+
+        if (statuses && statuses.length > 0) query = query.in('status', statuses);
+
         const { data, error, count } = await safeQuery(() => Promise.resolve(
-            supabase
-                .from('orders')
-                .select('*', { count: 'exact' })
-                .eq('vendor_id', vendorId)
+            query
                 .order('created_at', { ascending: false })
                 .range(from, to)
         )) as any;
@@ -1458,7 +1512,7 @@ export class OrderService {
         return result;
     }
 
-    async getOrdersByEvent(eventId: string, pagination?: PaginationParams, vendorId?: string): Promise<PaginatedResponse<Order>> {
+    async getOrdersByEvent(eventId: string, pagination?: PaginationParams, vendorId?: string, statuses?: string[]): Promise<PaginatedResponse<Order>> {
         const page = Math.max(1, Number(pagination?.page || 1));
         const pageSize = Math.min(100, Math.max(1, Number(pagination?.pageSize || 20)));
         const from = (page - 1) * pageSize;
@@ -1470,6 +1524,7 @@ export class OrderService {
             .eq('event_id', eventId);
 
         if (vendorId) query = query.eq('vendor_id', vendorId);
+        if (statuses && statuses.length > 0) query = query.in('status', statuses);
 
         const { data, error, count } = await query
             .order('created_at', { ascending: false })

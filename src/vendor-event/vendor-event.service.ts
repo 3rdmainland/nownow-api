@@ -163,6 +163,7 @@ export class VendorEventService {
         current_active_orders: 0,
         status: 'DRAFT',
         category_configurations: [],
+        allow_pay_at_stall: true,
       }]);
 
     if (menuError) throw new Error(`Failed to create direct menu config: ${menuError.message}`);

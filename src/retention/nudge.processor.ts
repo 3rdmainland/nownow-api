@@ -3,6 +3,7 @@ import { getWhatsappService } from '../whatsapp/whatsapp.service.js';
 import { ConsentService } from './consent.service.js';
 import { formatToCurrency } from './format-helper.js';
 import { redis } from '../lib/redis.js';
+import { isFeatureEnabled } from '../lib/feature-flags.js';
 import type { RetentionNudge, NudgeStatus, UpsellPayload, PostEventSummaryPayload, ReorderPayload, EventNearbyPayload } from './retention.types.js';
 
 const RATE_LIMIT_MAX_PER_HOUR = 3;
@@ -78,7 +79,12 @@ export async function processNudge(nudgeId: string): Promise<{ action: string }>
       }
     }
 
-    // 6. Send via WhatsApp
+    // 6. Send via WhatsApp (skip if feature flag is off)
+    const whatsappEnabled = await isFeatureEnabled('whatsapp');
+    if (!whatsappEnabled) {
+      await updateNudgeStatus(nudge.id, 'skipped');
+      return { action: 'skipped_whatsapp_disabled' };
+    }
     await sendNudge(nudge as RetentionNudge);
     await updateNudgeStatus(nudge.id, 'sent');
 

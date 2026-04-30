@@ -153,8 +153,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
                 return reply.status(403).send({ error: "Access denied" });
             }
 
-            const { page, pageSize } = request.query as { page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByVendor(vendorId, { page, pageSize });
+            const { page, pageSize, status } = request.query as { page?: number; pageSize?: number; status?: string };
+            const statuses = status ? status.split(',').map(s => s.trim()) : undefined;
+            const result = await orderService.getOrdersByVendor(vendorId, { page, pageSize }, statuses);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -205,8 +206,9 @@ const orderController: FastifyPluginAsync = async (fastify) => {
         try {
             const user = request.user as { vendorId?: string; role?: string };
             const { eventId } = request.params as { eventId: string };
-            const { page, pageSize } = request.query as { page?: number; pageSize?: number };
-            const result = await orderService.getOrdersByEvent(eventId, { page, pageSize }, user.role === 'vendor' ? user.vendorId : undefined);
+            const { page, pageSize, status } = request.query as { page?: number; pageSize?: number; status?: string };
+            const statuses = status ? status.split(',').map(s => s.trim()) : undefined;
+            const result = await orderService.getOrdersByEvent(eventId, { page, pageSize }, user.role === 'vendor' ? user.vendorId : undefined, statuses);
             return result;
         } catch (err) {
             fastify.log.error(err);
@@ -253,7 +255,7 @@ const orderController: FastifyPluginAsync = async (fastify) => {
     });
 
     // Create new order (rate limited)
-    fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer], config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+    fastify.post("/", { schema: createOrderSchema, preHandler: [optionalAuthenticateCustomer], config: { rateLimit: { max: 10, timeWindow: '1 minute', keyGenerator: (req: any) => { const body = req.body as any; return body?.phone || body?.customer_id || req.ip; } } } }, async (request, reply) => {
         const orderData = request.body as any;
         // Attach customer_id and customer_name from JWT if authenticated
         const user = request.user as { customerId?: string; customerName?: string; role?: string } | undefined;

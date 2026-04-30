@@ -264,7 +264,10 @@ export const getOrdersByVendorSchema = {
     },
     querystring: {
         type: "object",
-        properties: { ...paginationQuerystringProperties }
+        properties: {
+            status: { type: "string", description: "Comma-separated status values to filter by (e.g. PENDING,PREPARING)" },
+            ...paginationQuerystringProperties
+        }
     },
     response: {
         200: {
@@ -616,7 +619,10 @@ export const getOrdersByEventSchema = {
     },
     querystring: {
         type: "object",
-        properties: { ...paginationQuerystringProperties }
+        properties: {
+            status: { type: "string", description: "Comma-separated status values to filter by (e.g. PENDING,PREPARING)" },
+            ...paginationQuerystringProperties
+        }
     },
     response: {
         200: {

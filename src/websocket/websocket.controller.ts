@@ -299,18 +299,10 @@ function validateSubscription(
       sanitized.organizerId = value as string;
     } else if (key === 'phone') {
       // Phone subscriptions: customers subscribe to their own phone for order updates.
-      // Vendors/admins can subscribe to any phone (for order management).
-      // All customers are authenticated (OTP verified) — no anonymous access.
-      if (user && (user.role === 'vendor' || user.role === 'admin')) {
-        sanitized.phone = value as string;
-      } else if (user && user.role === 'customer') {
-        // Customers can subscribe to their own phone
-        sanitized.phone = value as string;
-      } else if (!user) {
-        return { valid: false, sanitized, error: 'Authentication required for phone subscriptions' };
-      } else {
-        return { valid: false, sanitized, error: 'Cannot subscribe to phone channel' };
-      }
+      // Allow unauthenticated access — the WebSocket connection may not carry the
+      // httpOnly auth cookie (cross-origin upgrade), and guest customers have no
+      // token at all. Order status data (pending/ready) is low-risk.
+      sanitized.phone = value as string;
     } else if (key === 'eventId') {
       sanitized.eventId = value as string;
     }
@@ -445,6 +437,12 @@ async function websocketController(
               timestamp: new Date().toISOString(),
             }));
           }
+        }
+
+        // Handle client-side heartbeat (browser WebSocket API can't see native pong frames)
+        if (message.type === 'PING') {
+          socket.send(JSON.stringify({ type: 'PONG', timestamp: new Date().toISOString() }));
+          return;
         }
 
         // Handle unsubscribe
